@@ -364,6 +364,8 @@ A plugin has its own, under its name: what it saves the scene does not see, nor 
 
 With the scene's surface (the one with no name), what is repeated is the loose drawing. `--screen A,B` spreads the copies across those monitors, which is how two are rehearsed without having two.
 
+Its loose `prop`s and `fact`s, though, are **one for all the copies**: they are not drawing. So what a `follow` follows must not depend on which copy it is —`follow a = screen.index` ends up as the last copy's in every one—; say which monitor shows something in its `show:` instead, which is drawing and is read per copy.
+
 ```
 surface { size: full, 44; anchor: top; screens: each }
 model mon max 4 { active: number = 1; title: text }     // one record per monitor, from the logic
