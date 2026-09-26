@@ -250,6 +250,43 @@ pub enum Expr {
     Payload,
 }
 
+impl Expr {
+    /// What it reads: the properties (their value or their speed) and the
+    /// facts. Nothing else goes into it —no clock, no chance—, so with those the
+    /// same, it is worth the same.
+    pub fn inputs(&self, props: &mut Vec<u16>, facts: &mut Vec<u16>) {
+        match self {
+            Expr::P(p) | Expr::Vel(p) => {
+                if !props.contains(&p.0) {
+                    props.push(p.0);
+                }
+            }
+            Expr::H(h) => {
+                if !facts.contains(&h.0) {
+                    facts.push(h.0);
+                }
+            }
+            Expr::K(_) | Expr::Letter(_) | Expr::Payload => {}
+            Expr::Abs(a) | Expr::Floor(a) | Expr::Sin(a) | Expr::Cos(a) | Expr::Ceil(a) | Expr::Not(a) | Expr::Un(_, a) | Expr::Smoothstep(_, _, a) => a.inputs(props, facts),
+            Expr::Add(a, b) | Expr::Sub(a, b) | Expr::Mul(a, b) | Expr::Div(a, b) | Expr::Min(a, b) | Expr::Max(a, b) | Expr::Gt(a, b) | Expr::And(a, b) | Expr::Or(a, b) | Expr::Bin(_, a, b) => {
+                a.inputs(props, facts);
+                b.inputs(props, facts);
+            }
+            Expr::Mix(a, b, t) => {
+                a.inputs(props, facts);
+                b.inputs(props, facts);
+                t.inputs(props, facts);
+            }
+            Expr::Pick(i, list) => {
+                i.inputs(props, facts);
+                for e in list {
+                    e.inputs(props, facts);
+                }
+            }
+        }
+    }
+}
+
 thread_local! {
     /// The letter being painted, and how many: what `Expr::Letter` reads. Set by
     /// the render around each letter of a text with `letter_*` properties, on

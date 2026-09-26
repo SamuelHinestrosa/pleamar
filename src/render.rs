@@ -195,6 +195,8 @@ pub fn run(
     let mut facts: Vec<f32> = Vec::new();
     let mut inside: Vec<bool> = Vec::new();
     let mut blinks: Vec<(Instant, Option<Instant>)> = Vec::new();
+    // What each `follow` and `bind` last came to, and what it reads.
+    let mut follows = Follows::default();
     let mut pending: Vec<(Instant, Transition)> = Vec::new();
     let mut layers: Vec<LayerState> = Vec::new();
     let mut rules: Vec<RuleState> = Vec::new();
@@ -385,6 +387,7 @@ pub fn run(
                     let hot = !scene.props.is_empty();
                     facts = fresh.facts.iter().map(|(n, initial)| scene.facts.iter().position(|h| h.0 == *n).map_or(*initial, |k| facts[k])).collect();
                     inside = vec![false; fresh.zones.len()];
+                    follows = Follows::default();
                     warning = None;
                     with_warning.clear();
                     anchors_set = fresh.surfaces.iter().map(|s| s.anchor).collect();
@@ -1640,7 +1643,8 @@ pub fn run(
             .unwrap_or_default();
         let mut alive = false;
         let mut n_blink = 0;
-        for behavior in &scene.behaviors {
+        follows.begin(&scene.behaviors);
+        for (k, behavior) in scene.behaviors.iter().enumerate() {
             match behavior {
                 Behavior::Blink { prop, every, duration } => {
                     let (next, since) = &mut blinks[n_blink];
@@ -1697,11 +1701,11 @@ pub fn run(
                     alive |= a.abs() > 0.01;
                 }
                 Behavior::Follow { prop, to } => {
-                    let v = to.eval(Ctx { props: &props, facts: &facts });
+                    let v = follows.value(k, to, &props, &facts);
                     props[prop.0 as usize].target = v;
                 }
                 Behavior::Bind { prop, to } => {
-                    let v = to.eval(Ctx { props: &props, facts: &facts });
+                    let v = follows.value(k, to, &props, &facts);
                     let p = &mut props[prop.0 as usize];
                     alive |= (p.x - v).abs() > 1e-3;
                     p.set(v);
@@ -2923,4 +2927,59 @@ fn thread_cpu_ms() -> f64 {
         }
     }
     0.0
+}
+
+/// The `follow`s and `bind`s of a scene, remembered: each one is worked out
+/// again only if something it reads —a fact, or a property's value or speed—
+/// is not what it was when it was last worked out. A scene of windows has
+/// hundreds, and a terminal's frame, which changes none of them, had them all
+/// worked out again.
+#[derive(Default)]
+struct Follows {
+    /// Which scene they belong to: another one, and all of it is forgotten.
+    of: usize,
+    /// For each: the facts and properties it reads, what they were, and what it came to.
+    each: Vec<Option<Remembered>>,
+}
+
+struct Remembered {
+    facts: Vec<u16>,
+    props: Vec<u16>,
+    seen: Vec<f32>,
+    value: Option<f32>,
+}
+
+impl Follows {
+    fn begin(&mut self, behaviors: &[Behavior]) {
+        let id = behaviors.as_ptr() as usize ^ behaviors.len();
+        if self.of != id {
+            self.of = id;
+            self.each = behaviors
+                .iter()
+                .map(|b| match b {
+                    Behavior::Follow { to, .. } | Behavior::Bind { to, .. } => {
+                        let (mut props, mut facts) = (Vec::new(), Vec::new());
+                        to.inputs(&mut props, &mut facts);
+                        Some(Remembered { facts, props, seen: Vec::new(), value: None })
+                    }
+                    _ => None,
+                })
+                .collect();
+        }
+    }
+
+    fn value(&mut self, k: usize, to: &Expr, props: &[Animated], facts: &[f32]) -> f32 {
+        let Some(r) = self.each.get_mut(k).and_then(Option::as_mut) else { return to.eval(Ctx { props, facts }) };
+        let now = r.facts.iter().map(|h| facts[*h as usize]).chain(r.props.iter().flat_map(|p| [props[*p as usize].x, props[*p as usize].v]));
+        if let Some(v) = r.value {
+            if now.clone().eq(r.seen.iter().copied()) {
+                return v;
+            }
+        }
+        r.seen.clear();
+        r.seen.extend(now);
+        let v = to.eval(Ctx { props, facts });
+        r.value = Some(v);
+        v
+    }
 }
