@@ -5526,7 +5526,7 @@ impl<'a> Compiler<'a> {
                     while c.sym("+") {
                         name = format!("{name}+{}", c.id("the key")?);
                     }
-                    Trigger::Key(name)
+                    Trigger::Key(key_combo(&name))
                 }
                 "submit" => {
                     let n = self.global(&c.id("the name of the input")?);
@@ -5917,4 +5917,18 @@ fn twins(rules: &[crate::scene::Rule], spans: &[crate::scene::Span]) -> Vec<usiz
         }
     }
     twin
+}
+
+/// A key as the render names it: the modifiers always in the same order
+/// —`Ctrl+Alt+Super+Shift+`— whatever order the scene wrote them in.
+fn key_combo(written: &str) -> String {
+    let parts: Vec<&str> = written.split('+').collect();
+    let (key, mods) = parts.split_last().expect("split always gives one");
+    let order = ["Ctrl", "Alt", "Super", "Shift"];
+    if mods.iter().any(|m| !order.contains(m)) {
+        return written.to_owned();
+    }
+    let mut out: String = order.iter().filter(|m| mods.contains(m)).map(|m| format!("{m}+")).collect();
+    out.push_str(key);
+    out
 }

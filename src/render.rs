@@ -909,6 +909,12 @@ pub fn run(
                     combo.push_str(prefix);
                 }
             }
+            // Shift is said with another modifier or a key that writes nothing
+            // (`Super+Shift+Left`, `Shift+F5`); alone with a letter it already
+            // is in the name: `question`, `A`.
+            if mods.shift && (mods.ctrl || mods.alt || mods.logo || typed.is_none()) && !name.starts_with("Shift") {
+                combo.push_str("Shift+");
+            }
             combo.push_str(&name);
             // A key the scene has no rule for belongs to the window that has
             // the keyboard. With a rule —`on key Super+Return`—, to the scene.
