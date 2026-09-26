@@ -1468,6 +1468,13 @@ pub fn run(
                             send(ToNest::Send(slot as usize, screen as usize));
                         }
                     }
+                    Effect::WindowSwap(a, b) => {
+                        let c = Ctx { props: &props, facts: &facts };
+                        let (a, b) = (a.eval(c).round(), b.eval(c).round());
+                        if let (Some(send), true) = (&nest, a >= 0.0 && b >= 0.0 && a != b) {
+                            send(ToNest::Swap(a as usize, b as usize));
+                        }
+                    }
                     Effect::Launch(command) => {
                         if let Some(send) = &nest {
                             send(ToNest::Launch(command));

@@ -5602,6 +5602,12 @@ impl<'a> Compiler<'a> {
                             c.expect_word("to")?;
                             Effect::WindowTo(which, self.expr(&mut c)?)
                         }
+                        // `swap win(a) with win(b)`: they change places.
+                        "swap" => {
+                            let a = self.which_window(&mut c)?;
+                            c.expect_word("with")?;
+                            Effect::WindowSwap(a, self.which_window(&mut c)?)
+                        }
                         "launch" => {
                             if self.e.nest.is_none() {
                                 return c.error("`launch` opens a program among the scene's windows: declare them first, `windows win max 6`");

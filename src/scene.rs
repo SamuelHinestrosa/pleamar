@@ -1399,6 +1399,9 @@ pub enum Effect {
     Launch(String),
     /// A window to another monitor: `send win(win.focus) to 1`.
     WindowTo(Expr, Expr),
+    /// Two windows change places, in the order and on their monitors:
+    /// `swap win(a) with win(b)`.
+    WindowSwap(Expr, Expr),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -1421,6 +1424,7 @@ impl Effect {
             Effect::Impulse(p, e) => Effect::Impulse(*p, e.with_payload(v)),
             Effect::Window(a, e) => Effect::Window(*a, e.with_payload(v)),
             Effect::WindowTo(w, to) => Effect::WindowTo(w.with_payload(v), to.with_payload(v)),
+            Effect::WindowSwap(a, b) => Effect::WindowSwap(a.with_payload(v), b.with_payload(v)),
             other => other.clone(),
         }
     }
@@ -1914,6 +1918,8 @@ pub enum ToNest {
     Promote(usize),
     /// That window, to that monitor.
     Send(usize, usize),
+    /// Those two windows change places.
+    Swap(usize, usize),
     /// The monitor the pointer is on: where new windows open.
     OnScreen(usize),
     Launch(String),

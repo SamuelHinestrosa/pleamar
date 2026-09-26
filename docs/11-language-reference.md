@@ -1039,6 +1039,7 @@ that holds), which are the scene's.
 | `close win.$i` · `close win(win.focus)` | asks it to close, as its own close button would |
 | `promote win.$i` | it goes first in the layout: `place` 0 |
 | `send win.$i to 1` · `send win(win.focus) to 0` | to that monitor |
+| `swap win.$i with win.$j` · `swap win(a) with win(b)` | they change places: their turn in the layout, and their monitors |
 
 With a copy of the scene per monitor (`screens: each`), a window opens on the
 monitor the pointer is on, and each copy draws the ones whose `screen` is its
@@ -1325,7 +1326,7 @@ properties.layout: at anchor gap padding align fill glass lens shine refraction 
 functions: min max abs floor ceil sin cos clamp smooth mix if vel sqrt pow fract mod sign round exp log tan atan2 length noise random pick
 text_functions: upper lower
 triggers: press release scroll drag hold enter leave hover away idle key submit focus blur drop change still
-effects: toggle emit impulse play focus blur close promote launch send
+effects: toggle emit impulse play focus blur close promote launch send swap
 curves: linear in_quad out_quad in_cubic out_cubic in_out_sine out_back bezier
 frame: hold emit
 classes: ambient reflex asked state
