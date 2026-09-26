@@ -282,6 +282,9 @@ pub fn run(
     // `PLEAMAR_TIMING=1`: where a frame's time goes, section by section, without the waits.
     let profiling = crate::gpu::timing_enabled();
     let mut prof = [0f64; 8];
+    // The same, in the thread's own CPU time: what the wall clock counts includes waiting.
+    let mut prof_cpu = [0f64; 8];
+    let mut prof_c = thread_cpu_ms();
     let mut prof_frames = 0u32;
     let mut prof_t = Instant::now();
     let mut prof_since = Instant::now();
@@ -870,6 +873,7 @@ pub fn run(
         }
         if profiling {
             prof_t = Instant::now();
+            prof_c = thread_cpu_ms();
         }
         // The key that is still held down counts again.
         if let Some((name, typed, mods, when)) = &mut repeat {
@@ -965,6 +969,9 @@ pub fn run(
             let n = Instant::now();
             prof[0] += (n - prof_t).as_secs_f64() * 1000.0;
             prof_t = n;
+            let c = thread_cpu_ms();
+            prof_cpu[0] += c - prof_c;
+            prof_c = c;
         }
         // ── 2. advance time ─────────────────────────────────────
         let now = Instant::now();
@@ -1874,6 +1881,9 @@ pub fn run(
             let n = Instant::now();
             prof[1] += (n - prof_t).as_secs_f64() * 1000.0;
             prof_t = n;
+            let c = thread_cpu_ms();
+            prof_cpu[1] += c - prof_c;
+            prof_c = c;
         }
         // ── 3. paint ────────────────────────────────────────────
         let blocked = logic_blocked.load(Ordering::Relaxed);
@@ -1911,6 +1921,9 @@ pub fn run(
             let n = Instant::now();
             prof[2] += (n - prof_t).as_secs_f64() * 1000.0;
             prof_t = n;
+            let c = thread_cpu_ms();
+            prof_cpu[2] += c - prof_c;
+            prof_c = c;
         }
         if nest.is_some() {
             // What the windows drew, to the card; and where each one is in it.
@@ -2032,6 +2045,9 @@ pub fn run(
             let n = Instant::now();
             prof[7] += (n - prof_t).as_secs_f64() * 1000.0;
             prof_t = n;
+            let c = thread_cpu_ms();
+            prof_cpu[7] += c - prof_c;
+            prof_c = c;
         }
         draw.compose(to_paint, c, &texts, &mut letters, view, size, op.hud);
         // Particles carry themselves: while one is alive, the scene does not rest.
@@ -2059,6 +2075,9 @@ pub fn run(
             let n = Instant::now();
             prof[3] += (n - prof_t).as_secs_f64() * 1000.0;
             prof_t = n;
+            let c = thread_cpu_ms();
+            prof_cpu[3] += c - prof_c;
+            prof_c = c;
         }
         let all_changed = !previous.changed_rects(&draw, &mut changed) || op.hud || finger_light > 0.0 || ripple.is_some();
         // A window that drew something new changes what its box covers, and nothing else.
@@ -2254,6 +2273,9 @@ pub fn run(
             let n = Instant::now();
             prof[4] += (n - prof_t).as_secs_f64() * 1000.0;
             prof_t = n;
+            let c = thread_cpu_ms();
+            prof_cpu[4] += c - prof_c;
+            prof_c = c;
         }
         // The step. With mailbox the render sets it: an absolute deadline per period of the
         // monitor that sets the pace, so that the error of each wait does not
@@ -2356,6 +2378,7 @@ pub fn run(
         }
         if profiling {
             prof_t = Instant::now();
+            prof_c = thread_cpu_ms();
         }
         let before_painting = last_presented;
         last_presented = Instant::now();
@@ -2463,6 +2486,9 @@ pub fn run(
             let n = Instant::now();
             prof[5] += (n - prof_t).as_secs_f64() * 1000.0;
             prof_t = n;
+            let c = thread_cpu_ms();
+            prof_cpu[5] += c - prof_c;
+            prof_c = c;
         }
         prof_painted += painted;
         if let (true, Some(g)) = (std::mem::take(&mut nest_copied.1), &gpu) {
@@ -2551,6 +2577,9 @@ pub fn run(
             let n = Instant::now();
             prof[6] += (n - prof_t).as_secs_f64() * 1000.0;
             prof_t = n;
+            let c = thread_cpu_ms();
+            prof_cpu[6] += c - prof_c;
+            prof_c = c;
         }
         if profiling {
             prof_frames += 1;
@@ -2560,10 +2589,15 @@ pub fn run(
                     "timing · {:.0} rounds, {:.0} windows' frames and {:.0} paintings a second · per round: input {:.2} · rules and springs {:.2} · windows' frames to the card {:.2} · compose {:.2} · regions {:.2} · paint {:.2} · rest {:.2} ms",
                     f / prof_since.elapsed().as_secs_f64(), prof_window_frames as f64 / prof_since.elapsed().as_secs_f64(), prof_painted as f64 / prof_since.elapsed().as_secs_f64(), prof[0] / f, prof[1] / f, prof[7] / f, prof[3] / f, prof[4] / f, prof[5] / f, prof[6] / f
                 );
+                println!(
+                    "timing · CPU per round: input {:.2} · rules and springs {:.2} · windows' frames to the card {:.2} · compose {:.2} · regions {:.2} · paint {:.2} · rest {:.2} ms",
+                    prof_cpu[0] / f, prof_cpu[1] / f, prof_cpu[7] / f, prof_cpu[3] / f, prof_cpu[4] / f, prof_cpu[5] / f, prof_cpu[6] / f
+                );
                 prof_since = Instant::now();
                 prof_window_frames = 0;
                 prof_painted = 0;
                 prof = [0.0; 8];
+                prof_cpu = [0.0; 8];
                 prof_frames = 0;
             }
         }
@@ -2875,4 +2909,18 @@ impl Playback {
     fn target(&self, keyframe: usize, p: PropId, props: &[Animated]) -> f32 {
         self.values[keyframe].iter().find(|(q, _)| *q == p).map_or(props[p.0 as usize].target, |(_, v)| *v)
     }
+}
+
+/// The CPU this thread has used, in milliseconds (the wall clock also counts
+/// what it spends waiting).
+fn thread_cpu_ms() -> f64 {
+    #[cfg(target_os = "linux")]
+    {
+        let mut t = libc::timespec { tv_sec: 0, tv_nsec: 0 };
+        // SAFETY: a valid clock and a timespec of our own to fill.
+        if unsafe { libc::clock_gettime(libc::CLOCK_THREAD_CPUTIME_ID, &mut t) } == 0 {
+            return t.tv_sec as f64 * 1000.0 + t.tv_nsec as f64 / 1e6;
+        }
+    }
+    0.0
 }

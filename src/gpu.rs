@@ -2380,25 +2380,37 @@ impl Gpu {
         let mut erase = keep;
         // Nothing to paint again: what that buffer holds is already this frame.
         let (total, groups): (u32, &[(Range<u32>, usize)]) = if scissor == Some([0, 0, 0, 0]) { (0, &[]) } else { (total, groups) };
+        // Where it is painted, in the scene's plane: the piece that changed if
+        // only that is painted again, else all of the view. A group that does
+        // not touch it needs no layer: whatever of it could show is cut away.
+        let v = l.view.bounds();
+        let region = match scissor {
+            Some([x, y, w, h]) => [v[0] + x as f32 / l.scale, v[1] + y as f32 / l.scale, v[0] + (x + w) as f32 / l.scale, v[1] + (y + h) as f32 / l.scale],
+            None => v,
+        };
+        // What goes straight onto the target is gathered into as few passes as
+        // there are layers painted in between: a pass costs wgpu more than its draws.
+        let mut onto: Vec<Range<u32>> = Vec::new();
         for (span, layer) in groups {
             // The element that blends it comes right after its span: if that one
-            // falls in view, the layer is needed, even if what is inside does not.
+            // falls in the region, the layer is needed, even if what is inside does not.
             let with_blend = span.start..(span.end + 1).min(total);
-            if l.layers as usize > *layer && d.touches_view(&with_blend, l.view.bounds()) {
-                if span.start > from || !keep {
-                    pass_to(&mut encoder, target, &l.layer_group, &[from..span.start], keep, scissor, erase);
+            onto.push(from..span.start);
+            if l.layers as usize > *layer && d.touches_view(&with_blend, region) {
+                onto.retain(|r| !r.is_empty());
+                if !onto.is_empty() || !keep {
+                    pass_to(&mut encoder, target, &l.layer_group, &onto, keep, scissor, erase);
                     keep = true;
                     erase = false;
+                    onto.clear();
                 }
                 pass_to(&mut encoder, &l.layer_views[*layer], &self.no_layers_group, std::slice::from_ref(span), false, None, false);
-            } else {
-                pass_to(&mut encoder, target, &l.layer_group, &[from..span.start], keep, scissor, erase);
-                keep = true;
-                erase = false;
             }
             from = span.end;
         }
-        pass_to(&mut encoder, target, &l.layer_group, &[from..total], keep, scissor, erase);
+        onto.push(from..total);
+        onto.retain(|r| !r.is_empty());
+        pass_to(&mut encoder, target, &l.layer_group, &onto, keep, scissor, erase);
         if let Some(lens) = &mut l.lens {
             lens.copy_to(&mut encoder, frame_texture);
         }
