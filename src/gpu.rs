@@ -1498,7 +1498,7 @@ pub struct Gpu {
     /// buffer, to which layer, how much.
     #[cfg(target_os = "linux")]
     copies: std::cell::RefCell<Vec<(u64, u32, wgpu::Extent3d)>>,
-    last_submission: std::cell::RefCell<Option<wgpu::SubmissionIndex>>,
+    last_submission: std::cell::RefCell<Option<Sent>>,
     /// The layouts of the card's memory it can paint BGRA in, for a platform
     /// that lends its own textures (a monitor driven directly).
     render_modifiers: Vec<u64>,
@@ -2007,13 +2007,14 @@ impl Gpu {
         if !self.copies.borrow().is_empty() {
             let mut encoder = self.device.create_command_encoder(&Default::default());
             self.record_copies(&mut encoder);
-            self.last_submission.replace(Some(self.queue.submit(Some(encoder.finish()))));
+            self.queue.submit(Some(encoder.finish()));
+            self.last_submission.replace(Some(Sent::after(&self.queue)));
         }
     }
 
     /// The last work sent to the card: what has to be waited for before
     /// handing a program's buffer back.
-    pub fn last_submission(&self) -> Option<wgpu::SubmissionIndex> {
+    pub fn last_submission(&self) -> Option<Sent> {
         self.last_submission.borrow().clone()
     }
 
@@ -2032,8 +2033,8 @@ impl Gpu {
     }
 
     /// Whether the card has finished that work, without waiting for it.
-    pub fn is_done(&self, index: &wgpu::SubmissionIndex) -> bool {
-        self.device.poll(wgpu::PollType::Wait { submission_index: Some(index.clone()), timeout: Some(std::time::Duration::ZERO) }).is_ok()
+    pub fn is_done(&self, sent: &Sent) -> bool {
+        sent.done(&self.device)
     }
 
     /// Buffers of programs that no longer exist: what was kept of them goes.
@@ -2405,12 +2406,13 @@ impl Gpu {
         let commands = encoder.finish();
         let t2 = timing.then(std::time::Instant::now);
         let index = self.queue.submit(Some(commands));
-        self.last_submission.replace(Some(index.clone()));
+        let sent = Sent::after(&self.queue);
+        self.last_submission.replace(Some(sent.clone()));
         let t3 = timing.then(std::time::Instant::now);
         // `PLEAMAR_GPU_TIME=1`: how long the card takes to paint it, waiting for it
         // (only to measure: it holds the render meanwhile).
         if gpu_time_enabled() {
-            let _ = self.device.poll(wgpu::PollType::Wait { submission_index: Some(index.clone()), timeout: Some(std::time::Duration::from_secs(1)) });
+            sent.wait(&self.device, std::time::Duration::from_secs(1));
             let ms = t3.map_or(0.0, |t| t.elapsed().as_secs_f32() * 1000.0);
             GPU_TIME.with(|c| {
                 let (sum, n) = c.get();
@@ -2569,6 +2571,38 @@ mod tests {
             if p.kind == 1 {
                 assert!(exact.len() < searched.len() + 4, "{} versus {}", exact.len(), searched.len());
             }
+        }
+    }
+}
+
+/// Work sent to the card, and whether it has finished. Asked with a plain
+/// poll, never by waiting for a submission's number: wgpu checks that number
+/// against its fence in a way that breaks when two threads poll at once (the
+/// render, and each monitor of pleamar-wm), and the render went down with it.
+#[derive(Clone, Debug)]
+pub struct Sent(std::sync::Arc<std::sync::atomic::AtomicBool>);
+
+impl Sent {
+    /// Everything sent to that queue until now.
+    pub fn after(queue: &wgpu::Queue) -> Sent {
+        let flag = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let set = flag.clone();
+        queue.on_submitted_work_done(move || set.store(true, std::sync::atomic::Ordering::Release));
+        Sent(flag)
+    }
+
+    pub fn done(&self, device: &wgpu::Device) -> bool {
+        if !self.0.load(std::sync::atomic::Ordering::Acquire) {
+            let _ = device.poll(wgpu::PollType::Poll);
+        }
+        self.0.load(std::sync::atomic::Ordering::Acquire)
+    }
+
+    /// Until it has finished, or that long.
+    pub fn wait(&self, device: &wgpu::Device, most: std::time::Duration) {
+        let start = std::time::Instant::now();
+        while !self.done(device) && start.elapsed() < most {
+            std::thread::sleep(std::time::Duration::from_micros(200));
         }
     }
 }

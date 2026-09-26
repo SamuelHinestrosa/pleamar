@@ -274,7 +274,7 @@ pub fn run(
     let mut nest_copied: (Vec<u64>, bool) = (Vec::new(), false);
     // Programs' buffers the card is still copying, by the work they went in:
     // they go back as soon as it says it has finished, and nobody waits for it.
-    let mut nest_lent: Vec<(wgpu::SubmissionIndex, Vec<u64>)> = Vec::new();
+    let mut nest_lent: Vec<(crate::gpu::Sent, Vec<u64>)> = Vec::new();
     // Programs' buffers already destroyed that a window is still showing.
     #[cfg(target_os = "linux")]
     let mut nest_doomed: Vec<u64> = Vec::new();
