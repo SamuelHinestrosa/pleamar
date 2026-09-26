@@ -419,7 +419,15 @@ pub fn compile<'a>(tree: &'a [Entry], files: &'a [String], dirs: &'a [std::path:
         for (ox, oy, k) in copies {
             let mark = o.rules.len();
             let (i0, c0) = (o.e.instrs.len(), o.e.behaviors.len());
-            o.scopes.push(o.screen_scope(k));
+            let mut scope = o.screen_scope(k);
+            // What this copy draws is moved to its place in the plane; the mouse a
+            // rule reads is said the way the copy draws, over its own monitor.
+            for (n, off) in [("pointer.x", ox), ("pointer.y", oy)] {
+                if off != 0.0 {
+                    scope.exprs.insert(n.to_owned(), Expr::Sub(Box::new(o.facts[n].e()), Box::new(Expr::K(off))));
+                }
+            }
+            o.scopes.push(scope);
             let t = Transform { translate: (ox.into(), oy.into()), ..Transform::at((0.0.into(), 0.0.into())) };
             o.e.paint(Instr::Transform(Some(t.clone())));
             o.under.push(t);
