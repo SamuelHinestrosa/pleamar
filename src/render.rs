@@ -1321,7 +1321,10 @@ pub fn run(
                     Trigger::Drag(z) => {
                         dragged.is_some()
                             && match (scene.zones.get(z.0 as usize), drag) {
-                                (Some(zone), Some((_, o, _))) => zone.contains(c, o.0, o.1),
+                                // Only if it is on: a zone switched off —another monitor's
+                                // copy of a window, one hidden— that happens to hold the
+                                // point pressed did not ask to be dragged.
+                                (Some(zone), Some((_, o, _))) => zone.active.is_true(c) && zone.contains(c, o.0, o.1),
                                 _ => false,
                             }
                     }
@@ -1561,6 +1564,11 @@ pub fn run(
                 let target = t.to.eval(Ctx { props: &props, facts: &facts });
                 let a = &mut props[t.prop.0 as usize];
                 a.target = target;
+                // At once: there, still, and it keeps its own spring for what comes after.
+                if t.spring.is_instant() {
+                    a.settle();
+                    return false;
+                }
                 a.spring = t.spring;
                 if op.reduced_motion {
                     a.settle();

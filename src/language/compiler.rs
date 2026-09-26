@@ -982,8 +982,12 @@ impl<'a> Compiler<'a> {
         // `~620ms`: a spring given in time. It gets there in that while and does not bounce,
         // which is how the house's animation contracts are written.
         if let Some(TokenKind::Dur(_)) = c.peek() {
-            let t = c.dur()?.as_secs_f32().max(0.016);
-            return Ok(Spring::at(t));
+            let t = c.dur()?.as_secs_f32();
+            // `~0ms`: at once, without travelling (a window let go where the mouse left it).
+            if t == 0.0 {
+                return Ok(Spring::INSTANT);
+            }
+            return Ok(Spring::at(t.max(0.016)));
         }
         let n = c.id("a spring name")?;
         if n == "spring" {

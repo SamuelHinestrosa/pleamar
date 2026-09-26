@@ -1746,6 +1746,13 @@ impl Spring {
     pub const SLOW: Spring = Spring { stiffness: 28.0, damping: 11.0 };
     pub const GENTLE: Spring = Spring { stiffness: 190.0, damping: 24.0 };
     pub const POSE: Spring = Spring { stiffness: 260.0, damping: 28.0 };
+    /// `~0ms`: not a spring. It is there at once, still, and whatever
+    /// moves it next does so with its own spring.
+    pub const INSTANT: Spring = Spring { stiffness: f32::INFINITY, damping: 0.0 };
+
+    pub fn is_instant(&self) -> bool {
+        self.stiffness.is_infinite()
+    }
 
     /// The spring that gets there in that time without overshooting. Critically damped
     /// (`damping = 2 · √stiffness`), which is the one that does not bounce; with that, reaching 99 %
@@ -1994,6 +2001,10 @@ impl Animated {
     /// Semi-implicit Euler in steps of 2 ms at most: stable even if a
     /// frame arrives late.
     pub fn step(&mut self, dt: f32) {
+        if self.spring.is_instant() {
+            self.settle();
+            return;
+        }
         let steps = (dt / 0.002).ceil().max(1.0);
         let h = dt / steps;
         for _ in 0..steps as u32 {

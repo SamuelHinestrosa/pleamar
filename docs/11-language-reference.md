@@ -1180,6 +1180,12 @@ transcribed without stopping being springs — they keep their speed, they can b
 interrupted halfway, and they survive a hot reload. Measured: `~620ms` reaches
 99 % at 617 ms.
 
+`~0ms` is not a spring: the value is there at once and still, with no speed
+to carry, and whatever moves it next does so with its own spring. It is how a
+thing is put where it already is before it glides away —a window let go
+where the mouse left it: `dx: here - there ~0ms`, then `dx: 0 after 30ms`—.
+Jumping there with a fast spring instead gives it that speed, and it overshoots.
+
 **A gesture outranks whatever is ambient.** While it is holding a pose, any
 `blink`, `wave` or `spin` on that same pose goes quiet, **and its clock stops with
 it**: after the gesture, it picks up where it left off instead of firing at once
