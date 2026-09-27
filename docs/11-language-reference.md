@@ -1054,9 +1054,8 @@ by the copy that shows it.
 
 A window that closes leaves its last image in its slot: the scene can see it
 leave, fading on a spring, instead of vanishing. Programs that draw with the
-GPU are started with Mesa's software GL, since the frames this compositor takes
-yet are in shared memory; there is no XWayland either, so an X11-only program
-does not open here. A whole window manager is in pleamar-wm's `examples/windows.plm`.
+GPU hand over their frames on the card as they are; X11 programs open through
+XWayland like any other. A whole window manager is in pleamar-wm's `examples/windows.plm`.
 
 ```plm
 scene Nested {
