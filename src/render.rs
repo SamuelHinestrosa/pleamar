@@ -278,6 +278,8 @@ pub fn run(
     // they go back as soon as it says it has finished, and nobody waits for it.
     let mut nest_lent: Vec<(crate::gpu::Sent, Vec<u64>)> = Vec::new();
     let mut last_card_ask = Instant::now();
+    // Where each window was last told to be seen.
+    let mut nest_shown: std::collections::HashMap<usize, (String, [i32; 4])> = Default::default();
     // Programs' buffers already destroyed that a window is still showing.
     #[cfg(target_os = "linux")]
     let mut nest_doomed: Vec<u64> = Vec::new();
@@ -2106,6 +2108,33 @@ pub fn run(
                 let b = affine.bounds([d[0], d[1], d[0] + d[2], d[1] + d[3]]);
                 [b[0] - 1.0, b[1] - 1.0, b[2] + 1.0, b[3] + 1.0]
             }));
+        }
+
+        // Where each window is seen, for the compositor: on which monitor and its
+        // box there (the last one drawn, which is the one on top).
+        if let Some(send) = &nest {
+            let mut seen: Vec<usize> = Vec::new();
+            for (slot, d, affine) in draw.windows_drawn.iter().rev() {
+                if seen.contains(slot) {
+                    continue;
+                }
+                seen.push(*slot);
+                let b = affine.bounds([d[0], d[1], d[0] + d[2], d[1] + d[3]]);
+                let (cx, cy) = ((b[0] + b[2]) / 2.0, (b[1] + b[3]) / 2.0);
+                let Some(l) = sheets.iter().filter(|l| l.view.popup.is_none()).find(|l| {
+                    let v = l.view.bounds();
+                    cx >= v[0] && cx < v[2] && cy >= v[1] && cy < v[3]
+                }) else {
+                    continue;
+                };
+                let v = l.view.bounds();
+                let rect = [((b[0] - v[0]) * l.scale).round() as i32, ((b[1] - v[1]) * l.scale).round() as i32, ((b[2] - b[0]) * l.scale).round() as i32, ((b[3] - b[1]) * l.scale).round() as i32];
+                let now = (l.name.clone(), rect);
+                if nest_shown.get(slot) != Some(&now) {
+                    nest_shown.insert(*slot, now.clone());
+                    send(ToNest::Shown { slot: *slot, monitor: now.0, rect });
+                }
+            }
         }
 
         // Where the mouse comes in: the active zones, and nothing else. The rest of

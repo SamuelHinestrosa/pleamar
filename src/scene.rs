@@ -1967,6 +1967,9 @@ pub enum ToNest {
     Send(usize, usize),
     /// Those two windows change places.
     Swap(usize, usize),
+    /// Where a window is seen: on which monitor (by its name) and its box
+    /// there, in pixels. Told when it changes (for screenshots of it).
+    Shown { slot: usize, monitor: String, rect: [i32; 4] },
     /// The monitor the pointer is on: where new windows open.
     OnScreen(usize),
     Launch(String),
