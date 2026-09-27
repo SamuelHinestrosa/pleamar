@@ -58,6 +58,7 @@ A misspelled name is an error there and then, with a suggestion: `the scene has 
 | `workspaces` | `{ active = 3, list = { { id, name, windows, monitor, active }, … } }`; each one's `active` says whether it is the active one **on its monitor**, which is what a bar per screen needs | Hyprland, over its sockets (without running `hyprctl`) |
 | `window` | `{ title, class, monitor }` of the one with the focus; elsewhere than Hyprland also `list = { { id, title, class, monitor, active, minimized }, … }`, every window in the order it came | Hyprland; any compositor with wlr-foreign-toplevel (pleamar-wm, sway, niri…) |
 | `sys.call("workspaces.focus", n)` | go to a workspace | Hyprland |
+| `sys.call("window.restore", id)` · `("window.minimize", id)` · `("window.activate", id)` · `("window.close", id)` | a window, by the `id` `window`'s `list` gives it: brought back (with the keyboard), put away, given the keyboard, asked to close | wlr-foreign-toplevel (pleamar-wm, sway, niri…) |
 | `audio` | `{ volume = 0.54, muted = false }` | Linux: PipeWire (`wpctl`, and `pactl subscribe` to find out) |
 | `sys.call("audio.volume", 0.5)` · `("audio.step", -0.05)` · `("audio.mute")` | set it, move it one step, silence it (or `("audio.mute", true)`) | |
 | `battery` | `{ present, percent, charging }`; a desktop answers `{ present = false }` | Linux: `/sys/class/power_supply` |
