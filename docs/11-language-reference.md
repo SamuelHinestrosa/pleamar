@@ -452,7 +452,7 @@ Each element accepts these properties and no others; another one is an error, wi
 | `shader` | `at` (its top left corner) · `size: w, h` · `corner` · `opacity` · `show` · `values: a, b, …` (up to eight numbers, any expression) · `colors: c1, c2` (up to two). What it is and how it is written: §8.1 |
 | `figure` | `at` (where the piece's centre goes) · `size: w, h` or `scale:` (without either, one unit of the svg is one pixel) · `pivot: x, y` (in the svg's units, from its centre: the point it **turns** around, which does not move it) · `rotate` · `color` (instead of the one in the file) · `opacity` · `blend` · `stroke` · `show` |
 | `input` | `at` · `width` · `size` · `weight` · `color` · `opacity` · `family` · `placeholder` · `selection` · `secret` · `show` |
-| `group` | `pivot` · `rotate` · `scale: s` or `sx, sy` · `move: dx, dy` · `opacity` (they melt as a single thing) · `size` (for whoever lays it out) · `show` · and its **effects**: `blur` · `glow` · `saturation` · `brightness` · `contrast` · `hue` · `mask` · `mode` (§8.2) |
+| `group` | `pivot` · `rotate` · `scale: s` or `sx, sy` · `move: dx, dy` · `opacity` (they melt as a single thing) · `size` (for whoever lays it out) · `show` · `z` (see below) · and its **effects**: `blur` · `glow` · `saturation` · `brightness` · `contrast` · `hue` · `mask` · `mode` (§8.2) |
 | `popup` | `at` (inside the surface) · `size` · `open:` a fact |
 | `row` `column` | `at` · `anchor` · `gap` · `padding` · `align:` `start` `center` `end` · `fill` · `corner` · `opacity` · `cursor` · `show` · `size: w, h` · `view: w, h` · `step` · `content` · `wrap: n` |
 | `grid` | `at` · `columns` · `width` · `gap` · `row` (the height of every row) · `show` · `opacity`; and on its children, `span`. What it is: below |
@@ -727,6 +727,16 @@ it comes back unknown. And the box itself should not cover it all either —an
 alpha of 0.88, like the lens— or the next frame does not know what is behind
 it. It is read with the same capture as the glass, so the same thing applies:
 on a compositor that does not let the screen be captured, it is always unknown.
+
+**`z:` — what goes on top.** Groups with `z:` that are side by side (in the
+same group, or loose in the scene, even from different iterations of a
+`repeat`) are drawn from the smallest `z` to the biggest, whatever the order
+they were written in; with the same `z`, as written. Their zones follow them:
+where two overlap, the press goes to the one drawn on top. It is how windows
+stack —the one you touch comes forward: `z: stamp.$i` with a fact the press
+bumps— and it moves nothing else: what has no `z:` stays where it was
+written. A group with `z:` inside another one with `z:` is an error: only one
+level is sorted.
 
 ### 8.2. Effects on a group
 
@@ -1329,7 +1339,7 @@ properties.figure: at size scale rotate pivot color opacity blend stroke show gr
 properties.shader: at size corner opacity show values colors grow
 properties.particles: at area count life speed direction spread gravity drag size colors opacity shape emit burst show
 properties.input: at width size weight color opacity family placeholder selection secret show
-properties.group: pivot rotate scale move opacity size show grow span blur glow saturation brightness contrast hue mask mode
+properties.group: pivot rotate scale move opacity size show z grow span blur glow saturation brightness contrast hue mask mode
 properties.popup: at size open
 properties.children: move
 properties.grid: at columns gap width row show opacity

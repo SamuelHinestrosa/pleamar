@@ -1,0 +1,27 @@
+// expect: ok
+// Two cards that overlap: the one pressed comes over the other (`z:`), and
+// takes the mouse where it covers it.
+scene ZOrder {
+    surface { size: 400, 300; kind: window; title: "z" }
+    fact top = 0
+    fact reds = 0
+    fact blues = 0
+    group {
+        z: if(top == 0, 1, 0)
+        box { from: 50, 50; size: 200, 150; color: #d04040 }
+        zone box red { from: 50, 50; size: 200, 150 }
+    }
+    group {
+        z: if(top == 1, 1, 0)
+        box { from: 150, 100; size: 200, 150; color: #4040d0 }
+        zone box blue { from: 150, 100; size: 200, 150 }
+    }
+    on press red {
+        top = 0
+        reds = reds + 1
+    }
+    on press blue {
+        top = 1
+        blues = blues + 1
+    }
+}

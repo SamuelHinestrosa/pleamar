@@ -71,6 +71,8 @@ pub struct DrawList {
     /// Stretches of instructions that are not looked at this frame: those of a
     /// per-screen copy whose surface is closed.
     pub skip: Vec<std::ops::Range<usize>>,
+    /// The order the instructions are painted in, if groups with `z:` changed it.
+    pub order: Option<Vec<usize>>,
     /// And which edges it is attached to: nothing is reported against those.
     attached_edges: [bool; 4],
     /// Where there is glass this frame, in strips of the scene plane: what the
@@ -719,18 +721,25 @@ impl DrawList {
         let color = |col: &Color| [col[0].eval(c), col[1].eval(c), col[2].eval(c)];
         let tip_scale = tip.scale();
 
-        let mut skip = self.skip.clone();
-        skip.sort_by_key(|r| r.start);
-        let mut skips = skip.into_iter().peekable();
-        for (idx, i) in instrs.iter().enumerate() {
-            if let Some(r) = skips.peek() {
-                if r.contains(&idx) {
-                    continue;
-                }
-                if idx >= r.end {
-                    skips.next();
-                }
+        // What is not looked at this frame, by instruction; and in which order
+        // (groups with `z:` drawn over their siblings as it says).
+        let mut asleep = vec![false; instrs.len()];
+        for r in &self.skip {
+            let end = r.end.min(asleep.len());
+            for k in r.start.min(end)..end {
+                asleep[k] = true;
             }
+        }
+        let order = self.order.clone();
+        let sequence: Box<dyn Iterator<Item = usize>> = match &order {
+            Some(o) => Box::new(o.iter().copied()),
+            None => Box::new(0..instrs.len()),
+        };
+        for idx in sequence {
+            if asleep[idx] {
+                continue;
+            }
+            let i = &instrs[idx];
             let hidden = opacity_groups.iter().any(|g| matches!(g, OpacityGroup::Hidden));
             // What multiplies each element: the groups that have no layer of their own.
             let mult: f32 = opacity_groups.iter().map(|g| if let OpacityGroup::Multiply(a) = g { *a } else { 1.0 }).product();

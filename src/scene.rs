@@ -1162,6 +1162,75 @@ pub struct Zone {
     /// The transforms it lives under, from outside in: what is seen
     /// rotated is pressed rotated.
     pub under: Vec<Transform>,
+    /// Where it was declared among the instructions, and the group with `z:`
+    /// it is inside, if any: a zone is on top where what holds it is drawn.
+    pub at: usize,
+    pub zblock: Option<u16>,
+}
+
+/// A `group` with `z:`: its instructions, and which groups it is sorted
+/// among —the ones with `z:` beside it, in the same group or copy—.
+#[derive(Clone, Debug)]
+pub struct ZBlock {
+    pub range: std::ops::Range<usize>,
+    pub z: Expr,
+    pub parent: u32,
+}
+
+/// Where the groups with `z:` are drawn this frame: the instructions in the
+/// order they are painted, and each zone's place in it (bigger, on top).
+pub struct ZArrangement {
+    pub order: Vec<usize>,
+    pub zone_rank: Vec<(usize, u8, usize)>,
+}
+
+impl Scene {
+    /// Siblings with `z:` sorted by it (the same value: as declared), each
+    /// taking the place in the sequence of the one it now stands for.
+    pub fn z_arrange(&self, c: Ctx) -> Option<ZArrangement> {
+        if self.zblocks.is_empty() {
+            return None;
+        }
+        // For each block, the block drawn in its place.
+        let mut content: Vec<usize> = (0..self.zblocks.len()).collect();
+        let mut parents: Vec<u32> = self.zblocks.iter().map(|b| b.parent).collect();
+        parents.sort_unstable();
+        parents.dedup();
+        for p in parents {
+            let set: Vec<usize> = (0..self.zblocks.len()).filter(|k| self.zblocks[*k].parent == p).collect();
+            let mut sorted = set.clone();
+            sorted.sort_by(|a, b| self.zblocks[*a].z.eval(c).total_cmp(&self.zblocks[*b].z.eval(c)).then(a.cmp(b)));
+            for (slot, drawn) in set.iter().zip(sorted) {
+                content[*slot] = drawn;
+            }
+        }
+        // Where each block is drawn: the start of the slot that holds it.
+        let mut drawn_at = vec![0; self.zblocks.len()];
+        for (slot, b) in content.iter().enumerate() {
+            drawn_at[*b] = self.zblocks[slot].range.start;
+        }
+        let n = self.instrs.len();
+        let mut order = Vec::with_capacity(n);
+        let starts: std::collections::HashMap<usize, usize> = self.zblocks.iter().enumerate().map(|(k, b)| (b.range.start, k)).collect();
+        let mut i = 0;
+        while i < n {
+            match starts.get(&i) {
+                Some(&slot) => {
+                    order.extend(self.zblocks[content[slot]].range.clone());
+                    i = self.zblocks[slot].range.end.max(i + 1);
+                }
+                None => {
+                    order.push(i);
+                    i += 1;
+                }
+            }
+        }
+        let zone_rank = self.zones.iter().map(|z| match z.zblock {
+            Some(b) => (drawn_at[b as usize], 1, z.at - self.zblocks[b as usize].range.start),
+            None => (z.at, 0, 0),
+        }).collect();
+        Some(ZArrangement { order, zone_rank })
+    }
 }
 
 impl Zone {
@@ -1488,6 +1557,8 @@ pub struct Scene {
     pub instrs: Vec<Instr>,
     pub behaviors: Vec<Behavior>,
     pub zones: Vec<Zone>,
+    /// The groups with `z:`, drawn over or under their siblings by it.
+    pub zblocks: Vec<ZBlock>,
     /// `hit.hover` and `hit.pressed`: springs the render moves by itself, from
     /// 0 to 1 while the pointer is over the zone and while it is pressed.
     pub zone_springs: Vec<(ZoneId, PropId, PropId)>,
@@ -1741,7 +1812,7 @@ impl Scene {
         self.zone_under(id, shape, active, vec![])
     }
     pub fn zone_under(&mut self, id: &'static str, shape: Shape, active: impl Into<Expr>, under: Vec<Transform>) -> ZoneId {
-        self.zones.push(Zone { id, shape, active: active.into(), cursor: Cursor::Normal, under });
+        self.zones.push(Zone { id, shape, active: active.into(), cursor: Cursor::Normal, under, at: self.instrs.len(), zblock: None });
         ZoneId(self.zones.len() as u16 - 1)
     }
     /// Claims go from more to less priority; the last one should be

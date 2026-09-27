@@ -137,6 +137,9 @@ thread_local! {
 /// with `zone` or if it carries `active`.
 struct Candidate {
     name: String,
+    /// Where it was declared among the instructions, and in which group with `z:`.
+    at: usize,
+    zblock: Option<u16>,
     shape: Shape,
     active: Option<Expr>,
     /// If what contains it is not there (`show:`, a record that does not exist), neither is it.
@@ -279,6 +282,11 @@ struct Compiler<'a> {
     colors: HashMap<String, Color>,
     springs: HashMap<String, Spring>,
     candidates: Vec<Candidate>,
+    /// The group or copy whose children are sorted by `z:`, and the group
+    /// with `z:` being read (one inside another is not sorted).
+    zparents: Vec<u32>,
+    next_zparent: u32,
+    zblock: Option<u16>,
     /// The rules are left for the end: that way they can name shapes that are
     /// painted further down.
     rules: Vec<(&'a Node, Vec<Scope>)>,
@@ -345,7 +353,7 @@ pub fn compile<'a>(tree: &'a [Entry], files: &'a [String], dirs: &'a [std::path:
             "pose" => Spring::POSE,
             other => unreachable!("'{other}' is in the vocabulary, but it has no stiffness or damping"),
         })).collect(),
-        under: Vec::new(), candidates: Vec::new(), rules: Vec::new(), errors: Vec::new(), declared: Vec::new(), used: Default::default(), current_class: String::new(),
+        under: Vec::new(), candidates: Vec::new(), zparents: vec![0], next_zparent: 1, zblock: None, rules: Vec::new(), errors: Vec::new(), declared: Vec::new(), used: Default::default(), current_class: String::new(),
         scrolls: Vec::new(), row_scrolls: Default::default(), pending_surfaces: Vec::new(), pending_levels: Vec::new(), hover_mentions: Default::default(), zone_springs: Vec::new(), pending_anchors: Vec::new(), files, dirs, strict_files, libraries, boundary_of: HashMap::new(), permissions_of: HashMap::new(), pass: 0, next_origin: 0.0, values: HashMap::new(), ambiguous: Default::default(), instance_children: Vec::new(), from_library: Default::default(), unrequested: Default::default(), unwatched: Default::default(), in_letters: Default::default(), scopes: Vec::new(), components: HashMap::new(), copies: 0, effects_depth: 0, in_slot: false, last_size: None, imposed_measure: None, pending_keyboard: None, prop_sites: HashMap::new(),
     };
     // Two facts that always exist: what the surface really measures. The
@@ -428,10 +436,14 @@ pub fn compile<'a>(tree: &'a [Entry], files: &'a [String], dirs: &'a [std::path:
                 }
             }
             o.scopes.push(scope);
+            // Each copy's groups with `z:` are sorted among themselves.
+            o.zparents.push(o.next_zparent);
+            o.next_zparent += 1;
             let t = Transform { translate: (ox.into(), oy.into()), ..Transform::at((0.0.into(), 0.0.into())) };
             o.e.paint(Instr::Transform(Some(t.clone())));
             o.under.push(t);
             o.group(this_pass.clone().into_iter());
+            o.zparents.pop();
             o.under.pop();
             o.e.paint(Instr::Transform(None));
             o.close_scope(mark);
@@ -1526,7 +1538,7 @@ impl<'a> Compiler<'a> {
         // which it is painted. Whether it is or not is decided at the end: see `materialize_zones`.
         if let Some(name) = &name {
             let name = &self.declare_zone(name);
-            self.candidates.push(Candidate { name: name.clone(), shape: shape.clone(), active, visible: None, under: self.under.clone(), forced: false, cursor });
+            self.candidates.push(Candidate { name: name.clone(), at: self.e.instrs.len(), zblock: self.zblock, shape: shape.clone(), active, visible: None, under: self.under.clone(), forced: false, cursor });
         }
         Ok(ParsedShape { shape, color, opacity, blend, size: extent, glass_spec })
     }
@@ -1946,6 +1958,35 @@ impl<'a> Compiler<'a> {
     fn group_with_properties(&mut self, n: &Node, body: &'a [Entry]) -> R<()> {
         let mut p = self.properties(n, vocab::properties("group"))?;
         self.in_slot = false;
+        // `z:` draws it over the groups with `z:` beside it that have less, and
+        // its zones catch the mouse over theirs.
+        let z = match p.get_mut("z") {
+            Some(c) => {
+                if self.zblock.is_some() {
+                    return Err(CompileError::at(n.line, n.col, "a group with `z:` inside another one with `z:`: only the outer ones are sorted. Give it to one of the two"));
+                }
+                Some(self.expr(c)?)
+            }
+            None => None,
+        };
+        let z_start = self.e.instrs.len();
+        let parent = *self.zparents.last().unwrap_or(&0);
+        if z.is_some() {
+            self.zblock = Some(self.e.zblocks.len() as u16);
+            self.e.zblocks.push(crate::scene::ZBlock { range: z_start..z_start, z: Expr::K(0.0), parent });
+        }
+        self.zparents.push(self.next_zparent);
+        self.next_zparent += 1;
+        let result = self.group_body(n, body, p);
+        self.zparents.pop();
+        if let Some(z) = z {
+            let k = self.zblock.take().unwrap() as usize;
+            self.e.zblocks[k] = crate::scene::ZBlock { range: z_start..self.e.instrs.len(), z, parent };
+        }
+        result
+    }
+
+    fn group_body(&mut self, n: &Node, body: &'a [Entry], mut p: HashMap<&str, Cur>) -> R<()> {
         let size = match p.get_mut("size") {
             Some(c) => Some(self.point(c)?),
             None => None,
@@ -2917,6 +2958,8 @@ impl<'a> Compiler<'a> {
         let zone = self.declare_zone(&local);
         self.candidates.push(Candidate {
             name: zone.clone(),
+            at: self.e.instrs.len(),
+            zblock: self.zblock,
             shape: Shape::Rect { center: (at.0.clone() + width.clone() * 0.5, at.1.clone() + height * 0.5), half_size: (width.clone() * 0.5, (height * 0.5 + 3.0).into()), radius: 0.0.into() },
             active: None, visible: None, under: self.under.clone(), forced: true, cursor: Cursor::Text,
         });
@@ -4609,7 +4652,7 @@ impl<'a> Compiler<'a> {
                 under.push(t.clone());
             }
             let bounds = Shape::Rect { center: (size.0.clone() * 0.5, size.1.clone() * 0.5), half_size: (size.0.clone() * 0.5, size.1.clone() * 0.5), radius: zone_corner };
-            self.candidates.insert(base_candidates, Candidate { name: name.clone(), shape: bounds, active: None, visible: None, under, forced: scroller.is_some(), cursor: stack_cursor });
+            self.candidates.insert(base_candidates, Candidate { name: name.clone(), at: instr_base, zblock: self.zblock, shape: bounds, active: None, visible: None, under, forced: scroller.is_some(), cursor: stack_cursor });
             // A hidden stack does not catch the mouse: neither its children nor IT, which with
             // `view:` has a zone of its own —the one for the wheel and dragging— the
             // size of its window. Hidden and in front, that zone
@@ -5222,6 +5265,8 @@ impl<'a> Compiler<'a> {
         let zone = self.declare_zone(&local);
         self.candidates.push(Candidate {
             name: zone,
+            at: self.e.instrs.len(),
+            zblock: self.zblock,
             shape: Shape::Rect { center: (x.clone() + w.clone() * 0.5, y.clone() + h.clone() * 0.5), half_size: (w.clone() * 0.5, h.clone() * 0.5), radius: 0.0.into() },
             active: None,
             visible: Some(alpha.clone()),
@@ -5473,6 +5518,8 @@ impl<'a> Compiler<'a> {
                 };
                 let z = self.e.zone_under(interned(&k.name), k.shape, active, k.under);
                 self.e.zones[z.0 as usize].cursor = k.cursor;
+                self.e.zones[z.0 as usize].at = k.at;
+                self.e.zones[z.0 as usize].zblock = k.zblock;
                 self.zones.insert(k.name, z);
             }
         }

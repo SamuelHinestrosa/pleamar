@@ -1027,8 +1027,13 @@ pub fn run(
                 }
             }
         }
-        // The topmost one is the last declared.
-        let hovered = inside.iter().rposition(|d| *d);
+        // The topmost one is the last declared; or, with groups with `z:`, the
+        // one drawn last.
+        let arrangement = scene.z_arrange(Ctx { props: &props, facts: &facts });
+        let hovered = match &arrangement {
+            Some(a) => inside.iter().enumerate().filter(|(_, d)| **d).max_by_key(|(k, _)| (a.zone_rank[*k], *k)).map(|(k, _)| k),
+            None => inside.iter().rposition(|d| *d),
+        };
         if std::env::var_os("PLEAMAR_DEBUG_ZONES").is_some() && !edges.is_empty() {
             let names: Vec<&str> = inside.iter().enumerate().filter(|(_, d)| **d).map(|(k, _)| scene.zones[k].id).collect();
             eprintln!("zones  · under the pointer: {names:?}");
@@ -1949,6 +1954,7 @@ pub fn run(
         let reading = Instant::now();
         let skip: Vec<std::ops::Range<usize>> = asleep.iter().map(|t| t.instrs.clone()).collect();
         draw.skip = skip;
+        draw.order = arrangement.map(|a| a.order);
         draw.clock = t_total;
         draw.reduced_motion = op.reduced_motion;
         if draw.signal_times.len() != scene.signals.len() {
