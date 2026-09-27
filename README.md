@@ -73,7 +73,7 @@ waits for the logic.
 
 ![Preview Effects]
 
-<sub>`examples/effects.plm`: a WGSL aurora, glowing particles, a ripple that follows the pointer.</sub>
+<sub>`examples/effects.plm`: a WGSL aurora with glowing particles, a ripple that follows the pointer, a heat haze.</sub>
 
 <br>
 <br>
