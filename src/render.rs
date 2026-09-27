@@ -770,6 +770,7 @@ pub fn run(
                         }
                         NestEvent::Title(slot, t) => nest_text(&scene, &mut texts, &to_logic, &format!("{name}.{slot}.title"), t),
                         NestEvent::App(slot, t) => nest_text(&scene, &mut texts, &to_logic, &format!("{name}.{slot}.app"), t),
+                        NestEvent::Fullscreen(slot, yes) => nest_fact(&scene, &mut facts, &to_logic, &format!("{name}.{slot}.fullscreen"), yes as u8 as f32),
                         NestEvent::Frame { slot, geometry, pieces } => {
                             prof_window_frames += 1;
                             if let Some(w) = nest_windows.get_mut(slot) {
@@ -828,6 +829,7 @@ pub fn run(
                             // Its last image stays: the scene may want to see it leave.
                             nest_fact(&scene, &mut facts, &to_logic, &format!("{name}.{slot}.open"), 0.0);
                             nest_fact(&scene, &mut facts, &to_logic, &format!("{name}.{slot}.focused"), 0.0);
+                            nest_fact(&scene, &mut facts, &to_logic, &format!("{name}.{slot}.fullscreen"), 0.0);
                             if nest_grab == Some(slot) {
                                 nest_grab = None;
                             }
@@ -1495,6 +1497,7 @@ pub fn run(
                                 WindowAction::Focus => ToNest::Focus(slot),
                                 WindowAction::Close => ToNest::Close(slot),
                                 WindowAction::Promote => ToNest::Promote(slot),
+                                WindowAction::Fullscreen => ToNest::Fullscreen(slot),
                             });
                         }
                     }

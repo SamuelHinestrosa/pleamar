@@ -14,6 +14,8 @@ scene Windows {
     on key Alt+m { promote win(win.order.1) }
     on key Alt+s { send win(win.focus) to 1 - pick(win.focus, win.0.screen, win.1.screen, win.2.screen) }
     on key Alt+x { swap win(win.focus) with win(win.order.0) }
+    on key Alt+f { fullscreen win(win.focus) }
+    box { from: 0, 0; size: 600 * win.0.fullscreen, 400; color: #000; show: win.0.fullscreen }
     text "{win.on.0} here, {win.on.1} there" { at: 10, 30; size: 11; color: #fff }
     box { from: win.reserved.0.left, win.reserved.0.top; size: 10, 10; color: #fff }
 }

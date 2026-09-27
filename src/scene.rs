@@ -1449,6 +1449,8 @@ pub enum WindowAction {
     Close,
     /// It goes first in the order the scene lays them out in.
     Promote,
+    /// It goes to fullscreen, or back from it.
+    Fullscreen,
 }
 
 impl Effect {
@@ -1894,6 +1896,8 @@ pub enum NestEvent {
     Reserved(usize, [f32; 4]),
     Title(usize, String),
     App(usize, String),
+    /// A window is fullscreen now, or no longer: it asked, or the scene did.
+    Fullscreen(usize, bool),
     /// What a window shows now: its pieces —its surface, its subsurfaces, its
     /// menus— in the order they are drawn, placed from the corner of its main
     /// surface, and where the window itself is in that surface (a program may
@@ -1963,6 +1967,8 @@ pub enum ToNest {
     Focus(usize),
     Close(usize),
     Promote(usize),
+    /// That window to fullscreen, or back from it.
+    Fullscreen(usize),
     /// That window, to that monitor.
     Send(usize, usize),
     /// Those two windows change places.
