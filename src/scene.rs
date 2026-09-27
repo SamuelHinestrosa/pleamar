@@ -1191,7 +1191,11 @@ impl Scene {
         if self.zblocks.is_empty() {
             return None;
         }
-        // For each block, the block drawn in its place.
+        let n = self.instrs.len();
+        // Each set of siblings, sorted: where each one stands among them (its
+        // zones' place), and for the ones that draw, the one drawn in their place.
+        let mut rank = vec![0usize; self.zblocks.len()];
+        let mut set_start = vec![0usize; self.zblocks.len()];
         let mut content: Vec<usize> = (0..self.zblocks.len()).collect();
         let mut parents: Vec<u32> = self.zblocks.iter().map(|b| b.parent).collect();
         parents.sort_unstable();
@@ -1200,18 +1204,19 @@ impl Scene {
             let set: Vec<usize> = (0..self.zblocks.len()).filter(|k| self.zblocks[*k].parent == p).collect();
             let mut sorted = set.clone();
             sorted.sort_by(|a, b| self.zblocks[*a].z.eval(c).total_cmp(&self.zblocks[*b].z.eval(c)).then(a.cmp(b)));
-            for (slot, drawn) in set.iter().zip(sorted) {
-                content[*slot] = drawn;
+            let start = set.iter().map(|k| self.zblocks[*k].range.start).min().unwrap_or(0);
+            for (r, k) in sorted.iter().enumerate() {
+                rank[*k] = r;
+                set_start[*k] = start;
+            }
+            // Only the ones that draw something swap places in the sequence.
+            let drawing = |k: &&usize| !self.zblocks[**k].range.is_empty();
+            for (slot, drawn) in set.iter().filter(drawing).zip(sorted.iter().filter(drawing)) {
+                content[*slot] = *drawn;
             }
         }
-        // Where each block is drawn: the start of the slot that holds it.
-        let mut drawn_at = vec![0; self.zblocks.len()];
-        for (slot, b) in content.iter().enumerate() {
-            drawn_at[*b] = self.zblocks[slot].range.start;
-        }
-        let n = self.instrs.len();
         let mut order = Vec::with_capacity(n);
-        let starts: std::collections::HashMap<usize, usize> = self.zblocks.iter().enumerate().map(|(k, b)| (b.range.start, k)).collect();
+        let starts: std::collections::HashMap<usize, usize> = self.zblocks.iter().enumerate().filter(|(_, b)| !b.range.is_empty()).map(|(k, b)| (b.range.start, k)).collect();
         let mut i = 0;
         while i < n {
             match starts.get(&i) {
@@ -1225,10 +1230,14 @@ impl Scene {
                 }
             }
         }
-        let zone_rank = self.zones.iter().map(|z| match z.zblock {
-            Some(b) => (drawn_at[b as usize], 1, z.at - self.zblocks[b as usize].range.start),
-            None => (z.at, 0, 0),
-        }).collect();
+        let zone_rank = self
+            .zones
+            .iter()
+            .map(|z| match z.zblock {
+                Some(b) => (set_start[b as usize], 1, rank[b as usize] * 1_000_000 + (z.at - self.zblocks[b as usize].range.start)),
+                None => (z.at, 0, 0),
+            })
+            .collect();
         Some(ZArrangement { order, zone_rank })
     }
 }

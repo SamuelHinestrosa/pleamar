@@ -1035,7 +1035,15 @@ pub fn run(
             None => inside.iter().rposition(|d| *d),
         };
         if std::env::var_os("PLEAMAR_DEBUG_ZONES").is_some() && !edges.is_empty() {
-            let names: Vec<&str> = inside.iter().enumerate().filter(|(_, d)| **d).map(|(k, _)| scene.zones[k].id).collect();
+            let names: Vec<String> = inside
+                .iter()
+                .enumerate()
+                .filter(|(_, d)| **d)
+                .map(|(k, _)| match &arrangement {
+                    Some(a) => format!("{} {:?}", scene.zones[k].id, a.zone_rank[k]),
+                    None => scene.zones[k].id.to_owned(),
+                })
+                .collect();
             eprintln!("zones  · under the pointer: {names:?}");
         }
         let (mut pressed, mut pressed_with, mut released) = (None, None, None);
