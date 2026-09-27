@@ -1333,7 +1333,9 @@ pub trait Frames: Send {
     /// `modifiers`: the layouts of the card's memory it can paint in.
     fn acquire(&mut self, device: &wgpu::Device, modifiers: &[u64]) -> Option<(usize, wgpu::Texture)>;
     /// That one is painted, in that work: to the monitor once it is done.
-    fn present(&mut self, which: usize, done: wgpu::SubmissionIndex, device: &wgpu::Device, queue: &wgpu::Queue);
+    /// `changed`: the piece of it that may differ from the frame presented
+    /// before, in its pixels (x, y, w, h); none if all of it may.
+    fn present(&mut self, which: usize, done: wgpu::SubmissionIndex, device: &wgpu::Device, queue: &wgpu::Queue, changed: Option<[u32; 4]>);
 }
 
 /// What the platform hands the render thread for each surface.
@@ -2446,7 +2448,7 @@ impl Gpu {
             }
             Frame::Lent(which, _) => {
                 if let Target::Frames(frames) = &mut l.target {
-                    frames.present(which, index, &self.device, &self.queue);
+                    frames.present(which, index, &self.device, &self.queue, scissor);
                 }
             }
         }
