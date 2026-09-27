@@ -334,6 +334,8 @@ change it, ship it, sell it — keep the copyright notice. Every dependency is
 permissive (MIT, Apache-2.0, BSD-3-Clause, Zlib); `THIRD-PARTY.md` lists them,
 and their notices travel with any binary you hand out.
 
+Contributions are welcome, made with AI or without it: see the [AI policy](AI_POLICY.md).
+
 Made by **[@k4ditano][X]** — follow along on X for what comes next.
 If it makes your desktop nicer, you can **[buy me a coffee on Ko-fi][Ko-fi]** ☕
 
