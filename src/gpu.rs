@@ -1066,7 +1066,9 @@ impl DrawList {
                     // have, from its corner: a window that could not be that
                     // small —a minimum of its own— comes out cut, not squashed.
                     let b = [target.0.eval(c), target.1.eval(c), target.2.eval(c).max(1.0), target.3.eval(c).max(1.0)];
-                    let (sx, sy) = (b[2] / ask.0.eval(c).max(1.0), b[3] / ask.1.eval(c).max(1.0));
+                    // Asked for nothing (`ask: 0, 0`, the size it chooses): as it is.
+                    let fit = |box_: f32, asked: f32| if asked < 0.5 { 1.0 } else { box_ / asked };
+                    let (sx, sy) = (fit(b[2], ask.0.eval(c)), fit(b[3], ask.1.eval(c)));
                     let g = tex.geometry;
                     let d = [b[0], b[1], (g[2] * sx).max(1.0), (g[3] * sy).max(1.0)];
                     self.windows_drawn.push((*slot, d, affine));

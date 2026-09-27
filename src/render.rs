@@ -774,6 +774,7 @@ pub fn run(
                         NestEvent::Title(slot, t) => nest_text(&scene, &mut texts, &to_logic, &format!("{name}.{slot}.title"), t),
                         NestEvent::App(slot, t) => nest_text(&scene, &mut texts, &to_logic, &format!("{name}.{slot}.app"), t),
                         NestEvent::Fullscreen(slot, yes) => nest_fact(&scene, &mut facts, &to_logic, &format!("{name}.{slot}.fullscreen"), yes as u8 as f32),
+                        NestEvent::Dialog(slot, yes) => nest_fact(&scene, &mut facts, &to_logic, &format!("{name}.{slot}.dialog"), yes as u8 as f32),
                         NestEvent::Frame { slot, geometry, pieces } => {
                             prof_window_frames += 1;
                             if let Some(w) = nest_windows.get_mut(slot) {
@@ -835,6 +836,7 @@ pub fn run(
                             nest_fact(&scene, &mut facts, &to_logic, &format!("{name}.{slot}.open"), 0.0);
                             nest_fact(&scene, &mut facts, &to_logic, &format!("{name}.{slot}.focused"), 0.0);
                             nest_fact(&scene, &mut facts, &to_logic, &format!("{name}.{slot}.fullscreen"), 0.0);
+                            nest_fact(&scene, &mut facts, &to_logic, &format!("{name}.{slot}.dialog"), 0.0);
                             if nest_grab == Some(slot) {
                                 nest_grab = None;
                             }
@@ -2057,7 +2059,8 @@ pub fn run(
                     if alpha.eval(c) <= 0.001 {
                         continue;
                     }
-                    let wanted = (ask.0.eval(c).round().max(1.0) as i32, ask.1.eval(c).round().max(1.0) as i32);
+                    // `ask: 0, 0`: the size it chooses (a dialog of its own size).
+                    let wanted = (ask.0.eval(c).round().max(0.0) as i32, ask.1.eval(c).round().max(0.0) as i32);
                     if let Some(w) = nest_windows.get_mut(*slot) {
                         if w.ask != Some(wanted) {
                             w.ask = Some(wanted);

@@ -1017,6 +1017,7 @@ reloads on save while the programs in it keep running.
 | `win.$i.width` · `win.$i.height` | the size it has drawn itself at |
 | `win.$i.place` | its turn in the layout of its monitor: 0 leads, −1 if there is none. `promote` changes it |
 | `win.$i.screen` | the monitor it is on: which copy of a `screens: each` scene lays it out |
+| `win.$i.dialog` | it is a dialog: it belongs to another window, or has a size of its own it cannot leave (a message, a file chooser). It is left out of the layout's order (`place` −1, not counted in `win.on`): float it over the rest, at its own size (`ask: 0, 0`) |
 | `win.$i.fullscreen` | it is fullscreen: it asked (a video, a game, F11) or the scene did. Where it goes is still the scene's: draw it over the whole monitor, and ask it for that size |
 | **for all of them** | |
 | `win.count` · `win.focus` | how many are open, and which slot has the keyboard (−1, none) |
@@ -1026,7 +1027,7 @@ reloads on save while the programs in it keep running.
 | `win.socket` | where programs connect |
 
 `window win.$i { at: x, y; size: w, h }` draws that slot's window in that box.
-`ask: w, h` is the size it is told to have, by default `size`: let the box
+`ask: w, h` is the size it is told to have, by default `size` (`ask: 0, 0`: the one it chooses): let the box
 travel on its springs and `ask` be where it is going, and the program is only
 asked once, not every frame. While box and `ask` differ, the window is scaled
 by as much as its box is; a program that cannot be that small comes out cut at

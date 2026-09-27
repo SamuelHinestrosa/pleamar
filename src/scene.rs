@@ -1898,6 +1898,9 @@ pub enum NestEvent {
     App(usize, String),
     /// A window is fullscreen now, or no longer: it asked, or the scene did.
     Fullscreen(usize, bool),
+    /// A window is a dialog (it has a parent, or a size of its own it
+    /// cannot leave): it is left out of the layout's order.
+    Dialog(usize, bool),
     /// What a window shows now: its pieces —its surface, its subsurfaces, its
     /// menus— in the order they are drawn, placed from the corner of its main
     /// surface, and where the window itself is in that surface (a program may
@@ -1968,6 +1971,7 @@ pub enum ToNest {
     Key { code: u32, down: bool },
     /// Whether pleamar's own window has the keyboard.
     HostFocus(bool),
+    /// The size it is to have; 0 × 0, the one it chooses.
     Configure { slot: usize, w: i32, h: i32 },
     Focus(usize),
     Close(usize),

@@ -16,6 +16,7 @@ scene Windows {
     on key Alt+x { swap win(win.focus) with win(win.order.0) }
     on key Alt+f { fullscreen win(win.focus) }
     box { from: 0, 0; size: 600 * win.0.fullscreen, 400; color: #000; show: win.0.fullscreen }
+    window win.2 { at: 200, 100; size: win.2.width, win.2.height; ask: 0, 0; show: win.2.dialog }
     text "{win.on.0} here, {win.on.1} there" { at: 10, 30; size: 11; color: #fff }
     box { from: win.reserved.0.left, win.reserved.0.top; size: 10, 10; color: #fff }
 }

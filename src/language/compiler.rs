@@ -5152,6 +5152,7 @@ impl<'a> Compiler<'a> {
             fact(self, format!("{name}.{k}.place"), -1.0, false);
             fact(self, format!("{name}.{k}.screen"), 0.0, false);
             fact(self, format!("{name}.{k}.fullscreen"), 0.0, true);
+            fact(self, format!("{name}.{k}.dialog"), 0.0, true);
             for field in ["title", "app"] {
                 let full = format!("{name}.{k}.{field}");
                 let id = self.e.live_text(interned(&full), "");
