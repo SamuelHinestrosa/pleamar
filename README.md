@@ -84,6 +84,32 @@ whatever was in motion; save it broken and the last good scene stays on screen,
 with a band on top saying what does not compile and where. Rebuild pleamar itself and the
 running one starts again with the same arguments.
 
+## Installing it
+
+One line installs pleamar, the pleamar-wm window manager and Marea in your home
+(nothing outside it), and keeps them up to date:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/k4ditano/pleamar/main/install.sh | sh
+pleamar-update                # new changes, built and put in place
+pleamar-update --session      # also pleamar-wm in the login screen (asks for sudo)
+pleamar-update --uninstall    # the programs go; your ~/.config/pleamar stays
+```
+
+It says what your distribution is missing to build it (and offers to install
+it), builds in `~/.local/share/pleamar/src`, puts `pleamar`, `pleamar-wm`,
+`pleamar-session`, `marea` and `pleamar-update` in `~/.local/bin`, makes your
+`~/.config/pleamar` the first time, and teaches the AI agents you have —Claude
+Code, Codex, OpenCode— to build with pleamar (`pleamar --install-skill`; it
+refreshes itself on every update). Ask one «make me a bar with the time and
+the volume» and it knows where it goes and how to check it.
+
+Everything of yours lives in `~/.config/pleamar/`, the folder for your
+dotfiles: your shells (`shells/`), what starts with the desktop (`autostart`;
+on Hyprland, `exec-once = pleamar --autostart`), and for pleamar-wm its
+`session.conf`, `keys.conf` and your own `wm/session.plm`.
+`pleamar --docs` has the documentation of the version you have.
+
 ## Getting started
 
 ```sh
