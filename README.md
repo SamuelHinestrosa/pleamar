@@ -13,9 +13,8 @@
 
 <br>
 
-pleamar is a language and a Rust runtime for the desktop: bars, launchers,
-notification centres, docks, lock screens, widgets and whole window managers,
-written as **scenes** where every property is a spring and the animation never
+pleamar is a language and a Rust runtime for your desktop shell: bars,
+launchers, notification centres, docks, lock screens and widgets, written as **scenes** where every property is a spring and the animation never
 waits for the logic.
 
 <br>
@@ -33,6 +32,32 @@ waits for the logic.
 <br>
 
 </div>
+
+# Shell, window manager, companion: three pieces
+
+**pleamar is a shell toolkit, like Quickshell.** You write your bar, widgets and
+launchers with it, and they run **on the compositor you already use** —
+Hyprland, Sway, niri, KDE… No need to change anything else.
+
+The other two are separate, and optional:
+
+- **[pleamar-wm]** is a Wayland compositor built on top of pleamar, where the
+  window manager itself is a pleamar scene. Only if you want a whole desktop
+  of it; you don't need it to use pleamar.
+- **[Marea]** is my own shell, written in pleamar: a good example of how far a
+  scene can go.
+
+So if you are on Hyprland and just want a new bar, pleamar is all you need.
+
+### Where it runs
+
+| | |
+| --- | --- |
+| **Hyprland, Sway, niri, river, Wayfire, Labwc…** | ✅ Its home: bars, panels and shells anchor to the screen (layer-shell) |
+| **KDE Plasma (Wayland)** | ✅ Bars and shells work; what is Hyprland's own —its workspaces— does not |
+| **GNOME (Wayland)** | ⚠️ Only scenes in a normal window: GNOME has no layer-shell, so a bar cannot anchor. pleamar-wm can be picked as a session next to it |
+| **pleamar-wm** | ✅ A whole desktop of its own |
+| **X11 sessions** | ❌ pleamar is for Wayland |
 
 # Features
 
