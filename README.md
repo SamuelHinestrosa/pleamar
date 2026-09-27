@@ -132,6 +132,28 @@ dotfiles: your shells (`shells/`), what starts with the desktop (`autostart`;
 on Hyprland or any other compositor, `exec-once = pleamar --autostart`), and for
 pleamar-wm its `session.conf`, `keys.conf` and your own `wm/session.plm`.
 
+### Nix and NixOS
+
+```sh
+nix run github:k4ditano/pleamar -- --scene bar.plm
+```
+
+As a flake input (`pleamar.url = "github:k4ditano/pleamar"`): the package
+(`pleamar.packages.${system}.default`, or `pkgs.pleamar` through
+`pleamar.overlays.default`) and a home-manager module:
+
+```nix
+imports = [ inputs.pleamar.homeManagerModules.default ];
+programs.pleamar = {
+  enable = true;
+  autostart = true;   # runs ~/.config/pleamar/autostart with your graphical session
+};
+```
+
+The whole desktop (pleamar-wm with Marea, in your login screen) is
+[pleamar-wm]'s NixOS module. With Nix on another distribution, graphical Nix
+programs need [nixGL] to reach your GPU driver.
+
 # With your AI agent
 
 The installer writes pleamar's skill for every agent it finds â€” **Claude Code,
@@ -350,6 +372,7 @@ If it makes your desktop nicer, you can **[buy me a coffee on Ko-fi][Ko-fi]** â˜
 [X]: https://x.com/k4ditano
 [Ko-fi]: https://ko-fi.com/k4ditano
 [Issues]: https://github.com/k4ditano/pleamar/issues
+[nixGL]: https://github.com/nix-community/nixGL
 
 <!----------------------------------{ Thanks }--------------------------------->
 
