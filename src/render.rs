@@ -2331,7 +2331,11 @@ pub fn run(
         }
         for (k, sup) in scene.surfaces.iter().enumerate() {
             let Some(when) = &sup.reserve_while else { continue };
-            let wants = if when.is_true(Ctx { props: &props, facts: &facts }) { sup.exclusive_zone } else { 0 };
+            // A copy that is closed (`open:`) keeps none: Marea lives on one
+            // monitor, and the other's copy left an empty strip there.
+            let c = Ctx { props: &props, facts: &facts };
+            let open_here = sup.open.as_ref().is_none_or(|e| e.is_true(c));
+            let wants = if when.is_true(c) && open_here { sup.exclusive_zone } else { 0 };
             if reserves_set[k] != wants {
                 reserves_set[k] = wants;
                 crate::platform::rezone(k, wants);
