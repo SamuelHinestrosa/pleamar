@@ -1474,6 +1474,8 @@ pub enum Trigger {
     FocusLost,
     /// Something dragged from another application has been dropped on it.
     Receive(ZoneId),
+    /// What it carries (`carries:`) has just been dragged out of it, to another program.
+    Carry(ZoneId),
     /// The mouse has been over it for this long.
     Above { zone: ZoneId, duration: Duration },
     /// It has been over it and has been outside for this long.

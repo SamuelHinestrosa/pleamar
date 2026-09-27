@@ -1110,6 +1110,7 @@ pub fn run(
         // A zone that carries something (`carries:`), dragged far enough: out
         // to another program. From then on the compositor has the pointer, so
         // the scene's own drag is over.
+        let mut carried_now: Option<usize> = None;
         if let (Some((k, from, _)), Some(p)) = (drag, pointer) {
             if let Some(content) = scene.zones.get(k).and_then(|z| z.carries.as_ref()) {
                 if carry_tried != Some(k) && (p.0 - from.0).hypot(p.1 - from.1) > 8.0 {
@@ -1118,6 +1119,7 @@ pub fn run(
                     if crate::platform::start_drag(&text) {
                         let _ = to_logic.send(Event::Release(scene.zones[k].id));
                         drag = None;
+                        carried_now = Some(k);
                     }
                 }
             }
@@ -1474,6 +1476,7 @@ pub fn run(
                     Trigger::FocusGained => focus_changes.contains(&true),
                     Trigger::FocusLost => focus_changes.contains(&false),
                     Trigger::Receive(z) => !drops.is_empty() && inside[z.0 as usize],
+                    Trigger::Carry(z) => carried_now == Some(z.0 as usize),
                     Trigger::Above { zone, duration } => {
                         e.sustained(inside[zone.0 as usize], *duration, now, &mut appointments)
                     }

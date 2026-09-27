@@ -45,7 +45,7 @@ pub const FUNCTIONS: &[&str] = &["min", "max", "abs", "floor", "ceil", "sin", "c
 /// Inside a hole of a text.
 pub const TEXT_FUNCTIONS: &[&str] = &["upper", "lower"];
 /// What can go after `on`. Any other word is the name of an event.
-pub const TRIGGERS: &[&str] = &["press", "release", "scroll", "drag", "hold", "enter", "leave", "hover", "away", "idle", "key", "submit", "focus", "blur", "drop", "change", "still"];
+pub const TRIGGERS: &[&str] = &["press", "release", "scroll", "drag", "hold", "enter", "leave", "hover", "away", "idle", "key", "submit", "focus", "blur", "drop", "carry", "change", "still"];
 /// The effects with a word of their own. Also: `prop: value ~spring` and `fact = expr`.
 pub const EFFECTS: &[&str] = &["toggle", "emit", "impulse", "play", "focus", "blur", "close", "promote", "fullscreen", "minimize", "restore", "launch", "send", "swap"];
 pub const CURVES: &[&str] = &["linear", "in_quad", "out_quad", "in_cubic", "out_cubic", "in_out_sine", "out_back", "bezier"];

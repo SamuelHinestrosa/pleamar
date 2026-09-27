@@ -5651,6 +5651,7 @@ impl<'a> Compiler<'a> {
                     Trigger::Still { value: what, duration: c.dur()? }
                 }
                 "drop" => Trigger::Receive(self.zone(c)?),
+                "carry" => Trigger::Carry(self.zone(c)?),
                 "enter" => Trigger::Enter(self.zone(c)?),
                 "leave" => Trigger::Leave(self.zone(c)?),
                 "hover" | "away" => {

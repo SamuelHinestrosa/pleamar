@@ -119,7 +119,7 @@ trigger      = "press" [ "right" | "middle" ] zone_ref | "release" zone_ref | "s
              | "enter" zone_ref | "leave" zone_ref
              | ( "hover" | "away" ) zone_ref "for" duration
              | "idle" "for" duration
-             | "key" key | "submit" name | "focus" | "blur" | "drop" zone_ref
+             | "key" key | "submit" name | "focus" | "blur" | "drop" zone_ref | "carry" zone_ref
              | name ;                                (* an event *)
 key          = name { "+" name } ;                   (* Escape · Ctrl+k · Super+Alt+s *)
 effect       = transition | name "=" expr | "toggle" name
@@ -1154,11 +1154,12 @@ fact of its own called `locale`, are errors.
 | `submit field` | Enter inside that `input` |
 | `focus` · `blur` | the surface gains or loses the keyboard |
 | `drop zone` | something dragged from another application is dropped on it |
+| `carry zone` | what that zone carries (`carries:`, below) has just been dragged out of it to another program |
 | `idle for 14s` | nobody touches anything for that long. In a scene that names `cursor.x`, moving the mouse anywhere on the desktop counts as touching |
 | `event_name` | that event happens: the logic emits it, or another rule, or a gesture, or it comes from outside |
 | `event_name(v)` | the same, and inside the rule —in its `while` and its effects— `v` is the value it arrived with: `on chosen(v) { mode = v }`. It is how a component that says *which* (a segment, a row) is answered without logic |
 
-**And the other way: `carries:`.** A zone with `carries: "{file.$k.path}"` can be dragged out to another program: pressed and moved more than a few pixels, the compositor takes the drag and whatever it is let go on gets that. A path or an address (`/…`, `file://…`, `https://…`, one per line for several) goes as a list of files or links —a browser uploads it, a file manager copies it— and as text too; anything else, as text. From then on the pointer is the compositor's, so the zone's own `drag` rules stop there and it hears its `release`. It works on any compositor with drag and drop (Hyprland, pleamar-wm); not yet from pleamar-wm's own scene.
+**And the other way: `carries:`.** A zone with `carries: "{file.$k.path}"` can be dragged out to another program: pressed and moved more than a few pixels, the compositor takes the drag and whatever it is let go on gets that. A path or an address (`/…`, `file://…`, `https://…`, one per line for several) goes as a list of files or links —a browser uploads it, a file manager copies it— and as text too; anything else, as text. From then on the pointer is the compositor's, so the zone's own `drag` rules stop there; `on carry zone` says it has gone —a panel it came out of can close then, and let the drop reach what is underneath—. It works on any compositor with drag and drop (Hyprland, pleamar-wm); not yet from pleamar-wm's own scene.
 
 **Any rule accepts `while expr`** at the end of its header: it is looked at at the moment of firing — **at the state the frame began with**, so two rules that fire in the same frame both see the same one, and the one declared last is the one whose value stays. In `idle` and `every` it also decides whether the wait counts.
 
@@ -1350,7 +1351,7 @@ properties.grid: at columns gap width row show opacity
 properties.layout: at anchor gap padding align fill glass lens shine refraction dispersion dome ripple corner show opacity cursor view step content wrap size grow
 functions: min max abs floor ceil sin cos clamp smooth mix if vel sqrt pow fract mod sign round exp log tan atan2 length noise random pick
 text_functions: upper lower
-triggers: press release scroll drag hold enter leave hover away idle key submit focus blur drop change still
+triggers: press release scroll drag hold enter leave hover away idle key submit focus blur drop carry change still
 effects: toggle emit impulse play focus blur close promote fullscreen minimize restore launch send swap
 curves: linear in_quad out_quad in_cubic out_cubic in_out_sine out_back bezier
 frame: hold emit
