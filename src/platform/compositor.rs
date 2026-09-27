@@ -36,6 +36,9 @@ struct Toplevel {
     monitor: String,
     /// Put away (minimized).
     minimized: bool,
+    /// When it last got the keyboard: while the focus moves, the one losing
+    /// it and the one getting it may both say «active» for a moment.
+    activated_at: u64,
 }
 
 #[derive(Default, Clone)]
@@ -54,6 +57,8 @@ struct State {
     /// the seat it is asked with.
     toplevel_handles: HashMap<u32, ZwlrForeignToplevelHandleV1>,
     seat: Option<wl_seat::WlSeat>,
+    /// Whether the compositor lists its windows at all (with none open yet).
+    lists_windows: bool,
     workspaces: HashMap<u32, Workspace>,
     /// For `workspaces.focus`: whom it has to be told to.
     handles: HashMap<u32, ExtWorkspaceHandleV1>,
@@ -75,7 +80,7 @@ impl State {
     /// `window.restore(id)`—.
     fn report_window(&mut self) {
         let Some(dispatch) = &self.dispatch_window else { return };
-        let active = self.toplevels.values().find(|v| v.active).cloned().unwrap_or_default();
+        let active = self.toplevels.values().filter(|v| v.active).max_by_key(|v| v.activated_at).cloned().unwrap_or_default();
         let mut ids: Vec<&u32> = self.toplevels.keys().collect();
         ids.sort();
         let list = ids
@@ -149,6 +154,7 @@ impl Dispatch<wl_registry::WlRegistry, ()> for State {
         if let wl_registry::Event::Global { name, interface, version } = ev {
             match interface.as_str() {
                 "zwlr_foreign_toplevel_manager_v1" => {
+                    e.lists_windows = true;
                     registry.bind::<ZwlrForeignToplevelManagerV1, _, _>(name, version.min(3), qh, ());
                 }
                 "ext_workspace_manager_v1" => {
@@ -202,8 +208,14 @@ impl Dispatch<ZwlrForeignToplevelHandleV1, ()> for State {
             toplevel_handle::Event::State { state } => {
                 // The list of states comes as bytes; `activated` is 2, `minimized` 1.
                 let has = |s: toplevel_handle::State| state.chunks_exact(4).any(|b| u32::from_ne_bytes([b[0], b[1], b[2], b[3]]) == s as u32);
+                e.next += 1;
+                let next = e.next as u64;
                 let t = e.toplevels.entry(k).or_default();
-                t.active = has(toplevel_handle::State::Activated);
+                let active = has(toplevel_handle::State::Activated);
+                if active && !t.active {
+                    t.activated_at = next;
+                }
+                t.active = active;
                 t.minimized = has(toplevel_handle::State::Minimized);
             }
             toplevel_handle::Event::OutputEnter { output } => {
@@ -390,7 +402,10 @@ fn start() -> Option<Arc<Mutex<State>>> {
     // Two roundtrips: the globals, and what they report when binding.
     queue.roundtrip(&mut state).ok()?;
     queue.roundtrip(&mut state).ok()?;
-    if state.toplevels.is_empty() && state.manager.is_none() {
+    // A compositor that lists its windows is one, even with none open yet:
+    // Marea starts with the session, before any window, and taking «none
+    // yet» for «it cannot» left her following nobody all session long.
+    if !state.lists_windows && state.manager.is_none() {
         return None;
     }
     let state = Arc::new(Mutex::new(state));
