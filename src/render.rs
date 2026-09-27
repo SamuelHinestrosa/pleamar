@@ -1094,7 +1094,8 @@ pub fn run(
                         }
                     }
                 }
-                (b, true) => pressed_with = hovered.map(|k| (k, b)),
+                // (The side buttons —back, forward— are the windows' alone.)
+                (b, true) if b <= 2 => pressed_with = hovered.map(|k| (k, b)),
                 _ => {}
             }
         }
@@ -1170,10 +1171,13 @@ pub fn run(
                 _ => {}
             }
             for (button, down) in &buttons {
+                // Left, right, middle, and the side ones: back and forward
+                // (BTN_SIDE, BTN_EXTRA, BTN_FORWARD, BTN_BACK), for a browser.
                 let code = match button {
                     0 => 0x110,
                     1 => 0x111,
-                    _ => 0x112,
+                    2 => 0x112,
+                    b => 0x110 + *b as u32,
                 };
                 if *down {
                     if let Some((slot, _, _)) = local {
