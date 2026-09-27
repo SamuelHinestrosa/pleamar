@@ -1914,6 +1914,9 @@ pub enum NestEvent {
     Order(Vec<usize>),
     /// The cursor the window under the pointer asks for.
     Cursor(Cursor),
+    /// A program is dragging something (drag and drop): the pointer goes to
+    /// whichever window it is over, not only to the one it was pressed on.
+    Dragging(bool),
 }
 
 /// One surface of a window: which one (it keeps its place on the card from

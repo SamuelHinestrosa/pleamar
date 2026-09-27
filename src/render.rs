@@ -260,6 +260,7 @@ pub fn run(
     let mut nest_zones: Vec<Option<usize>> = Vec::new();
     let mut nest_pointer: Option<(usize, f64, f64)> = None;
     let mut nest_grab: Option<usize> = None;
+    let mut nest_dragging = false;
     let mut nest_buttons: Vec<u32> = Vec::new();
     let mut nest_keys: Vec<u32> = Vec::new();
     let mut nest_size: (i32, i32) = (0, 0);
@@ -848,6 +849,7 @@ pub fn run(
                             nest_fact(&scene, &mut facts, &to_logic, &format!("{name}.focus"), which.map_or(-1.0, |k| k as f32));
                         }
                         NestEvent::Cursor(kind) => nest_cursor = kind,
+                        NestEvent::Dragging(yes) => nest_dragging = yes,
                         // A buffer a window is still showing is kept until it shows
                         // another: a program that resizes destroys the old one before
                         // the new frame arrives, and a copy asked for in between —the
@@ -1113,7 +1115,10 @@ pub fn run(
         // the one a button was pressed on, while it is held— gets the pointer,
         // in its own pixels, and the buttons and the wheel.
         if let Some(send) = &nest {
-            let under = nest_grab.or_else(|| hovered.and_then(|k| nest_zones.get(k).copied().flatten()));
+            // While a program drags something, whichever is under the pointer:
+            // that is where it would be dropped.
+            let hovered_window = hovered.and_then(|k| nest_zones.get(k).copied().flatten());
+            let under = if nest_dragging { hovered_window } else { nest_grab.or(hovered_window) };
             let local = under.zip(pointer).and_then(|(slot, (x, y))| {
                 let (_, d, affine) = draw.windows_drawn.iter().rev().find(|w| w.0 == slot)?;
                 let g = nest_windows.get(slot)?.geometry;
