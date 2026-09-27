@@ -44,6 +44,9 @@ const HELP: &str = "pleamar [options]
   --approve SCENE     shows what the plugins of a scene ask for, and asks whether to approve them
                       (with --yes after it, it does not ask). Unapproved, a plugin runs touching nothing
   --grammar           the words the language accepts, exactly as the compiler consults them
+  --autostart         starts what ~/.config/pleamar/autostart says (your shells), one command a
+                      line, and exits: `exec-once = pleamar --autostart` on Hyprland. Lines
+                      that start with `wm:` are for pleamar-wm's own session and are skipped
   --lsp               a language server on stdio: mistakes as you type, what fits here, and what
                       each word means. For any editor that speaks LSP
   --highlight EDITOR  writes the syntax file for 'vim' or 'vscode', made from the vocabulary
@@ -117,6 +120,7 @@ fn args(given: Vec<String>) -> Args {
                 print!("{}", language::vocabulary::to_text());
                 std::process::exit(0);
             }
+            "--autostart" => std::process::exit(autostart()),
             // The editor: mistakes while you type, and the highlighting.
             "--lsp" => {
                 lsp::serve();
@@ -404,4 +408,35 @@ static BEFORE_QUIT: std::sync::Mutex<Option<Box<dyn FnOnce() + Send>>> = std::sy
 /// its own working with the card stops them there.
 pub fn provide_before_quit(f: Box<dyn FnOnce() + Send>) {
     *BEFORE_QUIT.lock().unwrap() = Some(f);
+}
+
+/// The user's pleamar folder, the one for their dotfiles: `PLEAMAR_CONFIG`, or
+/// `$XDG_CONFIG_HOME/pleamar` (`~/.config/pleamar`).
+pub fn config_dir() -> Option<std::path::PathBuf> {
+    if let Some(d) = std::env::var_os("PLEAMAR_CONFIG").filter(|v| !v.is_empty()) {
+        return Some(d.into());
+    }
+    let base = std::env::var_os("XDG_CONFIG_HOME").filter(|v| !v.is_empty()).map(std::path::PathBuf::from).or_else(|| std::env::var_os("HOME").map(|h| std::path::PathBuf::from(h).join(".config")))?;
+    Some(base.join("pleamar"))
+}
+
+/// `pleamar --autostart`: what `autostart` says, each on its own and let go
+/// —they outlive this—, except what is only for pleamar-wm's session (`wm:`).
+fn autostart() -> i32 {
+    let Some(file) = config_dir().map(|d| d.join("autostart")) else { return 1 };
+    let Ok(text) = std::fs::read_to_string(&file) else {
+        eprintln!("autostart · there is no {}", file.display());
+        return 1;
+    };
+    for line in text.lines().map(str::trim).filter(|l| !l.is_empty() && !l.starts_with('#') && !l.starts_with("wm:")) {
+        let mut c = std::process::Command::new("sh");
+        c.arg("-c").arg(line).stdin(std::process::Stdio::null());
+        #[cfg(unix)]
+        std::os::unix::process::CommandExt::process_group(&mut c, 0);
+        match c.spawn() {
+            Ok(_) => println!("autostart · {line}"),
+            Err(e) => eprintln!("autostart · «{line}» could not start: {e}"),
+        }
+    }
+    0
 }
