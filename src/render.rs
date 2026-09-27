@@ -775,6 +775,7 @@ pub fn run(
                         NestEvent::Title(slot, t) => nest_text(&scene, &mut texts, &to_logic, &format!("{name}.{slot}.title"), t),
                         NestEvent::App(slot, t) => nest_text(&scene, &mut texts, &to_logic, &format!("{name}.{slot}.app"), t),
                         NestEvent::Fullscreen(slot, yes) => nest_fact(&scene, &mut facts, &to_logic, &format!("{name}.{slot}.fullscreen"), yes as u8 as f32),
+                        NestEvent::Minimized(slot, yes) => nest_fact(&scene, &mut facts, &to_logic, &format!("{name}.{slot}.minimized"), yes as u8 as f32),
                         NestEvent::Dialog(slot, yes) => nest_fact(&scene, &mut facts, &to_logic, &format!("{name}.{slot}.dialog"), yes as u8 as f32),
                         NestEvent::Frame { slot, geometry, pieces } => {
                             prof_window_frames += 1;
@@ -838,6 +839,7 @@ pub fn run(
                             nest_fact(&scene, &mut facts, &to_logic, &format!("{name}.{slot}.focused"), 0.0);
                             nest_fact(&scene, &mut facts, &to_logic, &format!("{name}.{slot}.fullscreen"), 0.0);
                             nest_fact(&scene, &mut facts, &to_logic, &format!("{name}.{slot}.dialog"), 0.0);
+                            nest_fact(&scene, &mut facts, &to_logic, &format!("{name}.{slot}.minimized"), 0.0);
                             if nest_grab == Some(slot) {
                                 nest_grab = None;
                             }
@@ -1523,6 +1525,8 @@ pub fn run(
                                 WindowAction::Close => ToNest::Close(slot),
                                 WindowAction::Promote => ToNest::Promote(slot),
                                 WindowAction::Fullscreen => ToNest::Fullscreen(slot),
+                                WindowAction::Minimize => ToNest::Minimize(slot, true),
+                                WindowAction::Restore => ToNest::Minimize(slot, false),
                             });
                         }
                     }

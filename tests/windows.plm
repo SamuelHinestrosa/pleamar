@@ -15,6 +15,9 @@ scene Windows {
     on key Alt+s { send win(win.focus) to 1 - pick(win.focus, win.0.screen, win.1.screen, win.2.screen) }
     on key Alt+x { swap win(win.focus) with win(win.order.0) }
     on key Alt+f { fullscreen win(win.focus) }
+    on key Alt+n { minimize win(win.focus) }
+    on key Alt+r { restore win.0 }
+    box { from: 0, 0; size: 10, 10; color: #fff; show: win.1.minimized }
     box { from: 0, 0; size: 600 * win.0.fullscreen, 400; color: #000; show: win.0.fullscreen }
     window win.2 { at: 200, 100; size: win.2.width, win.2.height; ask: 0, 0; show: win.2.dialog }
     text "{win.on.0} here, {win.on.1} there" { at: 10, 30; size: 11; color: #fff }

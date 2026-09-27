@@ -130,7 +130,7 @@ pub fn command(from: &str, name: &str, args: &[SysValue]) -> Result<(), String> 
         return hyprland::command(name, args);
     }
     #[cfg(target_os = "linux")]
-    if name.starts_with("workspaces.") {
+    if name.starts_with("workspaces.") || name.starts_with("window.") {
         return compositor::command(name, args);
     }
     let _ = args;

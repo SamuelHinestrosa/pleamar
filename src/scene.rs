@@ -1529,6 +1529,9 @@ pub enum WindowAction {
     Promote,
     /// It goes to fullscreen, or back from it.
     Fullscreen,
+    /// It is put away (minimized), or brought back.
+    Minimize,
+    Restore,
 }
 
 impl Effect {
@@ -1981,6 +1984,9 @@ pub enum NestEvent {
     /// A window is a dialog (it has a parent, or a size of its own it
     /// cannot leave): it is left out of the layout's order.
     Dialog(usize, bool),
+    /// A window is put away now (minimized), or back: it asked, the scene
+    /// did, or whoever lists the windows (Marea) did.
+    Minimized(usize, bool),
     /// What a window shows now: its pieces —its surface, its subsurfaces, its
     /// menus— in the order they are drawn, placed from the corner of its main
     /// surface, and where the window itself is in that surface (a program may
@@ -2070,6 +2076,8 @@ pub enum ToNest {
     Promote(usize),
     /// That window to fullscreen, or back from it.
     Fullscreen(usize),
+    /// That window put away (true), or brought back (false).
+    Minimize(usize, bool),
     /// That window, to that monitor.
     Send(usize, usize),
     /// Those two windows change places.

@@ -12,7 +12,7 @@
 use super::SysValue;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, OnceLock};
-use wayland_client::protocol::{wl_output, wl_registry};
+use wayland_client::protocol::{wl_output, wl_registry, wl_seat};
 use wayland_client::{Connection, Dispatch, Proxy, QueueHandle};
 use wayland_protocols::ext::workspace::v1::client::{
     ext_workspace_group_handle_v1::{self as group_handle, ExtWorkspaceGroupHandleV1},
@@ -34,6 +34,8 @@ struct Toplevel {
     /// to know which one you are on: a surface only receives the pointer when
     /// it is over it, so "where the focus is" has to be asked.
     monitor: String,
+    /// Put away (minimized).
+    minimized: bool,
 }
 
 #[derive(Default, Clone)]
@@ -48,6 +50,10 @@ struct Workspace {
 #[derive(Default)]
 struct State {
     toplevels: HashMap<u32, Toplevel>,
+    /// Each window's handle, to ask for it (bring it back, put it away), and
+    /// the seat it is asked with.
+    toplevel_handles: HashMap<u32, ZwlrForeignToplevelHandleV1>,
+    seat: Option<wl_seat::WlSeat>,
     workspaces: HashMap<u32, Workspace>,
     /// For `workspaces.focus`: whom it has to be told to.
     handles: HashMap<u32, ExtWorkspaceHandleV1>,
@@ -64,11 +70,34 @@ struct State {
 }
 
 impl State {
-    /// What the `window` service reports: the window that has the focus.
+    /// What the `window` service reports: the window that has the focus, and
+    /// all of them in the order they came —each with its `id`, for
+    /// `window.restore(id)`—.
     fn report_window(&mut self) {
         let Some(dispatch) = &self.dispatch_window else { return };
         let active = self.toplevels.values().find(|v| v.active).cloned().unwrap_or_default();
-        let v = SysValue::Map(vec![("title".into(), SysValue::Text(active.title)), ("class".into(), SysValue::Text(active.class)), ("monitor".into(), SysValue::Text(active.monitor))]);
+        let mut ids: Vec<&u32> = self.toplevels.keys().collect();
+        ids.sort();
+        let list = ids
+            .into_iter()
+            .map(|k| {
+                let t = &self.toplevels[k];
+                SysValue::Map(vec![
+                    ("id".into(), SysValue::Num(*k as f64)),
+                    ("title".into(), SysValue::Text(t.title.clone())),
+                    ("class".into(), SysValue::Text(t.class.clone())),
+                    ("monitor".into(), SysValue::Text(t.monitor.clone())),
+                    ("active".into(), SysValue::Bool(t.active)),
+                    ("minimized".into(), SysValue::Bool(t.minimized)),
+                ])
+            })
+            .collect();
+        let v = SysValue::Map(vec![
+            ("title".into(), SysValue::Text(active.title)),
+            ("class".into(), SysValue::Text(active.class)),
+            ("monitor".into(), SysValue::Text(active.monitor)),
+            ("list".into(), SysValue::List(list)),
+        ]);
         let fingerprint = format!("{v:?}");
         if fingerprint != self.last_window {
             self.last_window = fingerprint;
@@ -128,6 +157,9 @@ impl Dispatch<wl_registry::WlRegistry, ()> for State {
                 "wl_output" => {
                     registry.bind::<wl_output::WlOutput, _, _>(name, version.min(4), qh, ());
                 }
+                "wl_seat" if e.seat.is_none() => {
+                    e.seat = Some(registry.bind::<wl_seat::WlSeat, _, _>(name, version.min(1), qh, ()));
+                }
                 _ => {}
             }
         }
@@ -144,10 +176,15 @@ impl Dispatch<wl_output::WlOutput, ()> for State {
 
 // ── windows ───────────────────────────────────────────────────────
 
+impl Dispatch<wl_seat::WlSeat, ()> for State {
+    fn event(_: &mut Self, _: &wl_seat::WlSeat, _: wl_seat::Event, _: &(), _: &Connection, _: &QueueHandle<Self>) {}
+}
+
 impl Dispatch<ZwlrForeignToplevelManagerV1, ()> for State {
     fn event(e: &mut Self, _: &ZwlrForeignToplevelManagerV1, ev: toplevel_manager::Event, _: &(), _: &Connection, _: &QueueHandle<Self>) {
         if let toplevel_manager::Event::Toplevel { toplevel } = ev {
             e.toplevels.insert(key(&toplevel), Toplevel::default());
+            e.toplevel_handles.insert(key(&toplevel), toplevel);
         }
     }
     // The manager creates the handles: we have to say what data they are born with.
@@ -163,9 +200,11 @@ impl Dispatch<ZwlrForeignToplevelHandleV1, ()> for State {
             toplevel_handle::Event::Title { title } => e.toplevels.entry(k).or_default().title = title,
             toplevel_handle::Event::AppId { app_id } => e.toplevels.entry(k).or_default().class = app_id,
             toplevel_handle::Event::State { state } => {
-                // The list of states comes as bytes; `activated` is 2.
-                let activated = state.chunks_exact(4).any(|b| u32::from_ne_bytes([b[0], b[1], b[2], b[3]]) == toplevel_handle::State::Activated as u32);
-                e.toplevels.entry(k).or_default().active = activated;
+                // The list of states comes as bytes; `activated` is 2, `minimized` 1.
+                let has = |s: toplevel_handle::State| state.chunks_exact(4).any(|b| u32::from_ne_bytes([b[0], b[1], b[2], b[3]]) == s as u32);
+                let t = e.toplevels.entry(k).or_default();
+                t.active = has(toplevel_handle::State::Activated);
+                t.minimized = has(toplevel_handle::State::Minimized);
             }
             toplevel_handle::Event::OutputEnter { output } => {
                 let name = e.output_name.get(&key(&output)).cloned().unwrap_or_default();
@@ -180,6 +219,7 @@ impl Dispatch<ZwlrForeignToplevelHandleV1, ()> for State {
             }
             toplevel_handle::Event::Closed => {
                 e.toplevels.remove(&k);
+                e.toplevel_handles.remove(&k);
                 e.report_window();
             }
             toplevel_handle::Event::Done => e.report_window(),
@@ -299,6 +339,31 @@ pub fn service(name: &str, dispatch: Box<dyn Fn(SysValue) + Send>) -> bool {
 }
 
 pub fn command(name: &str, args: &[SysValue]) -> Result<(), String> {
+    // A window, by the `id` the `window` service gave it: brought back (and
+    // given the keyboard), put away, given the keyboard, or asked to close.
+    if let Some(what) = name.strip_prefix("window.") {
+        let [SysValue::Num(id)] = args else { return Err(format!("{name} takes the window's id")) };
+        let control = CONTROL.get().ok_or("this compositor does not list its windows")?;
+        let e = control.state.lock().unwrap();
+        let h = e.toplevel_handles.get(&(*id as u32)).ok_or(format!("there is no window {id}"))?;
+        match what {
+            "restore" => {
+                h.unset_minimized();
+                if let Some(seat) = &e.seat {
+                    h.activate(seat);
+                }
+            }
+            "minimize" => h.set_minimized(),
+            "activate" => match &e.seat {
+                Some(seat) => h.activate(seat),
+                None => return Err("there is no seat to give it the keyboard with".into()),
+            },
+            "close" => h.close(),
+            _ => return Err(format!("this compositor cannot do '{name}'")),
+        }
+        drop(e);
+        return control.connection.flush().map_err(|e| e.to_string());
+    }
     let ("workspaces.focus", [SysValue::Num(n)]) = (name, args) else {
         return Err(format!("this compositor cannot do '{name}'"));
     };

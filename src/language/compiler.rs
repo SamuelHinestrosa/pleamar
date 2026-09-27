@@ -5196,6 +5196,7 @@ impl<'a> Compiler<'a> {
             fact(self, format!("{name}.{k}.screen"), 0.0, false);
             fact(self, format!("{name}.{k}.fullscreen"), 0.0, true);
             fact(self, format!("{name}.{k}.dialog"), 0.0, true);
+            fact(self, format!("{name}.{k}.minimized"), 0.0, true);
             for field in ["title", "app"] {
                 let full = format!("{name}.{k}.{field}");
                 let id = self.e.live_text(interned(&full), "");
@@ -5662,6 +5663,8 @@ impl<'a> Compiler<'a> {
                         "close" => Effect::Window(WindowAction::Close, self.which_window(&mut c)?),
                         "promote" => Effect::Window(WindowAction::Promote, self.which_window(&mut c)?),
                         "fullscreen" => Effect::Window(WindowAction::Fullscreen, self.which_window(&mut c)?),
+                        "minimize" => Effect::Window(WindowAction::Minimize, self.which_window(&mut c)?),
+                        "restore" => Effect::Window(WindowAction::Restore, self.which_window(&mut c)?),
                         // `send win(win.focus) to 1`: to that monitor's copy of the scene.
                         "send" => {
                             let which = self.which_window(&mut c)?;
