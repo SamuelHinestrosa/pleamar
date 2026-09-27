@@ -1,0 +1,8 @@
+// expect: ok
+// A bar that keeps its strip only while it is asked to: windows go under it
+// the rest of the time.
+scene ReserveWhile {
+    surface { size: full, 40; anchor: top; reserve: 40 while keeps }
+    fact keeps = true
+    box { from: 0, 0; size: 400, 40; color: #202428 }
+}

@@ -245,6 +245,7 @@ pub fn run(
     let mut last_presented = Instant::now();
     // Which edge each surface is attached to right now, so as not to ask for it twice.
     let mut levels_set: Vec<crate::scene::Level> = Vec::new();
+    let mut reserves_set: Vec<i32> = Vec::new();
     let mut anchors_set: Vec<crate::scene::SurfaceAnchor> = Vec::new();
     // The "this does not compile" banner, and the good scene with it on top.
     let mut warning: Option<Vec<Instr>> = None;
@@ -2322,6 +2323,18 @@ pub fn run(
             if levels_set[k] != wants {
                 levels_set[k] = wants;
                 crate::platform::relayer(k, wants);
+            }
+        }
+        // And the room it keeps, while something holds (`reserve: n while …`).
+        if reserves_set.len() != scene.surfaces.len() {
+            reserves_set = scene.surfaces.iter().map(|s| if s.reserve_while.is_some() { -1 } else { s.exclusive_zone }).collect();
+        }
+        for (k, sup) in scene.surfaces.iter().enumerate() {
+            let Some(when) = &sup.reserve_while else { continue };
+            let wants = if when.is_true(Ctx { props: &props, facts: &facts }) { sup.exclusive_zone } else { 0 };
+            if reserves_set[k] != wants {
+                reserves_set[k] = wants;
+                crate::platform::rezone(k, wants);
             }
         }
         for (k, sup) in scene.surfaces.iter().enumerate() {

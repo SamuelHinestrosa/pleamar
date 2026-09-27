@@ -597,13 +597,14 @@ impl State {
             let margin = [m[0] + k as i32 * (height as i32 + 12), m[1], m[2], m[3]];
             layer.set_margin(margin[0], margin[1], margin[2], margin[3]);
             // Noted down, in case the scene decides to move it to another edge while running.
-            if p.anchor_from.is_some() || p.level_while.is_some() {
+            if p.anchor_from.is_some() || p.level_while.is_some() || p.reserve_while.is_some() {
                 if let Some(c) = MOVABLE_LAYERS.get() {
                     c.placed.lock().unwrap().push((which, layer.clone(), margin, (p.width == 0, p.height == 0)));
                 }
             }
             layer.set_size(p.width, height);
-            layer.set_exclusive_zone(p.exclusive_zone);
+            // With a condition, none until the render says it holds.
+            layer.set_exclusive_zone(if p.reserve_while.is_some() { 0 } else { p.exclusive_zone });
             // If the keyboard depends on something (`exclusive while open`), it's born without it.
             layer.set_keyboard_interactivity(keyboard_interactivity(if p.keyboard_while { Keyboard::Never } else { p.keyboard }));
             let id = self.next_id;
@@ -835,6 +836,21 @@ pub fn relayer(which: usize, level: Level) {
     for (k, layer, _, _) in c.placed.lock().unwrap().iter() {
         if *k == which {
             layer.set_layer(layer_of(level));
+            layer.commit();
+            any = true;
+        }
+    }
+    if any {
+        let _ = c.connection.flush();
+    }
+}
+
+pub fn rezone(which: usize, zone: i32) {
+    let Some(c) = MOVABLE_LAYERS.get() else { return };
+    let mut any = false;
+    for (k, layer, _, _) in c.placed.lock().unwrap().iter() {
+        if *k == which {
+            layer.set_exclusive_zone(zone);
             layer.commit();
             any = true;
         }

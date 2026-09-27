@@ -221,6 +221,17 @@ pub fn relayer(which: usize, level: crate::scene::Level) {
     let _ = (which, level);
 }
 
+/// A surface keeps more or less room for itself while running: `reserve: n while …`.
+pub fn rezone(which: usize, zone: i32) {
+    // A platform that places surfaces itself (pleamar-wm's session) keeps none.
+    if LAYER_HOOKS.get().is_some() {
+        return;
+    }
+    #[cfg(target_os = "linux")]
+    wayland::rezone(which, zone);
+    let _ = (which, zone);
+}
+
 pub fn reanchor(which: usize, anchor: crate::scene::SurfaceAnchor) {
     if let Some(h) = LAYER_HOOKS.get() {
         return (h.reanchor)(which, anchor);
