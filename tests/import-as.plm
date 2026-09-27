@@ -1,0 +1,10 @@
+// expect: ok
+// `as` gives a library's components a surname: two `Dot`s live together.
+import "common/palette.plm"
+import "common/dots.plm" as dots
+scene X {
+    surface { size: 40, 10 }
+    Dot(#9ed6bd) { move: 0, 0 }
+    dots.Dot(1) { move: 10, 0 }
+    dots.Pair(0.5) { move: 20, 0 }
+}

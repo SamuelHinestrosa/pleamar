@@ -1,0 +1,11 @@
+// Another library with a `Dot` of its own, and a component that uses it.
+library Dots {
+    component Dot(t) {
+        size: 4, 4
+        ellipse { at: 2, 2; radius: 2; color: #ffffff; opacity: t }
+    }
+    component Pair(t) {
+        size: 10, 4
+        row { gap: 2; Dot(t); Dot(t) }
+    }
+}

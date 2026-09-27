@@ -1,0 +1,6 @@
+// expect: error «I don't know what 'Pair' is»
+import "common/dots.plm" as dots
+scene X {
+    surface { size: 40, 10 }
+    Pair(1) { move: 0, 0 }
+}

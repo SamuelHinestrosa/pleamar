@@ -1,0 +1,4 @@
+// expect: error «is already imported as dots, and here as other»
+import "common/dots.plm" as dots
+import "common/dots.plm" as other
+scene X { surface { size: 10, 10 } }

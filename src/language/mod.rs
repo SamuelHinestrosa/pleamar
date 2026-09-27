@@ -67,6 +67,8 @@ struct Reader {
     libraries: Vec<compiler::Library>,
     /// What an editor has open and has not saved yet: it wins over the disk.
     unsaved: Vec<(PathBuf, String)>,
+    /// The name each library was imported with, `as menu`, if any.
+    surnames: Vec<(PathBuf, Option<String>)>,
 }
 
 impl Reader {
@@ -99,8 +101,15 @@ impl Reader {
                 rest.push(e);
                 continue;
             }
-            let (Some(TokenKind::Str(which)), 2, None) = (n.head.get(1).map(|f| &f.kind), n.head.len(), &n.body) else {
-                return Err(CompileError::at(n.line, n.col, "an import is `import \"path/to/the/library.plm\"`"));
+            // `import "menu.plm" as menu`: its components are `menu.Row`, so two
+            // libraries with a `Row` each can live in the same scene.
+            let surname = match (n.head.get(2).map(|f| &f.kind), n.head.get(3).map(|f| &f.kind), n.head.len()) {
+                (None, _, 2) => None,
+                (Some(TokenKind::Id(a)), Some(TokenKind::Id(s)), 4) if a == "as" && !s.contains('.') => Some(s.clone()),
+                _ => None,
+            };
+            let (Some(TokenKind::Str(which)), None, true) = (n.head.get(1).map(|f| &f.kind), &n.body, n.head.len() == 2 || surname.is_some()) else {
+                return Err(CompileError::at(n.line, n.col, "an import is `import \"path/to/the/library.plm\"`, or `import \"…\" as name` to call its components `name.Row`"));
             };
             // `pleamar:ui` is one of pleamar's own libraries: it comes inside the
             // program, so it is there wherever the scene is and whoever runs it.
@@ -122,9 +131,16 @@ impl Reader {
             if self.open_stack.contains(&target) {
                 return Err(CompileError::at(n.line, n.head[1].col, format!("'{which}' ends up importing itself: {}", self.open_stack.iter().chain([&target]).map(|p| p.file_name().unwrap_or_default().to_string_lossy()).collect::<Vec<_>>().join(" → "))));
             }
+            if let Some((_, before)) = self.surnames.iter().find(|(r, _)| *r == target) {
+                if *before != surname {
+                    let said = |s: &Option<String>| s.as_ref().map_or("with no name".to_owned(), |s| format!("as {s}"));
+                    return Err(CompileError::at(n.line, n.col, format!("'{which}' is already imported {}, and here {}: a library has one name in a scene", said(before), said(&surname))));
+                }
+            }
             if self.files.iter().any(|(r, _)| r == &target) {
                 continue;
             }
+            self.surnames.push((target.clone(), surname.clone()));
             self.open_stack.push(target.clone());
             let number = self.files.len();
             let theirs = self.open(&target)?;
@@ -148,7 +164,42 @@ impl Reader {
                 Some(TokenKind::Id(p)) if p == "strict" && b.head.len() == 3 => self.strict.push(number),
                 Some(_) => return Err(CompileError::at(b.line, b.head[2].col, "after a library name only `strict` can go")),
             }
-            for d in b.body.unwrap_or_default() {
+            let mut body = b.body.unwrap_or_default();
+            if let Some(surname) = &surname {
+                let own: Vec<String> = body
+                    .iter()
+                    .filter_map(|d| match d {
+                        tree::Entry::Node(x) if matches!(x.head.first().map(|f| &f.kind), Some(TokenKind::Id(p)) if p == "component") => match x.head.get(1).map(|f| &f.kind) {
+                            Some(TokenKind::Id(c)) => Some(c.clone()),
+                            _ => None,
+                        },
+                        _ => None,
+                    })
+                    .collect();
+                // Where it is declared and wherever the library itself uses it.
+                fn rename(entries: &mut [tree::Entry], own: &[String], surname: &str) {
+                    let fix = |tokens: &mut [tokens::Token]| {
+                        for t in tokens {
+                            if let TokenKind::Id(w) = &mut t.kind {
+                                if own.contains(w) {
+                                    *w = format!("{surname}.{w}");
+                                }
+                            }
+                        }
+                    };
+                    for e in entries {
+                        match e {
+                            tree::Entry::Prop { value, .. } => fix(value),
+                            tree::Entry::Node(x) => {
+                                fix(&mut x.head);
+                                rename(x.body.as_deref_mut().unwrap_or(&mut []), own, surname);
+                            }
+                        }
+                    }
+                }
+                rename(&mut body, &own, surname);
+            }
+            for d in body {
                 // A library declares; it does not paint, or react, or have a frontier with the logic.
                 // `text now = "…"` declares; `text "hello" { … }` paints, and that is not a library's business.
                 let ok = matches!(&d, tree::Entry::Node(x) if matches!(x.head.first().map(|f| &f.kind), Some(TokenKind::Id(p)) if vocabulary::LIBRARY_STATEMENTS.contains(&p.as_str())

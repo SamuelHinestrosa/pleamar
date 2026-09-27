@@ -109,7 +109,7 @@ pub const HELP: &[(&str, &str)] = &[
     ("look", "`look eye.x, eye.y at pointer reach 8, 5 within 260` — eyes that follow something."),
     ("gesture", "`gesture cheer { … }` — a timeline of poses: the render plays it whole."),
     ("posture", "`posture tired { … }` — a still face: where the poses rest."),
-    ("import", "`import \"common/palette.plm\"` — brings in a library: its colours, components and springs."),
+    ("import", "`import \"common/palette.plm\"` — brings in a library: its colours, components and springs. `import \"menu.plm\" as menu` calls its components `menu.Row`."),
     ("scene", "`scene Bar { … }` — everything a window shows, and what it reacts to."),
     ("library", "`library Palette { … }` — what several scenes share. With a `.luau` next to it, it is a plugin: its own frontier and its own permissions."),
     ("language", "`language 0.1` — the version of the language this file needs. It is the first line."),

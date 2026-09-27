@@ -42,7 +42,7 @@ Words of the language (they cannot be used as a name of one's own without confus
 In EBNF: `[ x ]` is optional, `{ x }` zero or more times, `|` alternatives, `"x"` literally. `end` is a newline or `;`.
 
 ```
-file         = [ "language" number end ] { "import" text end } ( scene | library ) ;
+file         = [ "language" number end ] { "import" text [ "as" name ] end } ( scene | library ) ;
 scene        = "scene" name "{" { statement } "}" ;
 library      = "library" name [ "strict" ] "{" { let | spring | component | boundary | inner | translations } "}" ;
 boundary     = permissions | fact | event | live_text | model | image_decl ;    (* lives under the library's name: `Clock.now` *)
@@ -157,6 +157,8 @@ color        = "#" hex | name | "mix" "(" color "," color "," expr ")" | "if" "(
 ## 5. Files, order and names
 
 **A file is a scene or a library.** A scene is opened; a library is imported. `import "path.plm"` goes before `scene` or `library`, and the path is relative **to the file that imports it**. A library imported by two routes is read once; a circle is an error that says its route. A library only declares: `let`, `spring` and `component`. What is imported behaves as if it were written at the start of the scene.
+
+**`import "menu.plm" as menu`** gives the library's components a surname: from the scene they are `menu.Row(r)`, and inside the library they keep calling each other by their own names (`Row` inside `menu.Pair` is `menu.Row`). That is how two libraries that each have a `Row` are used together. A library has one name in a scene: imported once with `as menu` and again with `as other`, or without it, is an error. The surname is for components; a library's facts, texts and events already live under the library's name (`Menu.open`), and its `let`s and springs are still shared, so the scene can override a colour.
 
 **`library Name strict { … }`**: its components can only read what they ask for by parameter, what they declare themselves, what belongs to their library (and to whatever it imports), and the names that always exist. Reading a fact, a color or an event of the scene without asking for it is an error on load —`'Nosy' belongs to a `strict` library and reads 'secret', which is the scene's, without asking for it`—: that way someone else's library does not depend on what things are called in the scene, nor does it touch them. Without `strict`, a component sees everything belonging to whoever uses it, which is the comfortable thing for one's own libraries.
 
@@ -1422,4 +1424,4 @@ particles.shape: dot square spark
 
 ## 18. What this version does not have
 
-So as not to look for it here: `import … as`, a line break in the layouts, times and plurals in the slots, and writing to the field of a record from a rule. It is all there, with its plan, in [Known limitations](08-limitations.md).
+So as not to look for it here: `import { Row } from …`, a line break in the layouts, times and plurals in the slots, and writing to the field of a record from a rule. It is all there, with its plan, in [Known limitations](08-limitations.md).
