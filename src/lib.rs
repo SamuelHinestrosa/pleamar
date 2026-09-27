@@ -14,6 +14,8 @@ mod shaders;
 mod shapes;
 mod lsp;
 pub mod gpu;
+#[cfg(target_os = "linux")]
+pub mod dmabuf;
 mod lens;
 mod language;
 mod logic;

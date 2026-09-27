@@ -804,7 +804,7 @@ pub fn run(
                                         }
                                         #[cfg(unix)]
                                         PieceContent::Dmabuf(d) => {
-                                            piece.opaque = d.fourcc == u32::from_le_bytes(*b"XR24");
+                                            piece.opaque = crate::dmabuf::opaque(d.fourcc);
                                             piece.pixels = Vec::new();
                                             piece.buffer = Some(d.buffer);
                                             piece.fresh = Some(d);

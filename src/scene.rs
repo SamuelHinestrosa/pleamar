@@ -1953,9 +1953,18 @@ pub struct DmabufPiece {
     /// Which buffer of the program: the render keeps it read once, and the
     /// compositor hands it back to the program once it has been copied.
     pub buffer: u64,
-    pub fd: std::os::fd::OwnedFd,
+    /// Its planes: one for most, two for video (NV12), more for layouts that
+    /// keep compression data beside the image.
+    pub planes: Vec<DmabufPlane>,
     pub fourcc: u32,
     pub modifier: u64,
+}
+
+/// One plane of a buffer on the card: its memory, and where it is in it.
+#[cfg(unix)]
+#[derive(Debug)]
+pub struct DmabufPlane {
+    pub fd: std::os::fd::OwnedFd,
     pub stride: u32,
     pub offset: u32,
 }

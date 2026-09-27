@@ -1501,7 +1501,11 @@ pub struct Gpu {
     /// Copies of programs' frames waiting for the next painting: which
     /// buffer, to which layer, how much.
     #[cfg(target_os = "linux")]
-    copies: std::cell::RefCell<Vec<(u64, u32, wgpu::Extent3d)>>,
+    /// Each copy: which buffer, into which layer, how big, and whether it is
+    /// video (painted as RGB instead of copied).
+    copies: std::cell::RefCell<Vec<(u64, u32, wgpu::Extent3d, bool)>>,
+    #[cfg(target_os = "linux")]
+    yuv: Option<crate::dmabuf::YuvToRgb>,
     last_submission: std::cell::RefCell<Option<Sent>>,
     /// The layouts of the card's memory it can paint BGRA in, for a platform
     /// that lends its own textures (a monitor driven directly).
@@ -1538,7 +1542,8 @@ impl Gpu {
                 memory_hints: wgpu::MemoryHints::MemoryUsage,
                 // To read a program's frames straight from its memory on the
                 // card (the scene's `windows`), where the card can.
-                required_features: adapter.features() & wgpu::Features::VULKAN_EXTERNAL_MEMORY_DMA_BUF,
+                // Video frames as decoders hand them over (NV12), if the card reads them.
+                required_features: adapter.features() & (wgpu::Features::VULKAN_EXTERNAL_MEMORY_DMA_BUF | wgpu::Features::TEXTURE_FORMAT_NV12),
                 ..Default::default()
             })).expect("there is no device");
         let (format, alpha, non_blocking) = match first {
@@ -1618,7 +1623,7 @@ impl Gpu {
         }).create_view(&Default::default());
         let no_backdrop_group = Self::build_backdrop_group(&device, &pipeline, &nothing, &nothing, &sampler);
         #[allow(unused_mut)]
-        let mut g = Gpu { lens, no_backdrop_group, can_copy, adapter, device, queue, format, alpha, non_blocking, pipeline, particles, screen, multiply, erase, pipeline_layout, user_code: base, shapes_buffer, elements_buffer, points_buffer, stops_buffer, atlas, atlas_view, windows, windows_view, windows_dims: (1, 1, 1), #[cfg(target_os = "linux")] dmabufs: Default::default(), #[cfg(target_os = "linux")] copies: Default::default(), last_submission: Default::default(), render_modifiers: Vec::new(), sampler, capacity: (INITIAL_SHAPES * PER_SHAPE, INITIAL_ELEMENTS * PER_ELEMENT, INITIAL_POINTS, INITIAL_STOPS), limit, limit_warned: false, scene_group, no_layers_group };
+        let mut g = Gpu { lens, no_backdrop_group, can_copy, adapter, device, queue, format, alpha, non_blocking, pipeline, particles, screen, multiply, erase, pipeline_layout, user_code: base, shapes_buffer, elements_buffer, points_buffer, stops_buffer, atlas, atlas_view, windows, windows_view, windows_dims: (1, 1, 1), #[cfg(target_os = "linux")] dmabufs: Default::default(), #[cfg(target_os = "linux")] copies: Default::default(), #[cfg(target_os = "linux")] yuv: None, last_submission: Default::default(), render_modifiers: Vec::new(), sampler, capacity: (INITIAL_SHAPES * PER_SHAPE, INITIAL_ELEMENTS * PER_ELEMENT, INITIAL_POINTS, INITIAL_STOPS), limit, limit_warned: false, scene_group, no_layers_group };
         #[cfg(target_os = "linux")]
         if first.is_none() {
             g.render_modifiers = g.bgra_modifiers(ash::vk::FormatFeatureFlags::COLOR_ATTACHMENT);
@@ -1918,7 +1923,8 @@ impl Gpu {
             dimension: wgpu::TextureDimension::D2,
             // As the programs hand them over: BGRA, premultiplied.
             format: wgpu::TextureFormat::Bgra8Unorm,
-            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+            // Painted into as well: video, made RGB there.
+            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST | wgpu::TextureUsages::RENDER_ATTACHMENT,
             view_formats: &[],
         });
         let v = t.create_view(&wgpu::TextureViewDescriptor { dimension: Some(wgpu::TextureViewDimension::D2Array), ..Default::default() });
@@ -1972,12 +1978,14 @@ impl Gpu {
     /// now, what it takes to read it (a buffer already read is not read again).
     pub fn copy_dmabuf(&mut self, layer: u32, size: (u32, u32), buffer: u64, fresh: Option<crate::scene::DmabufPiece>) -> Result<bool, String> {
         if let Some(d) = fresh.filter(|_| !self.dmabufs.contains_key(&buffer)) {
-            // ARGB8888 and XRGB8888 are BGRA in memory, like the windows' texture.
-            if d.fourcc != u32::from_le_bytes(*b"AR24") && d.fourcc != u32::from_le_bytes(*b"XR24") {
-                return Err(format!("the format {:#x} is not read yet", d.fourcc));
+            // ARGB8888 and XRGB8888 are BGRA in memory, like the windows'
+            // texture: copied. Video is read as it is, and painted as RGB.
+            let (uses, usage) = if crate::dmabuf::copied(d.fourcc) { (wgpu::TextureUses::COPY_SRC, wgpu::TextureUsages::COPY_SRC) } else { (wgpu::TextureUses::RESOURCE, wgpu::TextureUsages::TEXTURE_BINDING) };
+            // Its content is the program's, already there: nothing to clear.
+            let texture = crate::dmabuf::import(&self.device, d, size, uses, usage, uses)?;
+            if texture.format() != wgpu::TextureFormat::Bgra8Unorm && self.yuv.is_none() {
+                self.yuv = Some(crate::dmabuf::YuvToRgb::new(&self.device, wgpu::TextureFormat::Bgra8Unorm));
             }
-            // Its content is the program's, already there: `COPY_SRC` from the start, nothing to clear.
-            let texture = Self::import_dmabuf(&self.device, d.fd, size, d.modifier, d.stride, d.offset, wgpu::TextureUses::COPY_SRC, wgpu::TextureUsages::COPY_SRC, wgpu::TextureUses::COPY_SRC)?;
             self.dmabufs.insert(buffer, texture);
         }
         let remade = self.window_room(layer, size);
@@ -1988,15 +1996,24 @@ impl Gpu {
         let copy = wgpu::Extent3d { width: size.0.min(max).max(1), height: size.1.min(max).max(1), depth_or_array_layers: 1 };
         // Not now: it goes in the same work as the next painting, which is
         // what reads it. A submission of its own cost as much as the painting's.
-        self.copies.borrow_mut().push((buffer, layer, copy));
+        // Video and RGBA are painted into it; BGRA is copied.
+        let video = self.dmabufs.get(&buffer).is_some_and(|t| t.format() != wgpu::TextureFormat::Bgra8Unorm);
+        self.copies.borrow_mut().push((buffer, layer, copy, video));
         Ok(remade)
     }
 
     /// The copies still waiting for a painting, in this encoder.
     #[cfg(target_os = "linux")]
     fn record_copies(&self, encoder: &mut wgpu::CommandEncoder) {
-        for (buffer, layer, copy) in self.copies.borrow_mut().drain(..) {
+        for (buffer, layer, copy, video) in self.copies.borrow_mut().drain(..) {
             let Some(source) = self.dmabufs.get(&buffer) else { continue };
+            if video {
+                if let Some(yuv) = &self.yuv {
+                    let target = self.windows.create_view(&wgpu::TextureViewDescriptor { dimension: Some(wgpu::TextureViewDimension::D2), base_array_layer: layer, array_layer_count: Some(1), ..Default::default() });
+                    yuv.convert(&self.device, encoder, source, &target, (copy.width, copy.height));
+                }
+                continue;
+            }
             encoder.copy_texture_to_texture(
                 wgpu::TexelCopyTextureInfo { texture: source, mip_level: 0, origin: wgpu::Origin3d::ZERO, aspect: wgpu::TextureAspect::All },
                 wgpu::TexelCopyTextureInfo { texture: &self.windows, mip_level: 0, origin: wgpu::Origin3d { x: 0, y: 0, z: layer }, aspect: wgpu::TextureAspect::All },
@@ -2072,9 +2089,20 @@ impl Gpu {
             }
             let device = libc::makedev(drm.render_major as u32, drm.render_minor as u32);
             let mut formats = Vec::new();
-            for m in self.bgra_modifiers(vk::FormatFeatureFlags::TRANSFER_SRC) {
-                for fourcc in [*b"AR24", *b"XR24"] {
-                    formats.push((u32::from_le_bytes(fourcc), m));
+            // BGRA copied from, in as many planes as its layout has; and video.
+            for m in crate::dmabuf::modifiers(&self.adapter, vk::Format::B8G8R8A8_UNORM, vk::FormatFeatureFlags::TRANSFER_SRC) {
+                for fourcc in [crate::dmabuf::ARGB, crate::dmabuf::XRGB] {
+                    formats.push((fourcc, m));
+                }
+            }
+            for m in crate::dmabuf::modifiers(&self.adapter, vk::Format::R8G8B8A8_UNORM, vk::FormatFeatureFlags::SAMPLED_IMAGE) {
+                for fourcc in [crate::dmabuf::ABGR, crate::dmabuf::XBGR] {
+                    formats.push((fourcc, m));
+                }
+            }
+            if self.device.features().contains(wgpu::Features::TEXTURE_FORMAT_NV12) {
+                for m in crate::dmabuf::modifiers(&self.adapter, vk::Format::G8_B8R8_2PLANE_420_UNORM, vk::FormatFeatureFlags::SAMPLED_IMAGE) {
+                    formats.push((crate::dmabuf::NV12, m));
                 }
             }
             (!formats.is_empty()).then_some((device, formats))
