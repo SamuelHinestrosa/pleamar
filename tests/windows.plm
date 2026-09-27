@@ -15,4 +15,5 @@ scene Windows {
     on key Alt+s { send win(win.focus) to 1 - pick(win.focus, win.0.screen, win.1.screen, win.2.screen) }
     on key Alt+x { swap win(win.focus) with win(win.order.0) }
     text "{win.on.0} here, {win.on.1} there" { at: 10, 30; size: 11; color: #fff }
+    box { from: win.reserved.0.left, win.reserved.0.top; size: 10, 10; color: #fff }
 }

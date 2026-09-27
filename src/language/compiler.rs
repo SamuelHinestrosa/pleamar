@@ -5165,6 +5165,10 @@ impl<'a> Compiler<'a> {
         // How many are on each monitor: `win.on.$screen` in a copy per monitor.
         for s in 0..4 {
             fact(self, format!("{name}.on.{s}"), 0.0, false);
+            // What other programs' bars keep on that monitor: the windows go around it.
+            for edge in ["top", "right", "bottom", "left"] {
+                fact(self, format!("{name}.reserved.{s}.{edge}"), 0.0, false);
+            }
         }
         fact(self, format!("{name}.focus"), -1.0, false);
         let full = format!("{name}.socket");

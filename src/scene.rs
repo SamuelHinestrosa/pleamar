@@ -1889,6 +1889,9 @@ pub enum NestEvent {
     Opened { slot: usize, title: String, app: String, screen: usize },
     /// A window went to another monitor.
     Screen(usize, usize),
+    /// What other programs' bars keep for themselves on that monitor, at
+    /// each edge: top, right, bottom, left (layer-shell's exclusive zones).
+    Reserved(usize, [f32; 4]),
     Title(usize, String),
     App(usize, String),
     /// What a window shows now: its pieces —its surface, its subsurfaces, its

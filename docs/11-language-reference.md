@@ -1020,6 +1020,7 @@ reloads on save while the programs in it keep running.
 | **for all of them** | |
 | `win.count` · `win.focus` | how many are open, and which slot has the keyboard (−1, none) |
 | `win.on.$s` | how many are on monitor `s` (0 to 3) |
+| `win.reserved.$s.top` · `.right` · `.bottom` · `.left` | what other programs' bars keep on monitor `s` at that edge, in pixels (layer-shell's exclusive zones): lay the windows out around it |
 | `win.order.$p` | which slot is at each place: `win.order.0` leads |
 | `win.socket` | where programs connect |
 

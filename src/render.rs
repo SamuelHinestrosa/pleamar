@@ -852,6 +852,11 @@ pub fn run(
                         }
                         #[cfg(not(target_os = "linux"))]
                         NestEvent::Forget(_) => {}
+                        NestEvent::Reserved(screen, edges) => {
+                            for (edge, v) in ["top", "right", "bottom", "left"].iter().zip(edges) {
+                                nest_fact(&scene, &mut facts, &to_logic, &format!("{name}.reserved.{screen}.{edge}"), v);
+                            }
+                        }
                         NestEvent::Screen(slot, screen) => {
                             if nest_screens.len() < n.max {
                                 nest_screens.resize(n.max, 0);
