@@ -8,6 +8,7 @@
 ![Badge Language]
 ![Badge Commit]
 [![Badge Issues]][Issues]
+[![Badge X]][X]
 
 <br>
 
@@ -307,6 +308,8 @@ change it, ship it, sell it — keep the copyright notice. Every dependency is
 permissive (MIT, Apache-2.0, BSD-3-Clause, Zlib); `THIRD-PARTY.md` lists them,
 and their notices travel with any binary you hand out.
 
+Made by **[@k4ditano][X]** — follow along on X for what comes next.
+
 <!----------------------------------------------------------------------------->
 
 [Install]: #install
@@ -315,6 +318,7 @@ and their notices travel with any binary you hand out.
 [pleamar-wm]: https://github.com/k4ditano/pleamar-wm
 [Marea]: https://github.com/k4ditano/marea-plm
 [License]: LICENSE
+[X]: https://x.com/k4ditano
 [Issues]: https://github.com/k4ditano/pleamar/issues
 
 <!----------------------------------{ Thanks }--------------------------------->
@@ -338,3 +342,4 @@ and their notices travel with any binary you hand out.
 [Badge Language]: https://img.shields.io/badge/made%20with-Rust%20%2B%20Luau-2c7684?style=flat-square
 [Badge Commit]: https://img.shields.io/github/last-commit/k4ditano/pleamar?style=flat-square&color=9ed6bd
 [Badge Issues]: https://img.shields.io/github/issues/k4ditano/pleamar?style=flat-square&color=2c7684
+[Badge X]: https://img.shields.io/badge/follow-@k4ditano-000000?style=flat-square&logo=x
