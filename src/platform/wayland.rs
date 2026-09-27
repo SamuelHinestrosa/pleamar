@@ -1059,8 +1059,9 @@ pub fn run_event_loop(wanted: Vec<Surface>, extra_height: u32, instance: wgpu::I
     while !state.quit {
         // The compositor went away (its session ended): nothing left to show on.
         if let Err(e) = events.blocking_dispatch(&mut state) {
+            // Leaving the way everything leaves: the render first, then the process.
             eprintln!("wayland · the compositor is gone ({e}): leaving");
-            std::process::exit(0);
+            return;
         }
     }
 }

@@ -235,7 +235,10 @@ pub fn run_with(options: Vec<String>) {
         let instance = instance.clone();
         std::thread::Builder::new()
             .name("render".into())
-            .spawn(move || render::run(instance, from_render, letters, to_logic, blocked, op))
+            .spawn(move || {
+                render::run(instance, from_render, letters, to_logic, blocked, op);
+                RENDER_DONE.store(true, std::sync::atomic::Ordering::SeqCst);
+            })
             .unwrap()
     };
     {
@@ -357,7 +360,12 @@ pub fn run_with(options: Vec<String>) {
             std::thread::sleep(Duration::from_secs_f64(s));
             // Quitting goes through the render so that it closes its last measurement cycle.
             let _ = tx.send(ToRender::Quit);
-            std::thread::sleep(Duration::from_millis(400));
+            // Until the render has let the card go (a few seconds at most):
+            // leaving while it still works with it brought the driver down with it.
+            let asked = std::time::Instant::now();
+            while !RENDER_DONE.load(std::sync::atomic::Ordering::SeqCst) && asked.elapsed() < Duration::from_secs(3) {
+                std::thread::sleep(Duration::from_millis(10));
+            }
             quit();
         });
     }
@@ -375,9 +383,23 @@ pub fn run_with(options: Vec<String>) {
 }
 
 /// The process goes away whole —the destruction order does not deserve code in a
-/// prototype—, but not without first stopping what the logic left running.
+/// prototype—, but not without first stopping what the logic left running, nor
+/// what a platform handed over still has working with the card (`provide_before_quit`).
 fn quit() -> ! {
+    if let Some(f) = BEFORE_QUIT.lock().unwrap().take() {
+        f();
+    }
     #[cfg(feature = "luau")]
     logic_luau::stop_children();
     std::process::exit(0)
+}
+
+/// Whether the render has finished: nothing of it touches the card any more.
+static RENDER_DONE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+static BEFORE_QUIT: std::sync::Mutex<Option<Box<dyn FnOnce() + Send>>> = std::sync::Mutex::new(None);
+
+/// What to do right before the process goes away: a platform with threads of
+/// its own working with the card stops them there.
+pub fn provide_before_quit(f: Box<dyn FnOnce() + Send>) {
+    *BEFORE_QUIT.lock().unwrap() = Some(f);
 }
