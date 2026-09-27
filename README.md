@@ -1,57 +1,121 @@
-# pleamar
+<div align = center>
 
-**An alternative to [Quickshell](https://quickshell.outfoxxed.me): write the
-desktop — bars, launchers, notifications, tray, menus — in a declarative language
-of its own, on top of a Rust runtime.**
+<img src="assets/header.svg" width="750" alt="pleamar">
 
-The idea underneath: **animation should not depend on logic**. The scene declares
-what moves and with which spring, and a render thread walks it at the screen's
-pace, whatever happens in the thread that decides things. With the logic blocked
-for 600 ms, 38 frames come out at 17 ms each; in the same test on QtQuick, a
-600 ms hole.
+<br>
 
-## The quick comparison
+[![Badge License]][License]
+![Badge Language]
+![Badge Commit]
+[![Badge Issues]][Issues]
 
-The same bar, written twice: in Quickshell (`proyecto-marea`, 370 QML files) and
-in pleamar (`marea-plm`, one `.plm` and one `.luau`). Both running at once, both
-freshly started, same 60 Hz monitor, on an RTX 2060.
+<br>
 
-| | Quickshell | pleamar |
-| --- | --- | --- |
-| real memory (PSS) | 336 MB | **81 MB** |
-| time to first frame | 1876 ms | **175 ms** |
-| frames per second while animating | ~24 | **60** |
-| CPU per painted frame | 0.257 % | **0.083 %** |
-| CPU with nothing moving | never drops | **0.3 %** |
-| opening a panel | 6.2 % → 12.3 %, and 9.5 % after closing it | 4.4 % → 4.9 %, and back to 4.5 % |
+pleamar is a language and a Rust runtime for the desktop: bars, launchers,
+notification centres, docks, lock screens, widgets and whole window managers,
+written as **scenes** where every property is a spring and the animation never
+waits for the logic.
 
-On raw CPU, with both animating, the difference is 20 %: **4.96 % against
-6.17 %**. That is what it is, and it should be said before the pretty numbers.
-What changes the picture is that pleamar is painting **two and a half times more
-frames** while spending less, and that when nothing moves it **sleeps**.
+<br>
 
-The numbers, how they were taken and what to watch out for: `marea-plm/MEDIDAS.md`.
+---
 
-## What comes out of building it this way
+**[<kbd> <br> Install <br> </kbd>][Install]**
+**[<kbd> <br> Guide <br> </kbd>][Guide]**
+**[<kbd> <br> Reference <br> </kbd>][Reference]**
+**[<kbd> <br> pleamar-wm <br> </kbd>][pleamar-wm]**
+**[<kbd> <br> Marea <br> </kbd>][Marea]**
 
-- **The renderer animates on its own.** Springs, layers, gestures and rules are
-  its job. The logic reports what happens and nothing else; if it stalls, the
-  screen never finds out.
-- **Everything is checked on load.** A misspelled name is an error with file,
-  line, arrow and "did you mean…?", not an `undefined` at runtime.
-- **Nothing declared can hang:** no free loops, no recursion.
-- **Someone else's plugin runs with the permissions you approve**, not with
-  yours. In Quickshell, a piece of foreign config is JavaScript with everything
-  you can do.
-- **Shapes that melt into each other**, with shadow, rim, light and gradients, no
-  layers and no tricks: underneath it is all signed distance. An svg comes in
-  the same way —as paths, by layers—, so a piece drawn in Inkscape melts into
-  what carries it instead of sitting on top of it like a sticker.
-- **Cross-platform by design:** everything system-specific behind
-  `src/platform/`, and `./portable.sh` checks it still builds for Windows and
-  macOS.
+---
 
-## A whole scene
+<br>
+
+</div>
+
+# Features
+
+- **Animation that never depends on logic**: the scene declares what moves and
+  with which spring; a render thread walks it at the screen's pace. With the
+  logic stalled for 600 ms, 38 frames still come out at 17 ms each.
+- **A language of its own, checked on load**: a misspelled name is an error with
+  file, line, arrow and «did you mean…?», never an `undefined` at runtime.
+- **Every property is a spring** — interrupt it halfway and it turns without a jolt.
+- **Shapes that melt into each other**: shadow, rim, light, gradients, glass,
+  blur, glow, particles and your own WGSL shaders, all signed distance underneath.
+  An svg comes in as paths, by layers, and melts with what carries it.
+- **Luau logic in a sandbox**, on its own thread, behind permissions you approve —
+  a plugin runs with what you allow it, never with everything you can do.
+- **System services with no code**: clock, audio, battery, network, media,
+  notifications, tray, windows, brightness, files — named in the scene and filled.
+- **Live reload**: save the file and it reloads without losing what was in motion;
+  save it broken and the last good scene stays, with a band saying where.
+- **Its own compositor**: [pleamar-wm] runs other programs' windows inside a scene,
+  so the window manager is one more file you can rewrite.
+- **Your AI agent knows it**: the installer teaches Claude Code, Codex and
+  OpenCode to build and verify pleamar scenes for you.
+- **Light**: 81 MB and a first frame in 175 ms, against 336 MB and 1876 ms for
+  the same bar in Quickshell.
+
+<br>
+
+<div align = center>
+
+# Gallery
+
+<br>
+
+![Preview Desktop]
+
+<sub>pleamar-wm with Marea: free windows, glass drop buttons, one scene each.</sub>
+
+<br>
+<br>
+
+![Preview Effects]
+
+<sub>`examples/effects.plm`: a WGSL aurora, glowing particles, a ripple that follows the pointer.</sub>
+
+<br>
+<br>
+
+</div>
+
+# Install
+
+One line installs pleamar, the [pleamar-wm] window manager and [Marea] in your
+home (nothing outside it), and keeps them up to date:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/k4ditano/pleamar/main/install.sh | sh
+```
+
+| | |
+| --- | --- |
+| `pleamar-update` | new changes, built and put in place (it says what is new) |
+| `pleamar-update --session` | also pleamar-wm in the login screen (asks for sudo) |
+| `pleamar-update --uninstall` | the programs go; your `~/.config/pleamar` stays |
+
+It tells you what your distribution is missing to build it (pacman, apt, dnf,
+zypper) and offers to install it, builds in `~/.local/share/pleamar/src`, puts
+`pleamar`, `pleamar-wm`, `pleamar-session`, `marea` and `pleamar-update` in
+`~/.local/bin`, and makes your `~/.config/pleamar` the first time.
+
+**Everything of yours lives in `~/.config/pleamar/`** — the folder for your
+dotfiles: your shells (`shells/`), what starts with the desktop (`autostart`;
+on Hyprland or any other compositor, `exec-once = pleamar --autostart`), and for
+pleamar-wm its `session.conf`, `keys.conf` and your own `wm/session.plm`.
+
+# With your AI agent
+
+The installer writes pleamar's skill for every agent it finds — **Claude Code,
+Codex, OpenCode** — and it refreshes itself on every update. Ask one *«make me a
+bar with the time, the volume and my workspaces»* and it knows the language,
+where the file goes, how to start it with your desktop, and how to check it
+(it compiles it, opens it without a screen and looks at the picture) before
+saying it is done. `pleamar --install-skill` does it by hand;
+`pleamar --docs` prints the documentation of the version you have.
+
+# A whole scene
 
 ```plm
 language 0.1
@@ -84,33 +148,7 @@ whatever was in motion; save it broken and the last good scene stays on screen,
 with a band on top saying what does not compile and where. Rebuild pleamar itself and the
 running one starts again with the same arguments.
 
-## Installing it
-
-One line installs pleamar, the pleamar-wm window manager and Marea in your home
-(nothing outside it), and keeps them up to date:
-
-```sh
-curl -fsSL https://raw.githubusercontent.com/k4ditano/pleamar/main/install.sh | sh
-pleamar-update                # new changes, built and put in place
-pleamar-update --session      # also pleamar-wm in the login screen (asks for sudo)
-pleamar-update --uninstall    # the programs go; your ~/.config/pleamar stays
-```
-
-It says what your distribution is missing to build it (and offers to install
-it), builds in `~/.local/share/pleamar/src`, puts `pleamar`, `pleamar-wm`,
-`pleamar-session`, `marea` and `pleamar-update` in `~/.local/bin`, makes your
-`~/.config/pleamar` the first time, and teaches the AI agents you have —Claude
-Code, Codex, OpenCode— to build with pleamar (`pleamar --install-skill`; it
-refreshes itself on every update). Ask one «make me a bar with the time and
-the volume» and it knows where it goes and how to check it.
-
-Everything of yours lives in `~/.config/pleamar/`, the folder for your
-dotfiles: your shells (`shells/`), what starts with the desktop (`autostart`;
-on Hyprland, `exec-once = pleamar --autostart`), and for pleamar-wm its
-`session.conf`, `keys.conf` and your own `wm/session.plm`.
-`pleamar --docs` has the documentation of the version you have.
-
-## Getting started
+# Getting started from the source
 
 ```sh
 cargo build --release
@@ -129,7 +167,29 @@ outside, or from a compositor shortcut), `--mouse "360,90@500 click@3200"` (a
 pretend mouse, to rehearse without touching the real one), `--stall MS` (stall
 the logic on purpose and watch the screen carry on).
 
-## The language in five minutes
+# The quick comparison
+
+The same bar, written twice: in Quickshell (`proyecto-marea`, 370 QML files) and
+in pleamar (`marea-plm`, one `.plm` and one `.luau`). Both running at once, both
+freshly started, same 60 Hz monitor, on an RTX 2060.
+
+| | Quickshell | pleamar |
+| --- | --- | --- |
+| real memory (PSS) | 336 MB | **81 MB** |
+| time to first frame | 1876 ms | **175 ms** |
+| frames per second while animating | ~24 | **60** |
+| CPU per painted frame | 0.257 % | **0.083 %** |
+| CPU with nothing moving | never drops | **0.3 %** |
+| opening a panel | 6.2 % → 12.3 %, and 9.5 % after closing it | 4.4 % → 4.9 %, and back to 4.5 % |
+
+On raw CPU, with both animating, the difference is 20 %: **4.96 % against
+6.17 %**. That is what it is, and it should be said before the pretty numbers.
+What changes the picture is that pleamar is painting **two and a half times more
+frames** while spending less, and that when nothing moves it **sleeps**.
+
+The numbers, how they were taken and what to watch out for: `marea-plm/MEDIDAS.md`.
+
+# The language in five minutes
 
 A `.plm` file is a scene: what is seen, and how it reacts.
 
@@ -155,7 +215,7 @@ The full reference, with its grammar and its checked examples, is in
 start from zero, [`docs/guide.md`](docs/guide.md); to copy and paste,
 [`docs/recipes.md`](docs/recipes.md).
 
-## The logic
+# The logic
 
 If there is a `bar.luau` next to `bar.plm`, that is its logic: Luau in a
 sandbox, on its own thread, which the renderer never waits for. It can only cross
@@ -169,7 +229,7 @@ under its name (`Clock.now`), it runs on its own thread, and its permissions are
 approved by whoever uses it, with `pleamar --approve`. Unapproved, it runs
 touching nothing.
 
-## In the editor
+# In the editor
 
 `pleamar --lsp` is a language server over stdio, with this same compiler behind
 it: mistakes as you type, which words fit here, what the word under the cursor
@@ -178,7 +238,7 @@ means, go to where a name was declared, where it is used, and renaming it.
 vocabulary, so it cannot fall behind. Both, already generated, in
 [`editor/`](editor/).
 
-## How it is built
+# How it is built
 
 Three threads that never wait for each other: **platform** (windows and input),
 **logic** (Luau) and **render** (owner of the springs and the clock). Plus one
@@ -196,7 +256,7 @@ per plugin, one per service, and a workshop thread for text and images.
 | `platform/` | The only part that knows about the system: Wayland, the services, files, the clock |
 | `lsp.rs` | The language server and the highlighters, both drawn from the vocabulary |
 
-## What is missing
+# What is missing
 
 Measured against two real Quickshell configs (648 QML files between them), in
 [`docs/07-whats-missing.md`](docs/07-whats-missing.md): session lock, showing a screen
@@ -207,33 +267,74 @@ Known limitations, **each one with its plan to fix it**, in
 [`docs/08-limitations.md`](docs/08-limitations.md). They are written down as
 they show up, not at the end.
 
-## Documentation
+# Documentation
 
 | | |
 | --- | --- |
-| [`docs/guide.md`](docs/guide.md) | From zero to a bar, step by step |
+| [`docs/guide.md`][Guide] | From zero to a bar, step by step |
 | [`docs/recipes.md`](docs/recipes.md) | Patterns that already work, ready to copy |
-| [`docs/11-language-reference.md`](docs/11-language-reference.md) | The reference: grammar, types, every element and every property |
+| [`docs/11-language-reference.md`][Reference] | The reference: grammar, types, every element and every property |
 | [`docs/10-luau-logic.md`](docs/10-luau-logic.md) | What the logic can do, and what it cannot |
 | [`docs/07-whats-missing.md`](docs/07-whats-missing.md) | Parity with Quickshell, told by real usage |
 | [`docs/08-limitations.md`](docs/08-limitations.md) | Everything that fails or is missing, with its plan |
 | [`docs/02-how-it-works.md`](docs/02-how-it-works.md) | Inside: the threads, the renderer, the why |
-| [`.claude/skills/pleamar/`](.claude/skills/pleamar/) | So an AI writes `.plm` without making things up |
+| [`skill/`](skill/) | The skill the installer gives your AI agents |
 
 The working notes (01, 03–06, 09) are the design logbook: how this got here.
 
-## Licence
+# Special Thanks
 
-**The code is here to be read, but this is not open source.** pleamar is under the
-[PolyForm Noncommercial License 1.0.0](LICENSE): use it, study it, change it and
-share it for anything **noncommercial** — your own desktop, a hobby project,
-research, teaching, a charity — and that includes changing it and passing it on.
+<br>
 
-**Anything commercial needs permission.** Selling it, shipping it inside a
-product, or running it as part of a business is not covered. Ask, and it can be
-arranged.
+**[wgpu]** - *For every pixel*
 
-Every dependency is permissive (MIT, Apache-2.0, BSD-3-Clause, Zlib), so none of
-them forces anything on this code. If binaries ever get handed out, their
-copyright notices have to travel with them: `THIRD-PARTY.md` has the list, and
-`cargo about` regenerates the full texts.
+**[Luau]** - *For logic that can be sandboxed*
+
+**[cosmic-text]** - *For real text*
+
+**[resvg]** - *For reading svg*
+
+**[Smithay]** - *For the compositor's protocol side*
+
+**[Quickshell]** - *For showing what a desktop written in a language can be*
+
+**[Hyprland]** - *For showing how good a desktop can feel*
+
+# License
+
+pleamar is under the [BSD 3-Clause License][License], like Hyprland: use it,
+change it, ship it, sell it — keep the copyright notice. Every dependency is
+permissive (MIT, Apache-2.0, BSD-3-Clause, Zlib); `THIRD-PARTY.md` lists them,
+and their notices travel with any binary you hand out.
+
+<!----------------------------------------------------------------------------->
+
+[Install]: #install
+[Guide]: docs/guide.md
+[Reference]: docs/11-language-reference.md
+[pleamar-wm]: https://github.com/k4ditano/pleamar-wm
+[Marea]: https://github.com/k4ditano/marea-plm
+[License]: LICENSE
+[Issues]: https://github.com/k4ditano/pleamar/issues
+
+<!----------------------------------{ Thanks }--------------------------------->
+
+[wgpu]: https://github.com/gfx-rs/wgpu
+[Luau]: https://luau.org
+[cosmic-text]: https://github.com/pop-os/cosmic-text
+[resvg]: https://github.com/linebender/resvg
+[Smithay]: https://github.com/Smithay/smithay
+[Quickshell]: https://quickshell.outfoxxed.me
+[Hyprland]: https://github.com/hyprwm/Hyprland
+
+<!----------------------------------{ Images }--------------------------------->
+
+[Preview Desktop]: assets/desktop.png
+[Preview Effects]: assets/effects.png
+
+<!----------------------------------{ Badges }--------------------------------->
+
+[Badge License]: https://img.shields.io/badge/license-BSD--3--Clause-9ed6bd?style=flat-square
+[Badge Language]: https://img.shields.io/badge/made%20with-Rust%20%2B%20Luau-2c7684?style=flat-square
+[Badge Commit]: https://img.shields.io/github/last-commit/k4ditano/pleamar?style=flat-square&color=9ed6bd
+[Badge Issues]: https://img.shields.io/github/issues/k4ditano/pleamar?style=flat-square&color=2c7684
