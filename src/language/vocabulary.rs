@@ -133,6 +133,7 @@ pub const SERVICES: &[(&str, &[&str])] = &[
     ("apps", &["list"]),
     ("tray", &["list"]),
     ("notifications", &["list"]),
+    ("notification_history", &["list"]),
 ];
 
 /// The fields of a service that are lists: each one goes into a model, never into a fact.

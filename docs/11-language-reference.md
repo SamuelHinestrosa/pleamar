@@ -320,7 +320,7 @@ What each service brings is in the vocabulary (§17), and **asking it for what i
 into a model the scene declares **before** it, record by record and by field
 name —as `model.x = …` would from the logic—: its field takes the model's name
 as its type. For the services that are only a list —`apps`, `tray`,
-`notifications`— the field is `list`:
+`notifications`, `notification_history`— the field is `list`:
 
 ```
 model nets max 12 { ssid: text; strength: number; known: bool; active: bool }
@@ -339,7 +339,8 @@ service tray { list: icons }
 | `workspaces` | `list`: `{ id, name, windows, monitor, active }` |
 | `apps` | `list`: `{ name, exec, icon, id, wmclass }` |
 | `tray` | `list`: `{ key, id, title, status, icon, menu }` |
-| `notifications` | `list`: `{ id, app, title, body, icon, urgency, actions }` |
+| `notifications` | `list`: `{ id, app, title, body, icon, image, urgency, time, actions }` |
+| `notification_history` | `list`: the same records, the ones that expired unseen, newest first, the last 50 |
 
 The model only gets the fields it declares; the rest of each record is left
 out. `nets.count` is how many fit, `nets.total` how many came.
@@ -1388,7 +1389,7 @@ fact_types: number bool
 model: list
 path: move line curve close
 documented: translations surface permissions model service spring prop pose fact event text image figure particles shader measure let zone body ellipse box arc line path input clip group popup component children repeat for row grid windows window pages column space between layer on every blink wave spin follow look gesture posture import scene library language
-services: clock clock.seconds audio battery brightness network bluetooth media window workspaces apps tray notifications
+services: clock clock.seconds audio battery brightness network bluetooth media window workspaces apps tray notifications notification_history
 services.clock: hour minute second day month year weekday time date
 services.clock.seconds: hour minute second day month year weekday time date
 services.audio: volume muted input input_muted outputs inputs
@@ -1402,6 +1403,7 @@ services.workspaces: active list
 services.apps: list
 services.tray: list
 services.notifications: list
+services.notification_history: list
 parameter_types: number bool color text record event image gesture spring
 springs: lively calm quick slow gentle pose
 units: px % deg ms s

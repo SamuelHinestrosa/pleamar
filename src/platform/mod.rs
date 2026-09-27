@@ -76,6 +76,7 @@ pub fn service(from: &str, name: &str, notify: Box<dyn Fn(SysValue) + Send>) -> 
         "bluetooth" if bluez::available() => return bluez::service(notify),
         "media" => return mpris::service(notify),
         "notifications" => return notifications::service(notify),
+        "notification_history" => return notifications::history(notify),
         "tray" => return tray::service(notify),
         _ => {}
     }
