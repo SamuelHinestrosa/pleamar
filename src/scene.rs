@@ -780,7 +780,7 @@ pub enum ParticleShape {
 
 /// What a `group` does to what it holds when blending it: `blur: 12`,
 /// `glow: 16, 80%, mint`, `saturation: 0`, `brightness: 1.2`, `contrast: 1.1`,
-/// `hue: 40deg`, `mask: …`, `mode: add`.
+/// `hue: 40deg`, `mask: …`, `mode: add`, `shader: rain, 0.8`.
 #[derive(Clone, Debug)]
 pub struct Effects {
     pub alpha: Expr,
@@ -795,6 +795,17 @@ pub struct Effects {
     /// How it blends with what is under it: 0 covering, 1 `add` (adds light),
     /// 2 `screen` (lightens), 3 `multiply` (darkens what the scene painted under it).
     pub mode: u8,
+    /// One of the scene's own shaders, over what the group holds: it reads it
+    /// with `inside(s, at)` and returns what is seen instead.
+    pub shader: Option<GroupShader>,
+}
+
+/// `shader: rain, 0.8, open`: which one, its numbers, and the time if it reads it.
+#[derive(Clone, Debug)]
+pub struct GroupShader {
+    pub shader: u16,
+    pub values: Vec<Expr>,
+    pub time: Option<Expr>,
 }
 
 /// Where a group can be seen: whole at the start, nothing at the end.

@@ -547,6 +547,8 @@ fn layer_with_effects(el: Element, at: vec2<f32>, p: vec2<f32>, alpha: f32) -> v
     let layer = i32(el.header.y);
     let scale = u.header.w;
     var c = textureLoad(layers, vec2<i32>(at), layer, 0);
+    // A shader of the scene's: what it holds, as that shader sees it.
+    if (el.uv.x > 0.5) { c = user_layer_shader(el, p, layer); }
     if (el.light.x > 0.25) { c = layer_blurred(layer, at, el.light.x * scale); }
     // The glow goes under what is inside: light that spills from its edges.
     if (el.light.y > 0.25 && el.color0.w > 0.0) {

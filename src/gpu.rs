@@ -258,6 +258,8 @@ struct Fx {
     mask: (f32, [f32; 4]),
     mode: u8,
     affine: Affine,
+    /// A shader of the scene's over what it holds: its number, its eight numbers, the time.
+    shader: Option<(u16, [f32; 8], f32)>,
 }
 
 struct OpenBody {
@@ -785,6 +787,14 @@ impl DrawList {
                             }
                         };
                         let glow = fx.glow.as_ref().map_or((0.0, 0.0, None), |(r, k, col)| (r.eval(c).max(0.0), k.eval(c).max(0.0), col.as_ref().map(&color)));
+                        let shader = fx.shader.as_ref().map(|g| {
+                            let mut v = [0f32; 8];
+                            for (slot, e) in v.iter_mut().zip(&g.values) {
+                                *slot = e.eval(c);
+                            }
+                            self.timed |= g.time.is_some();
+                            (g.shader, v, g.time.as_ref().map_or(0.0, |e| e.eval(c)))
+                        });
                         let fx = Fx {
                             blur: v(&fx.blur, 0.0).max(0.0),
                             glow,
@@ -792,6 +802,7 @@ impl DrawList {
                             mask,
                             mode: fx.mode,
                             affine,
+                            shader,
                         };
                         // Effects that, right now, do nothing —a window with the
                         // keyboard at full colour, a glow that has gone out— need
@@ -803,7 +814,8 @@ impl DrawList {
                             && (fx.tone[2] - 1.0).abs() < 0.001
                             && fx.tone[3].abs() < 0.001
                             && fx.mask.0 == 0.0
-                            && fx.mode == 0;
+                            && fx.mode == 0
+                            && fx.shader.is_none();
                         if neutral && a >= 0.999 {
                             OpacityGroup::Multiply(1.0)
                         } else {
@@ -929,6 +941,12 @@ impl DrawList {
                                     e[20..24].copy_from_slice(&[f.blur, f.glow.0, f.mask.0, f.mode as f32]);
                                     e[24..28].copy_from_slice(&[f.glow.2.is_some() as u8 as f32, 1.0, 0.0, 0.0]);
                                     f.affine.encode(&mut e[44..52]);
+                                    // Its box is what the group holds, without what spills.
+                                    if let Some((k, v, t)) = f.shader {
+                                        e[36..40].copy_from_slice(&[bounds[0] + spill, bounds[1] + spill, bounds[2] - bounds[0] - 2.0 * spill, bounds[3] - bounds[1] - 2.0 * spill]);
+                                        e[40..42].copy_from_slice(&[k as f32 + 1.0, t]);
+                                        e[52..60].copy_from_slice(&v);
+                                    }
                                 }
                             });
                         }

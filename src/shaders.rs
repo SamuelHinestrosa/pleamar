@@ -34,6 +34,7 @@ pub const PRELUDE: &str = "struct Shader {
     color: vec4<f32>,
     color2: vec4<f32>,
     origin: vec2<f32>,
+    layer: i32,
 };
 ";
 
@@ -41,6 +42,7 @@ pub const PRELUDE: &str = "struct Shader {
 /// called correctly.
 const CHECK_HELPERS: &str = "fn behind(s: Shader, at: vec2<f32>) -> vec4<f32> { return vec4<f32>(0.0); }
 fn behind_frosted(s: Shader, at: vec2<f32>) -> vec4<f32> { return vec4<f32>(0.0); }
+fn inside(s: Shader, at: vec2<f32>) -> vec4<f32> { return vec4<f32>(0.0); }
 ";
 
 /// The real ones: what is behind, unmixed by the lens —straight colour, and in
@@ -55,6 +57,15 @@ const REAL_HELPERS: &str = "fn shader_behind(s: Shader, at: vec2<f32>, frosted: 
 }
 fn behind(s: Shader, at: vec2<f32>) -> vec4<f32> { return shader_behind(s, at, false); }
 fn behind_frosted(s: Shader, at: vec2<f32>) -> vec4<f32> { return shader_behind(s, at, true); }
+// What a group holds, for a group's shader (`group { shader: rain }`): straight
+// colour, and in the alpha how much of it there is. Outside a group, nothing.
+fn inside(s: Shader, at: vec2<f32>) -> vec4<f32> {
+    if (s.layer < 0) { return vec4<f32>(0.0); }
+    let dims = vec2<f32>(textureDimensions(layers));
+    let q = (s.origin + at - u.hud.xw) * u.header.w / dims;
+    let v = textureSampleLevel(layers, atlas_sampler, q, s.layer, 0.0);
+    return vec4<f32>(v.rgb / max(v.a, 0.001), v.a);
+}
 ";
 
 /// A shader already read and checked.
@@ -78,7 +89,7 @@ pub fn load(path: &Path, shown: &str, index: usize) -> Result<UserShader, String
     let module = check(&source, shown)?;
     // Its own names, to prefix them. Taken from what naga read, not guessed;
     // the prelude's are pleamar's.
-    let given = ["Shader", "behind", "behind_frosted"];
+    let given = ["Shader", "behind", "behind_frosted", "inside"];
     let mut own: HashSet<String> = HashSet::new();
     own.extend(module.functions.iter().filter_map(|(_, f)| f.name.clone()));
     own.extend(module.constants.iter().filter_map(|(_, c)| c.name.clone()));
@@ -272,12 +283,42 @@ pub fn generate(shaders: &[UserShader]) -> String {
     s.b = el.light;
     s.color = el.color0;
     s.color2 = el.color1;
+    s.layer = -1;
     // Its box, with its corners: what is outside it is not painted.
     let corner = min(el.uv.x, min(s.size.x, s.size.y) * 0.5);
     let q = abs(s.pos - s.size * 0.5) - s.size * 0.5 + vec2<f32>(corner);
     let d = length(max(q, vec2<f32>(0.0))) + min(max(q.x, q.y), 0.0) - corner;
+    let c = user_pick(u32(el.header.y), s);
+    let a = clamp(c.a, 0.0, 1.0) * coverage(d);
+    return vec4<f32>(clamp(c.rgb, vec3<f32>(0.0), vec3<f32>(1.0)) * a, a);
+}
+
+// A group's shader: its box is what the group holds; what it returns replaces it.
+// (See `layer_with_effects`: dest is the box, uv the shader's number + 1 and the
+// time, glass2 and glass3 its eight numbers.)
+fn user_layer_shader(el: Element, p: vec2<f32>, layer: i32) -> vec4<f32> {
+    var s: Shader;
+    s.origin = el.dest.xy;
+    s.pos = p - el.dest.xy;
+    s.size = el.dest.zw;
+    s.uv = s.pos / max(s.size, vec2<f32>(1.0));
+    s.time = el.uv.y;
+    s.pointer = vec2<f32>(-1e6);
+    s.hovered = 0.0;
+    s.scale = u.header.w;
+    s.a = el.glass2;
+    s.b = el.glass3;
+    s.color = vec4<f32>(1.0);
+    s.color2 = vec4<f32>(1.0);
+    s.layer = layer;
+    let c = user_pick(u32(el.uv.x) - 1u, s);
+    let a = clamp(c.a, 0.0, 1.0);
+    return vec4<f32>(clamp(c.rgb, vec3<f32>(0.0), vec3<f32>(1.0)) * a, a);
+}
+
+fn user_pick(k: u32, s: Shader) -> vec4<f32> {
     var c = vec4<f32>(0.0);
-    switch (u32(el.header.y)) {
+    switch (k) {
 ",
     );
     for k in 0..shaders.len() {
@@ -286,8 +327,7 @@ pub fn generate(shaders: &[UserShader]) -> String {
     s.push_str(
         "        default: {}
     }
-    let a = clamp(c.a, 0.0, 1.0) * coverage(d);
-    return vec4<f32>(clamp(c.rgb, vec3<f32>(0.0), vec3<f32>(1.0)) * a, a);
+    return c;
 }
 ",
     );

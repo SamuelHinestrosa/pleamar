@@ -741,6 +741,7 @@ What it receives, in `s`:
 | `s.color` · `s.color2` | the two `colors:` |
 | `s.scale` | real pixels per logical pixel: for lines one real pixel wide |
 | `behind(s, at)` · `behind_frosted(s, at)` | **what is behind the surface** at a point (in `s.pos` coordinates), sharp or frosted: the colour, and in its alpha how much of it is known. Calling it is what asks the surface to capture it, like a `lens:` glass |
+| `inside(s, at)` | only for a **group's shader** (§8.2, `shader:`): what the group holds at that point, straight colour and alpha. Anywhere else it is transparent |
 
 Three rules, checked when the scene is read, with the file and the line of the
 mistake: it has `fn shade(s: Shader) -> vec4<f32>` exactly; it declares no
@@ -801,6 +802,7 @@ scene Effects {
 | `hue: angle` | turns every colour round the colour wheel: `hue: 120deg` makes red green |
 | `mask: x1, y1 to x2, y2` | whole at the first point, gone at the second, along that line |
 | `mask: radial x, y radius r` · `… radius r1 to r2` | whole at the centre (or up to `r1`), gone at `r` (or `r2`) |
+| `shader: rain, a, b, …` | one of the scene's own shaders (§8.1) **over what the group holds**: it reads it with `inside(s, at)` and what it returns is seen instead. Its box is the group's, the numbers after the name are `s.a` and `s.b`, and `s.time` runs if it reads it. That is how a window becomes wet glass: drops that bend what the program shows. It goes before the other effects (a `saturation:` greys what the shader returns); `blur` and `glow` read the group as it was. It cannot call `behind` |
 | `mode: add` · `mode: screen` · `mode: multiply` | how it blends with what is under it, as one thing. `add` **adds light**: what it holds brightens whatever is under it, also the desktop behind the surface. `screen` lightens —never past white, never darker—; over nothing it is simply itself. `multiply` darkens what **the scene** painted under it, tinting it; the desktop behind the surface is not in pleamar's hands, so over nothing it paints nothing (rather than black). `mode: normal` is the default |
 
 All of them are expressions, so they animate like anything else: `blur: 8 * (1
@@ -1372,7 +1374,7 @@ properties.figure: at size scale rotate pivot color opacity blend stroke show gr
 properties.shader: at size corner opacity show values colors grow
 properties.particles: at area count life speed direction spread gravity drag size colors opacity shape emit burst show
 properties.input: at width size weight color opacity family placeholder selection secret show
-properties.group: pivot rotate scale move opacity size show z grow span blur glow saturation brightness contrast hue mask mode
+properties.group: pivot rotate scale move opacity size show z grow span blur glow saturation brightness contrast hue mask mode shader
 properties.popup: at size open
 properties.children: move
 properties.grid: at columns gap width row show opacity

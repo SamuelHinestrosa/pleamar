@@ -2105,7 +2105,7 @@ impl<'a> Compiler<'a> {
     /// `blur`, `glow`, `saturation`, `brightness`, `contrast`, `hue`, `mask` and
     /// `mode` of a group: what is done to what it holds when blending it.
     fn group_effects(&mut self, n: &Node, p: &mut HashMap<&str, Cur>, opacity: &Option<Expr>) -> R<Option<Effects>> {
-        let words = ["blur", "glow", "saturation", "brightness", "contrast", "hue", "mask", "mode"];
+        let words = ["blur", "glow", "saturation", "brightness", "contrast", "hue", "mask", "mode", "shader"];
         if !words.iter().any(|w| p.contains_key(*w)) {
             return Ok(None);
         }
@@ -2154,8 +2154,31 @@ impl<'a> Compiler<'a> {
             }
             None => 0,
         };
+        // `shader: rain, 0.8, open`: one of the scene's shaders, and up to eight numbers.
+        let shader = match p.get_mut("shader") {
+            Some(c) => {
+                let name = self.global(&c.id("the name of a shader")?);
+                let Some(k) = self.shaders.get(&name).copied() else {
+                    return self.unknown(c, "no shader", &name, self.shaders.keys().collect());
+                };
+                let mut values = Vec::new();
+                while c.sym(",") {
+                    values.push(self.expr(c)?);
+                }
+                if values.len() > 8 {
+                    return c.error("a shader takes up to eight numbers: `s.a` and `s.b`, four each");
+                }
+                let u = self.e.shaders[k as usize].clone();
+                if u.behind {
+                    return c.error("a group's shader reads what the group holds, with `inside(s, at)`: `behind` is for a `shader { … }` of its own");
+                }
+                let time = u.animated.then(|| self.time_prop().e());
+                Some(GroupShader { shader: k, values, time })
+            }
+            None => None,
+        };
         let _ = n;
-        Ok(Some(Effects { alpha: opacity.clone().unwrap_or(Expr::K(1.0)), blur, glow, saturation, brightness, contrast, hue, mask, mode }))
+        Ok(Some(Effects { alpha: opacity.clone().unwrap_or(Expr::K(1.0)), blur, glow, saturation, brightness, contrast, hue, mask, mode, shader }))
     }
 
     /// How much room a named stack takes is known when it finishes drawing, but it

@@ -1,0 +1,13 @@
+// expect: ok
+// A group's own shader: it reads what the group holds (`inside`) and returns what is seen.
+scene GroupShader {
+    surface { size: 200, 100 }
+    shader wet = file "shaders/wet.wgsl"
+    prop k = 1 ~calm
+    group {
+        shader: wet, k
+        saturation: 0.8
+        box { from: 10, 10; size: 180, 80; corner: 10; color: #9ed6bd }
+        text "wet" { at: 100, 50; anchor: center; size: 20; color: #151616 }
+    }
+}

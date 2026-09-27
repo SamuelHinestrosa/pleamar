@@ -34,7 +34,7 @@ pub const PROPERTIES: &[(&str, &[&str])] = &[
     ("shader", &["at", "size", "corner", "opacity", "show", "values", "colors", "grow"]),
     ("particles", &["at", "area", "count", "life", "speed", "direction", "spread", "gravity", "drag", "size", "colors", "opacity", "shape", "emit", "burst", "show"]),
     ("input", &["at", "width", "size", "weight", "color", "opacity", "family", "placeholder", "selection", "secret", "show"]),
-    ("group", &["pivot", "rotate", "scale", "move", "opacity", "size", "show", "z", "grow", "span", "blur", "glow", "saturation", "brightness", "contrast", "hue", "mask", "mode"]),
+    ("group", &["pivot", "rotate", "scale", "move", "opacity", "size", "show", "z", "grow", "span", "blur", "glow", "saturation", "brightness", "contrast", "hue", "mask", "mode", "shader"]),
     ("popup", &["at", "size", "open"]),
     ("children", &["move"]),
     ("grid", &["at", "columns", "gap", "width", "row", "show", "opacity"]),
