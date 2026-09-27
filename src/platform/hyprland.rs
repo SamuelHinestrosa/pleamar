@@ -168,15 +168,43 @@ pub fn service(name: &str, notify: Box<dyn Fn(SysValue) + Send>) -> bool {
     };
     let Some(path) = socket(".socket2.sock") else { return false };
     let Ok(s) = UnixStream::connect(path) else { return false };
+    // News that comes in a burst is asked about once: a terminal can set its
+    // title a hundred times a second (the program running changes), and each
+    // one was two questions to Hyprland and a notice to the scene. And a
+    // notice only goes if what it says has changed.
+    let _ = s.set_read_timeout(Some(std::time::Duration::from_millis(50)));
     std::thread::Builder::new()
         .name(format!("hyprland·{name}"))
         .spawn(move || {
-            notify(read());
-            for line in BufReader::new(s).lines().map_while(Result::ok) {
-                let event = line.split(">>").next().unwrap_or("");
-                // `workspacev2`, `activewindowv2`…: the same news twice.
-                if interesting.contains(&event) {
-                    notify(read());
+            let first = read();
+            let mut last = format!("{first:?}");
+            notify(first);
+            let mut reader = BufReader::new(s);
+            let mut line = String::new();
+            let mut due: Option<std::time::Instant> = None;
+            loop {
+                // A line cut by the wait is finished on the next read, not lost.
+                match reader.read_line(&mut line) {
+                    Ok(0) => return,
+                    Ok(_) => {
+                        let event = line.split(">>").next().unwrap_or("");
+                        // `workspacev2`, `activewindowv2`…: the same news twice.
+                        if interesting.contains(&event) && due.is_none() {
+                            due = Some(std::time::Instant::now());
+                        }
+                        line.clear();
+                    }
+                    Err(e) if matches!(e.kind(), std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut) => {}
+                    Err(_) => return,
+                }
+                if due.is_some_and(|t| t.elapsed() >= std::time::Duration::from_millis(50)) {
+                    due = None;
+                    let v = read();
+                    let fingerprint = format!("{v:?}");
+                    if fingerprint != last {
+                        last = fingerprint;
+                        notify(v);
+                    }
                 }
             }
         })

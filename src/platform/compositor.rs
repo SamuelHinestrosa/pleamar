@@ -344,8 +344,19 @@ fn start() -> Option<Arc<Mutex<State>>> {
             }
             let _ = connection.flush();
             let Some(read_guard) = queue.prepare_read() else { continue };
-            if read_guard.read().is_err() {
-                return;
+            // Until the compositor says something. `read` does not wait: with
+            // nothing to read it came straight back, and this thread went round
+            // with a whole core (Marea at 113 % with a window open).
+            {
+                use std::os::fd::AsRawFd;
+                let mut fd = libc::pollfd { fd: read_guard.connection_fd().as_raw_fd(), events: libc::POLLIN, revents: 0 };
+                // SAFETY: one pollfd of our own, for as long as the call.
+                unsafe { libc::poll(&mut fd, 1, -1) };
+            }
+            match read_guard.read() {
+                Ok(_) => {}
+                Err(wayland_client::backend::WaylandError::Io(e)) if e.kind() == std::io::ErrorKind::WouldBlock => {}
+                Err(_) => return,
             }
         })
         .ok()?;
