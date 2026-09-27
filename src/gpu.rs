@@ -98,7 +98,7 @@ pub struct DrawList {
 /// itself is in its main surface (x, y, width, height), and each of its pieces
 /// —its layer of the windows' texture, its corners in it, where it goes from
 /// the main surface's corner (x, y, width, height), and whether it is opaque—.
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct WindowTex {
     pub geometry: [f32; 4],
     pub pieces: Vec<(u32, [f32; 4], [f32; 4], bool)>,
@@ -178,7 +178,7 @@ impl PreviousFrame {
 }
 
 /// The field being typed into, as seen by whoever paints.
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq)]
 pub struct FieldView {
     pub text: usize,
     pub cursor: usize,

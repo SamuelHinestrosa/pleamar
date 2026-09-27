@@ -166,6 +166,8 @@ pub fn run(
     let mut sheets: Vec<Sheet> = Vec::new();
     let mut draw = DrawList::default();
     let mut previous = crate::gpu::PreviousFrame::default();
+    // What the last list was made from (see `same_scene`).
+    let mut compose_memo: Option<ComposeMemo> = None;
     let mut changed: Vec<[f32; 4]> = Vec::new();
     let mut sheet_counts = (0u32, 0u32, 0u32);
     let no_lens = std::env::var_os("PLEAMAR_NO_LENS").is_some();
@@ -2163,7 +2165,20 @@ pub fn run(
             prof_cpu[7] += c - prof_c;
             prof_c = c;
         }
-        draw.compose(to_paint, c, &texts, &mut letters, view, size, op.hud);
+        // Nothing the scene reads has changed —only a window drew something new
+        // in its box, which is a texture and not the list—: the list is the one
+        // already made, and already on the card. A browser at 165 frames a second
+        // made it again every time for nothing.
+        let same_scene = !draw.timed
+            && !draw.particles_alive
+            && draw.wake_at.is_none()
+            && compose_memo.as_ref().is_some_and(|m: &ComposeMemo| {
+                m.size == size && m.view == view && m.facts == facts && m.texts == texts && m.window_tex == draw.window_tex && m.props.len() == props.len() && m.props.iter().zip(&props).all(|(a, b)| *a == b.x)
+            });
+        if !same_scene {
+            draw.compose(to_paint, c, &texts, &mut letters, view, size, op.hud);
+            compose_memo = Some(ComposeMemo { size, view, facts: facts.clone(), texts: texts.clone(), window_tex: draw.window_tex.clone(), props: props.iter().map(|a| a.x).collect() });
+        }
         // Particles carry themselves: while one is alive, the scene does not rest.
         alive |= draw.particles_alive;
         // An image that moves: wake up when it changes frame.
@@ -2180,9 +2195,12 @@ pub fn run(
         // a new atlas, any letter may have changed without changing its `uv`.
         if !letters.pending_upload.is_empty() {
             previous.forget();
+            compose_memo = None;
         }
         g.upload_atlas(&mut letters.pending_upload);
-        g.upload(&draw);
+        if !same_scene {
+            g.upload(&draw);
+        }
         // What has changed, and where. The frame graph always changes.
         // The light of a click changes the glass without changing the list: everything is painted.
         if profiling {
@@ -3146,4 +3164,14 @@ impl Follows {
         r.value = Some(v);
         v
     }
+}
+
+/// What a draw list was made from: while all of it holds, the list holds.
+struct ComposeMemo {
+    size: (f32, f32),
+    view: Option<crate::gpu::FieldView>,
+    facts: Vec<f32>,
+    texts: Vec<String>,
+    window_tex: Vec<Option<crate::gpu::WindowTex>>,
+    props: Vec<f32>,
 }
