@@ -40,7 +40,8 @@ pub enum SysValue {
 ///  · `apps`       → `{ { name, exec, icon }, … }`, once
 ///  · `audio`      → `{ volume = 0.54, muted = false }`
 ///  · `battery`    → `{ present, percent, charging }`
-///  · `network`    → `{ online, kind = "wired" | "wifi" | "none", name, strength }`
+///  · `network`    → `{ online, kind = "wired" | "wifi" | "none", name, strength, wifi, networks }` (see `networkmanager`)
+///  · `bluetooth`  → `{ present, powered, discovering, devices }` (see `bluez`)
 ///  · `media`      → `{ playing, title, artist, album, player }`, or `{ player = "" }` if nothing is playing
 ///  · `clock`      → `{ hour, minute, second, day, month, year, weekday, time, date }`, when the minute changes
 ///  · `clock.seconds` → the same, every second
@@ -67,7 +68,10 @@ pub fn service(from: &str, name: &str, notify: Box<dyn Fn(SysValue) + Send>) -> 
         "audio" => return system::audio(notify),
         "battery" => return system::battery(notify),
         "brightness" => return system::brightness(notify),
+        // NetworkManager, which can be asked things too; without it, the kernel.
+        "network" if networkmanager::available() => return networkmanager::service(notify),
         "network" => return system::network(notify),
+        "bluetooth" if bluez::available() => return bluez::service(notify),
         "media" => return mpris::service(notify),
         "notifications" => return notifications::service(notify),
         "tray" => return tray::service(notify),
@@ -108,6 +112,14 @@ pub fn command(from: &str, name: &str, args: &[SysValue]) -> Result<(), String> 
     #[cfg(target_os = "linux")]
     if name.starts_with("audio.") {
         return system::audio_command(name, args);
+    }
+    #[cfg(target_os = "linux")]
+    if name.starts_with("bluetooth.") {
+        return bluez::command(name, args);
+    }
+    #[cfg(target_os = "linux")]
+    if name.starts_with("network.") {
+        return networkmanager::command(name, args);
     }
     #[cfg(target_os = "linux")]
     if name.starts_with("session.") {
@@ -577,6 +589,10 @@ mod desktop;
 mod hyprland;
 #[cfg(target_os = "linux")]
 mod mpris;
+#[cfg(target_os = "linux")]
+mod networkmanager;
+#[cfg(target_os = "linux")]
+mod bluez;
 #[cfg(target_os = "linux")]
 mod system;
 #[cfg(target_os = "linux")]

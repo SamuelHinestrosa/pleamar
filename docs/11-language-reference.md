@@ -1361,13 +1361,14 @@ fact_types: number bool
 model: list
 path: move line curve close
 documented: translations surface permissions model service spring prop pose fact event text image figure particles shader measure let zone body ellipse box arc line path input clip group popup component children repeat for row grid windows window pages column space between layer on every blink wave spin follow look gesture posture import scene library language
-services: clock clock.seconds audio battery brightness network media window
+services: clock clock.seconds audio battery brightness network bluetooth media window
 services.clock: hour minute second day month year weekday time date
 services.clock.seconds: hour minute second day month year weekday time date
 services.audio: volume muted input input_muted
 services.battery: present percent charging
 services.brightness: present level
-services.network: online kind name strength
+services.network: online kind name strength wifi
+services.bluetooth: present powered discovering
 services.media: playing title artist album player
 services.window: title class monitor
 parameter_types: number bool color text record event image gesture spring

@@ -125,7 +125,8 @@ pub const SERVICES: &[(&str, &[&str])] = &[
     ("audio", &["volume", "muted", "input", "input_muted"]),
     ("battery", &["present", "percent", "charging"]),
     ("brightness", &["present", "level"]),
-    ("network", &["online", "kind", "name", "strength"]),
+    ("network", &["online", "kind", "name", "strength", "wifi"]),
+    ("bluetooth", &["present", "powered", "discovering"]),
     ("media", &["playing", "title", "artist", "album", "player"]),
     ("window", &["title", "class", "monitor"]),
 ];
