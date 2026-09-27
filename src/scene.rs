@@ -1914,12 +1914,17 @@ pub enum NestEvent {
 }
 
 /// One surface of a window: which one (it keeps its place on the card from
-/// frame to frame), where from the main surface's corner, and how big.
+/// frame to frame), where from the main surface's corner, and how big —in
+/// the window's own units—. Its pixels may be more than that (a program
+/// drawing at 1.5 or 2 for a monitor that is): `px` is how many, and `src`
+/// which part of them it shows (all of them, unless it crops: wp-viewporter).
 #[derive(Debug)]
 pub struct WindowPiece {
     pub id: u64,
     pub at: (i32, i32),
     pub size: (u32, u32),
+    pub px: (u32, u32),
+    pub src: [f32; 4],
     pub content: PieceContent,
 }
 

@@ -43,6 +43,9 @@ struct NestPiece {
     layer: u32,
     at: (i32, i32),
     size: (u32, u32),
+    /// Its pixels, and the part of them it shows (see `WindowPiece`).
+    px: (u32, u32),
+    src: [f32; 4],
     opaque: bool,
     pixels: Vec<u8>,
     buffer: Option<u64>,
@@ -784,10 +787,12 @@ pub fn run(
                                             nest_layers.push(true);
                                         }
                                         nest_layers[layer] = true;
-                                        NestPiece { id: p.id, layer: layer as u32, at: p.at, size: p.size, opaque: false, pixels: Vec::new(), buffer: None, #[cfg(unix)] fresh: None, uploaded: false }
+                                        NestPiece { id: p.id, layer: layer as u32, at: p.at, size: p.size, px: p.px, src: p.src, opaque: false, pixels: Vec::new(), buffer: None, #[cfg(unix)] fresh: None, uploaded: false }
                                     });
                                     piece.at = p.at;
                                     piece.size = p.size;
+                                    piece.px = p.px;
+                                    piece.src = p.src;
                                     match p.content {
                                         PieceContent::Kept => {}
                                         PieceContent::Pixels(px) => {
@@ -1977,7 +1982,7 @@ pub fn run(
                                 {
                                     let fresh = p.fresh.take();
                                     let was_fresh = fresh.is_some();
-                                    match g.copy_dmabuf(p.layer, p.size, buffer, fresh) {
+                                    match g.copy_dmabuf(p.layer, p.px, buffer, fresh) {
                                         Ok(grew) => {
                                             if was_fresh {
                                                 released.push(buffer);
@@ -2000,7 +2005,7 @@ pub fn run(
                                     false
                                 }
                             } else if !p.pixels.is_empty() {
-                                g.upload_window(p.layer, p.size, &p.pixels)
+                                g.upload_window(p.layer, p.px, &p.pixels)
                             } else {
                                 false
                             };
@@ -2030,8 +2035,10 @@ pub fn run(
                             .iter()
                             .filter(|p| p.buffer.is_some() || !p.pixels.is_empty())
                             .map(|p| {
+                                // Its pixels (the part it shows) into its size, in the window's units.
                                 let (pw, ph) = (p.size.0 as f32, p.size.1 as f32);
-                                (p.layer, [0.0, 0.0, pw / dw as f32, ph / dh as f32], [p.at.0 as f32, p.at.1 as f32, pw, ph], p.opaque)
+                                let s = p.src;
+                                (p.layer, [s[0] / dw as f32, s[1] / dh as f32, s[2] / dw as f32, s[3] / dh as f32], [p.at.0 as f32, p.at.1 as f32, pw, ph], p.opaque)
                             })
                             .collect();
                         (!pieces.is_empty()).then(|| {
