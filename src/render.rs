@@ -305,6 +305,10 @@ pub fn run(
     let mut prof_since = Instant::now();
     let mut prof_window_frames = 0u32;
     let mut prof_painted = 0u32;
+    // This round's sections, and how long it waited for its turn to paint: a
+    // slow frame says them, which an average of 300 does not.
+    let mut sec = [0f64; 8];
+    let mut sec_wait = 0f64;
     loop {
         // ── 1. what has arrived ─────────────────────────────────
         let mut block = None;
@@ -1015,7 +1019,7 @@ pub fn run(
 
         if profiling {
             let n = Instant::now();
-            prof[0] += (n - prof_t).as_secs_f64() * 1000.0;
+            { let d = (n - prof_t).as_secs_f64() * 1000.0; prof[0] += d; sec[0] += d; }
             prof_t = n;
             let c = thread_cpu_ms();
             prof_cpu[0] += c - prof_c;
@@ -1958,7 +1962,7 @@ pub fn run(
 
         if profiling {
             let n = Instant::now();
-            prof[1] += (n - prof_t).as_secs_f64() * 1000.0;
+            { let d = (n - prof_t).as_secs_f64() * 1000.0; prof[1] += d; sec[1] += d; }
             prof_t = n;
             let c = thread_cpu_ms();
             prof_cpu[1] += c - prof_c;
@@ -1999,7 +2003,7 @@ pub fn run(
         }
         if profiling {
             let n = Instant::now();
-            prof[2] += (n - prof_t).as_secs_f64() * 1000.0;
+            { let d = (n - prof_t).as_secs_f64() * 1000.0; prof[2] += d; sec[2] += d; }
             prof_t = n;
             let c = thread_cpu_ms();
             prof_cpu[2] += c - prof_c;
@@ -2126,7 +2130,7 @@ pub fn run(
         }
         if profiling {
             let n = Instant::now();
-            prof[7] += (n - prof_t).as_secs_f64() * 1000.0;
+            { let d = (n - prof_t).as_secs_f64() * 1000.0; prof[7] += d; sec[7] += d; }
             prof_t = n;
             let c = thread_cpu_ms();
             prof_cpu[7] += c - prof_c;
@@ -2156,7 +2160,7 @@ pub fn run(
         // The light of a click changes the glass without changing the list: everything is painted.
         if profiling {
             let n = Instant::now();
-            prof[3] += (n - prof_t).as_secs_f64() * 1000.0;
+            { let d = (n - prof_t).as_secs_f64() * 1000.0; prof[3] += d; sec[3] += d; }
             prof_t = n;
             let c = thread_cpu_ms();
             prof_cpu[3] += c - prof_c;
@@ -2397,7 +2401,7 @@ pub fn run(
         }
         if profiling {
             let n = Instant::now();
-            prof[4] += (n - prof_t).as_secs_f64() * 1000.0;
+            { let d = (n - prof_t).as_secs_f64() * 1000.0; prof[4] += d; sec[4] += d; }
             prof_t = n;
             let c = thread_cpu_ms();
             prof_cpu[4] += c - prof_c;
@@ -2503,7 +2507,9 @@ pub fn run(
             }
         }
         if profiling {
-            prof_t = Instant::now();
+            let n = Instant::now();
+            sec_wait = (n - prof_t).as_secs_f64() * 1000.0;
+            prof_t = n;
             prof_c = thread_cpu_ms();
         }
         let before_painting = last_presented;
@@ -2610,7 +2616,7 @@ pub fn run(
         }
         if profiling {
             let n = Instant::now();
-            prof[5] += (n - prof_t).as_secs_f64() * 1000.0;
+            { let d = (n - prof_t).as_secs_f64() * 1000.0; prof[5] += d; sec[5] += d; }
             prof_t = n;
             let c = thread_cpu_ms();
             prof_cpu[5] += c - prof_c;
@@ -2701,7 +2707,7 @@ pub fn run(
         }
         if profiling {
             let n = Instant::now();
-            prof[6] += (n - prof_t).as_secs_f64() * 1000.0;
+            { let d = (n - prof_t).as_secs_f64() * 1000.0; prof[6] += d; sec[6] += d; }
             prof_t = n;
             let c = thread_cpu_ms();
             prof_cpu[6] += c - prof_c;
@@ -2730,8 +2736,17 @@ pub fn run(
         let ms = dt * 1000.0;
         // A permanent telltale: any frame that goes over two periods, with its time.
         if ms > period_ms * 2.4 && !first_frame && cycle.dts.len() > 1 && !op.no_vsync && !op.naive {
-            println!("render · slow frame: {ms:.0} ms at {t_total:.2} s");
+            if profiling {
+                println!(
+                    "render · slow frame: {ms:.0} ms at {t_total:.2} s · input {:.1} · rules {:.1} · windows' frames {:.1} · compose {:.1} · regions {:.1} · waiting its turn {sec_wait:.1} · paint {:.1} · rest {:.1} ms",
+                    sec[0], sec[1] + sec[2], sec[7], sec[3], sec[4], sec[5], sec[6]
+                );
+            } else {
+                println!("render · slow frame: {ms:.0} ms at {t_total:.2} s");
+            }
         }
+        sec = [0.0; 8];
+        sec_wait = 0.0;
         history.copy_within(1.., 0);
         history[119] = if blocked { -ms } else { ms };
         cycle.dts.push(ms);
