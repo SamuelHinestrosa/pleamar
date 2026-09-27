@@ -229,6 +229,11 @@ pub fn run(
     let mut loan_grace: Option<Instant> = None;
     // The field being typed into, and the key that has been left held down.
     let mut editing: Option<Editing> = None;
+    // The field that was being typed in when the keyboard went: it comes back
+    // with it. Moving between two of the scene's surfaces (the finder and its
+    // catcher, a copy on each monitor) the compositor says «gone» and «here»
+    // in a row; forgetting the field there left it on another one.
+    let mut parked: Option<Editing> = None;
     let mut repeat: Option<(String, Option<String>, Mods, Instant)> = None;
     let mut last_key = Instant::now();
     let mut last_pointer: Option<(f32, f32)> = None;
@@ -891,6 +896,7 @@ pub fn run(
                     }
                 }
                 ToRender::FocusField(name) => {
+                    parked = None;
                     editing = name.and_then(|n| scene.texts.iter().position(|t| t.0 == n)).map(|k| Editing { field: k, cursor: texts[k].len(), anchor: texts[k].len() });
                     last_key = Instant::now();
                 }
@@ -980,12 +986,19 @@ pub fn run(
             have_keyboard = *gained;
             let _ = to_logic.send(Event::Focus(*gained));
             if *gained {
-                // On gaining the keyboard, if there is somewhere to type and nobody has it, the first one.
+                // On gaining the keyboard: the field it was in when it went; if
+                // none, somewhere to type that is on show —the first one drawn—.
                 if editing.is_none() {
-                    editing = scene.instrs.iter().find_map(|i| if let Instr::Field { text, .. } = i { Some(text.0 as usize) } else { None }).map(|k| Editing { field: k, cursor: texts[k].len(), anchor: texts[k].len() });
+                    editing = parked.take().or_else(|| {
+                        draw.fields
+                            .first()
+                            .map(|f| f.text)
+                            .or_else(|| scene.instrs.iter().find_map(|i| if let Instr::Field { text, .. } = i { Some(text.0 as usize) } else { None }))
+                            .map(|k| Editing { field: k, cursor: texts[k].len(), anchor: texts[k].len() })
+                    });
                 }
             } else {
-                editing = None;
+                parked = editing.take().or(parked.take());
                 repeat = None;
             }
         }
@@ -1308,16 +1321,26 @@ pub fn run(
         // the last —Marea's full-screen catcher— and with it the mouse: over
         // the calendar, which puts the cursor in its field as it opens, the
         // pointer stayed on the catcher and the first click closed everything.
-        let typing_at = editing
+        // With one copy per monitor the field is there once per copy, all of
+        // them the same text: the cursor is in whichever of them falls on an
+        // open surface. Taking the first one found —the copy on the other
+        // monitor, closed— left the open one without the keyboard.
+        let typing_at: Vec<[f32; 4]> = editing
             .as_ref()
-            .and_then(|e| draw.fields.iter().find(|f| f.text == e.field))
-            .and_then(|f| scene.zones.iter().find(|z| z.id == f.zone))
-            .and_then(|z| z.bounds(Ctx { props: &props, facts: &facts }));
+            .map(|e| {
+                draw.fields
+                    .iter()
+                    .filter(|f| f.text == e.field)
+                    .flat_map(|f| scene.zones.iter().filter(move |z| z.id == f.zone))
+                    .filter_map(|z| z.bounds(Ctx { props: &props, facts: &facts }))
+                    .collect()
+            })
+            .unwrap_or_default();
         if keyboard_set.is_some() || scene.keyboard_while.is_some() || keyboard_lent.is_some() {
             keyboard_set = Some(mode);
             for l in &mut sheets {
                 let v = l.view.bounds();
-                let elsewhere = typing_at.is_some_and(|b| !(b[0] < v[2] && b[2] > v[0] && b[1] < v[3] && b[3] > v[1]));
+                let elsewhere = !typing_at.is_empty() && !typing_at.iter().any(|b| b[0] < v[2] && b[2] > v[0] && b[1] < v[3] && b[3] > v[1]);
                 let its = if !(l.open || l.view.popup.is_some()) {
                     Keyboard::Never
                 } else if mode == Keyboard::Always && elsewhere {
@@ -1551,6 +1574,7 @@ pub fn run(
                         }
                     }
                     Effect::FocusField(t) => {
+                        parked = None;
                         editing = t.map(|t| t.0 as usize).map(|k| Editing { field: k, cursor: texts[k].len(), anchor: texts[k].len() });
                         last_key = now;
                         // Focusing a field is wanting to type right away. With the keyboard "on
