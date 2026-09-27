@@ -300,9 +300,16 @@ pub fn listen_for_commands(scene: &str, receive: Box<dyn Fn(String) -> Option<St
 }
 
 #[cfg(unix)]
+/// Where a scene listens: `$XDG_RUNTIME_DIR/pleamar`, or `PLEAMAR_SOCKETS` —a
+/// desktop of its own beside another of the same user (pleamar-wm's session
+/// next to Hyprland) gives its programs another place, so that `marea
+/// search` there reaches its own Marea and not the other desktop's—.
 fn command_socket_path(scene: &str) -> Option<std::path::PathBuf> {
-    let base = std::env::var("XDG_RUNTIME_DIR").unwrap_or_else(|_| std::env::temp_dir().to_string_lossy().into_owned());
-    Some(std::path::Path::new(&base).join("pleamar").join(format!("{scene}.sock")))
+    let dir = match std::env::var("PLEAMAR_SOCKETS").ok().filter(|d| !d.is_empty()) {
+        Some(d) => std::path::PathBuf::from(d),
+        None => std::path::Path::new(&std::env::var("XDG_RUNTIME_DIR").unwrap_or_else(|_| std::env::temp_dir().to_string_lossy().into_owned())).join("pleamar"),
+    };
+    Some(dir.join(format!("{scene}.sock")))
 }
 
 /// Tell a running scene something. Without a name, to the only one there is.
