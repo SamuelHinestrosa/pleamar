@@ -2604,17 +2604,39 @@ impl Sent {
     }
 
     pub fn done(&self, device: &wgpu::Device) -> bool {
-        if !self.0.load(std::sync::atomic::Ordering::Acquire) {
+        if !self.finished() {
             let _ = device.poll(wgpu::PollType::Poll);
         }
+        self.finished()
+    }
+
+    /// Whether it is known to have finished, without asking the card: the
+    /// notice is set by whichever thread asks next (each monitor does, every frame).
+    pub fn finished(&self) -> bool {
         self.0.load(std::sync::atomic::Ordering::Acquire)
     }
 
-    /// Until it has finished, or that long.
+    /// Until it has finished, or that long. Asking costs (some 20 µs each
+    /// time), so first it sleeps most of what the waits of this thread
+    /// usually take, and only then asks, every quarter of a millisecond: with
+    /// the card slow, asking every 0.2 ms from the start was the monitor's
+    /// thread's biggest cost.
     pub fn wait(&self, device: &wgpu::Device, most: std::time::Duration) {
         let start = std::time::Instant::now();
-        while !self.done(device) && start.elapsed() < most {
-            std::thread::sleep(std::time::Duration::from_micros(200));
+        let usual = WAIT_USUALLY.with(|u| u.get());
+        let first = (usual * 0.8 - 0.3).clamp(0.0, most.as_secs_f64() * 1000.0);
+        if first > 0.0 && !self.finished() {
+            std::thread::sleep(std::time::Duration::from_secs_f64(first / 1000.0));
         }
+        while !self.done(device) && start.elapsed() < most {
+            std::thread::sleep(std::time::Duration::from_micros(250));
+        }
+        let took = start.elapsed().as_secs_f64() * 1000.0;
+        WAIT_USUALLY.with(|u| u.set(u.get() * 0.9 + took * 0.1));
     }
+}
+
+thread_local! {
+    /// How long this thread's waits for the card usually take, in ms.
+    static WAIT_USUALLY: std::cell::Cell<f64> = const { std::cell::Cell::new(0.0) };
 }

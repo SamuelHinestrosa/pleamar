@@ -277,6 +277,7 @@ pub fn run(
     // Programs' buffers the card is still copying, by the work they went in:
     // they go back as soon as it says it has finished, and nobody waits for it.
     let mut nest_lent: Vec<(crate::gpu::Sent, Vec<u64>)> = Vec::new();
+    let mut last_card_ask = Instant::now();
     // Programs' buffers already destroyed that a window is still showing.
     #[cfg(target_os = "linux")]
     let mut nest_doomed: Vec<u64> = Vec::new();
@@ -318,8 +319,12 @@ pub fn run(
                 // A program's buffer still on loan is looked at every couple of
                 // milliseconds, without a round: it goes back as soon as it is copied.
                 if let (Some(g), Some(send)) = (&gpu, &nest) {
+                    let ask = last_card_ask.elapsed() >= Duration::from_millis(5);
+                    if ask && !nest_lent.is_empty() {
+                        last_card_ask = Instant::now();
+                    }
                     nest_lent.retain(|(index, buffers)| {
-                        let done = g.is_done(index);
+                        let done = index.finished() || (ask && g.is_done(index));
                         if done {
                             send(ToNest::Released(buffers.clone()));
                         }
@@ -341,8 +346,14 @@ pub fn run(
         }
         incoming.extend(rx.try_iter());
         if let (Some(g), Some(send)) = (&gpu, &nest) {
+            // The card is asked at most every 5 ms from here: its notices are set
+            // by whoever asks, and each monitor already does, every frame.
+            let ask = last_card_ask.elapsed() >= Duration::from_millis(5);
+            if ask && !nest_lent.is_empty() {
+                last_card_ask = Instant::now();
+            }
             nest_lent.retain(|(index, buffers)| {
-                let done = g.is_done(index);
+                let done = index.finished() || (ask && g.is_done(index));
                 if done {
                     send(ToNest::Released(buffers.clone()));
                 }
