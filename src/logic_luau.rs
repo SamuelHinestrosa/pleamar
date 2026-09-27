@@ -458,12 +458,40 @@ impl LuauScript {
     /// What a service reports, spread over the fields the scene asked for. Whatever
     /// does not come stays as it was: a service may report only what changed.
     fn spread_service(&self, alias: &str, value: &SysValue) {
+        // A service that is only a list (`tray`, `apps`, `notifications`) is its `list`.
+        let whole;
+        let value = match value {
+            SysValue::List(_) => {
+                whole = SysValue::Map(vec![("list".into(), value.clone())]);
+                &whole
+            }
+            v => v,
+        };
         let SysValue::Map(fields) = value else { return };
-        let theirs = {
+        let (theirs, bindings) = {
             let c = self.c.lock().unwrap();
             let Some(s) = c.services.iter().find(|s| s.alias == alias) else { return };
-            s.fields.clone()
+            (s.fields.clone(), s.models.clone())
         };
+        // Its lists, into the models the scene declared for them: record by record,
+        // by field name, as `model.x = …` would from the logic.
+        for (field, model) in &bindings {
+            let list = fields.iter().find(|(k, _)| k == field).map(|(_, v)| v.clone()).unwrap_or(SysValue::List(Vec::new()));
+            let owned;
+            let lua = match &self.lua {
+                Some(l) => l,
+                None => {
+                    owned = Lua::new();
+                    &owned
+                }
+            };
+            let Ok(Value::Table(t)) = value_to_lua(lua, &list) else { continue };
+            let mut c = self.c.lock().unwrap();
+            let Some(m) = c.models.iter().find(|m| &m.name == model).cloned() else { continue };
+            if let Err(e) = spread_list(&mut c, &self.tx, model, &m, &t) {
+                eprintln!("logic  · '{alias}.{field}' into '{model}': {e}");
+            }
+        }
         for field in &theirs {
             let Some((_, v)) = fields.iter().find(|(k, _)| *k == field.name) else { continue };
             let full = format!("{alias}.{}", field.name);

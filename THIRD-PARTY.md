@@ -199,6 +199,7 @@ taken). Neither reaches this code either way.
 | proc-macro-crate | 3.5.0 | `MIT OR Apache-2.0` |
 | proc-macro2 | 1.0.107 | `MIT OR Apache-2.0` |
 | profiling | 1.0.18 | `MIT OR Apache-2.0` |
+| pulseaudio | 0.3.1 | `MIT` |
 | pxfm | 0.1.30 | `BSD-3-Clause OR Apache-2.0` |
 | quick-xml | 0.41.0 | `MIT` |
 | quote | 1.0.47 | `MIT OR Apache-2.0` |

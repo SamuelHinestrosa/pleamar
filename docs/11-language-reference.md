@@ -312,15 +312,40 @@ What each service brings is in the vocabulary (§17), and **asking it for what i
 | `audio.input` · `audio.input_muted` | the microphone: the same two, for what comes in |
 | `network.kind` | `none`, `wired` or `wifi` |
 | the `bool` ones | `muted`, `charging`, `present`, `online`, `playing` |
- Whatever does not come in a report stays as it was. The ones that bring lists —`apps`, `tray`, `notifications`, `workspaces`— are not asked for this way: that is a model, and the logic hands it out with `sys.watch`.
+ Whatever does not come in a report stays as it was.
 
-**Which speaker and which microphone.** `audio` also reports, to `sys.watch`
-and `sys.ask` only, **the devices there are**: `outputs` and `inputs`, each one
-`{ id, name, default }`. They are lists, so they are not declared in `service`;
-the logic spreads them into a model. `sys.call("audio.default", id)` switches to
-one, and the report comes back with the new `default` set. A desktop sound panel
-needs this: without it only the volume of whatever was already there can be
-moved.
+**Lists, into a model, with no logic.** What a service reports as a list goes
+into a model the scene declares **before** it, record by record and by field
+name —as `model.x = …` would from the logic—: its field takes the model's name
+as its type. For the services that are only a list —`apps`, `tray`,
+`notifications`— the field is `list`:
+
+```
+model nets max 12 { ssid: text; strength: number; known: bool; active: bool }
+service network as net { online: bool; networks: nets }
+
+model icons max 12 { key: text; title: text; icon: image 18, 18 }
+service tray { list: icons }
+```
+
+| service | its lists |
+| --- | --- |
+| `network` | `networks`: `{ ssid, strength, secure, known, active }`, the strongest first |
+| `bluetooth` | `devices`: `{ name, address, paired, connected, battery, icon }` |
+| `audio` | `outputs` · `inputs`: `{ id, name, default }` |
+| `window` | `list`: `{ id, title, class, monitor, active, minimized }` (compositors with wlr-foreign-toplevel) |
+| `workspaces` | `list`: `{ id, name, windows, monitor, active }` |
+| `apps` | `list`: `{ name, exec, icon, id, wmclass }` |
+| `tray` | `list`: `{ key, id, title, status, icon, menu }` |
+| `notifications` | `list`: `{ id, app, title, body, icon, urgency, actions }` |
+
+The model only gets the fields it declares; the rest of each record is left
+out. `nets.count` is how many fit, `nets.total` how many came.
+
+**Which speaker and which microphone.** `outputs` and `inputs`, above: each one
+`{ id, name, default }`. `sys.call("audio.default", id)` switches to one, and the
+report comes back with the new `default` set. A desktop sound panel needs this:
+without it only the volume of whatever was already there can be moved.
 
 **Saying goodbye.** `session` is commands only —it reports nothing— and it is
 what a desktop needs to close itself: `sys.call("session.lock")`, `"suspend"`,
@@ -1361,16 +1386,20 @@ fact_types: number bool
 model: list
 path: move line curve close
 documented: translations surface permissions model service spring prop pose fact event text image figure particles shader measure let zone body ellipse box arc line path input clip group popup component children repeat for row grid windows window pages column space between layer on every blink wave spin follow look gesture posture import scene library language
-services: clock clock.seconds audio battery brightness network bluetooth media window
+services: clock clock.seconds audio battery brightness network bluetooth media window workspaces apps tray notifications
 services.clock: hour minute second day month year weekday time date
 services.clock.seconds: hour minute second day month year weekday time date
-services.audio: volume muted input input_muted
+services.audio: volume muted input input_muted outputs inputs
 services.battery: present percent charging
 services.brightness: present level
-services.network: online kind name strength wifi
-services.bluetooth: present powered discovering
+services.network: online kind name strength wifi networks
+services.bluetooth: present powered discovering devices
 services.media: playing title artist album player
-services.window: title class monitor
+services.window: title class monitor list
+services.workspaces: active list
+services.apps: list
+services.tray: list
+services.notifications: list
 parameter_types: number bool color text record event image gesture spring
 springs: lively calm quick slow gentle pose
 units: px % deg ms s

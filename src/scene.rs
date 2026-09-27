@@ -1676,6 +1676,9 @@ pub struct Service {
     /// In front of each field: `now.time`.
     pub alias: String,
     pub fields: Vec<Field>,
+    /// The lists it reports that go into a model of the scene, record by record:
+    /// (the service's field, the model). `service tray { list: icons }`.
+    pub models: Vec<(String, String)>,
 }
 
 #[derive(Clone, Debug, PartialEq)]

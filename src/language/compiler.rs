@@ -5170,7 +5170,37 @@ impl<'a> Compiler<'a> {
         if self.e.services.iter().any(|s| s.alias == alias) {
             return Err(CompileError::at(n.line, n.col, format!("'{alias}' is already the name of another service: give this one another with `as`")));
         }
-        let fields = self.fields_of(n, 1)?;
+        // `networks: nets`: a list the service reports, into a model of the scene.
+        // Those entries are taken out; the rest are fields like any other.
+        let mut models: Vec<(String, String)> = Vec::new();
+        let mut plain = n.clone();
+        if let Some(body) = plain.body.as_mut() {
+            let mut kept = Vec::new();
+            for e in body.drain(..) {
+                if let Entry::Prop { name: field, value, line, col } = &e {
+                    if vocab::LIST_FIELDS.contains(&field.as_str()) {
+                        let mut v = Cur::new(value, *line, *col);
+                        let model = v.id("the model its records go into")?;
+                        v.expect_end()?;
+                        if !own.contains(&field.as_str()) {
+                            return Err(CompileError::at(*line, *col, format!("'{name}' does not report '{field}': it reports {}", join_or(own))));
+                        }
+                        if !self.models.contains_key(&model) {
+                            return Err(CompileError::at(*line, *col, format!("'{field}' is a list: it goes into a model, and there is no model '{model}' declared before this service (`model {model} max 12 {{ … }}`)")));
+                        }
+                        models.push((field.clone(), model));
+                        continue;
+                    }
+                }
+                kept.push(e);
+            }
+            *body = kept;
+        }
+        // (The fields are read as the tree lives: the reduced copy lives as long. A
+        // few entries per service, once per load.)
+        let plain: &'a Node = Box::leak(Box::new(plain));
+        // Only lists (`service tray { list: icons }`): no fields of its own.
+        let fields = if plain.body.as_ref().is_some_and(|b| b.is_empty()) && !models.is_empty() { Vec::new() } else { self.fields_of(plain, 1)? };
         for k in &fields {
             if !own.contains(&k.name.as_str()) {
                 let hint = closest_match(&k.name, own.iter().map(|s| s.to_string()).collect::<Vec<_>>().iter()).map_or(String::new(), |p| format!(" Did you mean '{p}'?"));
@@ -5200,7 +5230,7 @@ impl<'a> Compiler<'a> {
                 }
             }
         }
-        self.e.services.push(crate::scene::Service { name, alias, fields });
+        self.e.services.push(crate::scene::Service { name, alias, fields, models });
         Ok(())
     }
 

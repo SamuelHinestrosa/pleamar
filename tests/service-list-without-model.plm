@@ -1,0 +1,6 @@
+// expect: error «there is no model 'nets'»
+scene X {
+    surface { size: 100, 100 }
+    permissions { services: "network" }
+    service network as net { networks: nets }
+}

@@ -117,19 +117,27 @@ pub const HELP: &[(&str, &str)] = &[
 
 /// The services that can be asked for with `service`, and what each one reports. The scene
 /// picks which fields it wants from those there are; asking for one that is not there is an error on load.
-/// The ones that bring lists —`apps`, `tray`, `notifications`, `workspaces`— are not here:
-/// those are a model, and the logic hands them out.
+/// A field that is a list (`LIST_FIELDS`) goes into a model the scene declares:
+/// `service network as net { networks: nets }`, `service tray { list: icons }`.
 pub const SERVICES: &[(&str, &[&str])] = &[
     ("clock", &["hour", "minute", "second", "day", "month", "year", "weekday", "time", "date"]),
     ("clock.seconds", &["hour", "minute", "second", "day", "month", "year", "weekday", "time", "date"]),
-    ("audio", &["volume", "muted", "input", "input_muted"]),
+    ("audio", &["volume", "muted", "input", "input_muted", "outputs", "inputs"]),
     ("battery", &["present", "percent", "charging"]),
     ("brightness", &["present", "level"]),
-    ("network", &["online", "kind", "name", "strength", "wifi"]),
-    ("bluetooth", &["present", "powered", "discovering"]),
+    ("network", &["online", "kind", "name", "strength", "wifi", "networks"]),
+    ("bluetooth", &["present", "powered", "discovering", "devices"]),
     ("media", &["playing", "title", "artist", "album", "player"]),
-    ("window", &["title", "class", "monitor"]),
+    ("window", &["title", "class", "monitor", "list"]),
+    ("workspaces", &["active", "list"]),
+    ("apps", &["list"]),
+    ("tray", &["list"]),
+    ("notifications", &["list"]),
 ];
+
+/// The fields of a service that are lists: each one goes into a model, never into a fact.
+/// `list` is the service's whole report, for the ones that are only a list.
+pub const LIST_FIELDS: &[&str] = &["networks", "devices", "outputs", "inputs", "list"];
 
 /// The steps of a path: where it goes through. `curve … via …` is a quadratic Bézier.
 pub const PATH_COMMANDS: &[&str] = &["move", "line", "curve", "close"];
