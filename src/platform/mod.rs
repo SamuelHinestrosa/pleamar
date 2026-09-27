@@ -65,6 +65,8 @@ pub fn service(from: &str, name: &str, notify: Box<dyn Fn(SysValue) + Send>) -> 
     }
     #[cfg(target_os = "linux")]
     match name {
+        // Spoken to directly; through `wpctl` only if there is no server to speak to.
+        "audio" if pulse::available() => return pulse::service(notify),
         "audio" => return system::audio(notify),
         "battery" => return system::battery(notify),
         "brightness" => return system::brightness(notify),
@@ -111,7 +113,7 @@ pub fn command(from: &str, name: &str, args: &[SysValue]) -> Result<(), String> 
     }
     #[cfg(target_os = "linux")]
     if name.starts_with("audio.") {
-        return system::audio_command(name, args);
+        return if pulse::available() { pulse::command(name, args) } else { system::audio_command(name, args) };
     }
     #[cfg(target_os = "linux")]
     if name.starts_with("bluetooth.") {
@@ -593,6 +595,8 @@ mod mpris;
 mod networkmanager;
 #[cfg(target_os = "linux")]
 mod bluez;
+#[cfg(target_os = "linux")]
+mod pulse;
 #[cfg(target_os = "linux")]
 mod system;
 #[cfg(target_os = "linux")]

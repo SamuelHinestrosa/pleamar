@@ -59,8 +59,8 @@ A misspelled name is an error there and then, with a suggestion: `the scene has 
 | `window` | `{ title, class, monitor }` of the one with the focus; elsewhere than Hyprland also `list = { { id, title, class, monitor, active, minimized }, … }`, every window in the order it came | Hyprland; any compositor with wlr-foreign-toplevel (pleamar-wm, sway, niri…) |
 | `sys.call("workspaces.focus", n)` | go to a workspace | Hyprland |
 | `sys.call("window.restore", id)` · `("window.minimize", id)` · `("window.activate", id)` · `("window.close", id)` | a window, by the `id` `window`'s `list` gives it: brought back (with the keyboard), put away, given the keyboard, asked to close | wlr-foreign-toplevel (pleamar-wm, sway, niri…) |
-| `audio` | `{ volume = 0.54, muted = false }` | Linux: PipeWire (`wpctl`, and `pactl subscribe` to find out) |
-| `sys.call("audio.volume", 0.5)` · `("audio.step", -0.05)` · `("audio.mute")` | set it, move it one step, silence it (or `("audio.mute", true)`) | |
+| `audio` | `{ volume = 0.54, muted = false, input, input_muted, outputs, inputs }`: the default output and input (0..1, as the mixer shows it), and the devices for each, `{ { id, name, default }, … }` | Linux: PulseAudio's protocol spoken directly (PipeWire speaks it too), told of changes; nothing is spawned. Without a sound server to speak to, `wpctl` |
+| `sys.call("audio.volume", 0.5)` · `("audio.step", -0.05)` · `("audio.mute")` · `("audio.input", 0.8)` · `("audio.input_mute")` · `("audio.default", id)` | set it, move it one step, silence it (or `("audio.mute", true)`), the same for the input, and where it plays or listens (an `id` from the lists) | |
 | `battery` | `{ present, percent, charging }`; a desktop answers `{ present = false }` | Linux: `/sys/class/power_supply` |
 | `brightness` | `{ present, level }`; with no backlight, `{ present = false }` | Linux: `/sys/class/backlight` |
 | `sys.call("brightness.level", 0.6)` | set it | Linux: `brightnessctl`, which is who has the permission |

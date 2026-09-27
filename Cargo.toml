@@ -25,6 +25,9 @@ wgpu = "30"
 [target.'cfg(target_os = "linux")'.dependencies]
 libc = "0.2"
 zbus = "5"
+# Sound, spoken to directly: PulseAudio's protocol, which PipeWire speaks too
+# (pipewire-pulse). Pure Rust: no C library, nothing to spawn.
+pulseaudio = "0.3"
 raw-window-handle = "0.6"
 # To ask the card which layouts of a program's memory it can read (dmabuf
 # modifiers): the same ash wgpu speaks Vulkan with.
