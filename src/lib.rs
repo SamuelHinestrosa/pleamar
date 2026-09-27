@@ -10,6 +10,7 @@
 
 pub mod scene;
 mod scenes;
+mod skill;
 mod shaders;
 mod shapes;
 mod lsp;
@@ -44,6 +45,9 @@ const HELP: &str = "pleamar [options]
   --approve SCENE     shows what the plugins of a scene ask for, and asks whether to approve them
                       (with --yes after it, it does not ask). Unapproved, a plugin runs touching nothing
   --grammar           the words the language accepts, exactly as the compiler consults them
+  --docs [TOPIC]      the documentation of this version: reference, guide, recipes, logic, measuring
+  --install-skill     teaches the AI agents installed (Claude Code, Codex, OpenCode) to build with
+                      pleamar: writes its skill for each. It refreshes itself when pleamar updates
   --autostart         starts what ~/.config/pleamar/autostart says (your shells), one command a
                       line, and exits: `exec-once = pleamar --autostart` on Hyprland. Lines
                       that start with `wm:` are for pleamar-wm's own session and are skipped
@@ -121,6 +125,11 @@ fn args(given: Vec<String>) -> Args {
                 std::process::exit(0);
             }
             "--autostart" => std::process::exit(autostart()),
+            "--docs" => {
+                let topic = it.next().unwrap_or_default();
+                std::process::exit(skill::docs(&topic));
+            }
+            "--install-skill" => std::process::exit(skill::install(true)),
             // The editor: mistakes while you type, and the highlighting.
             "--lsp" => {
                 lsp::serve();
@@ -170,6 +179,8 @@ pub fn run() {
 pub fn run_with(options: Vec<String>) {
     let start_time = std::time::Instant::now();
     let a = args(options);
+    // The agents' skill, written again if this pleamar is not the one it speaks of.
+    skill::refresh_quietly();
     let blocked = Arc::new(AtomicBool::new(false));
     let (to_render, from_render) = channel();
     let (to_logic, from_logic) = channel();
