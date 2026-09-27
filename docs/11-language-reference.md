@@ -444,7 +444,7 @@ Each element accepts these properties and no others; another one is an error, wi
 | `arc` (like "∩") | `at` · `radius` · `span` (the whole angle it covers) · `width`. It opens **upwards and symmetrically**; a progress ring is `span: p * 360deg` with `rotate: p * 180deg` |
 | `line` | `from` · `to` · `width` |
 | `path` | `at` (what its points hang from) · `size: w, h` (what it takes up in a layout), and inside it its steps: `move x, y` (once, the first one) · `line x, y` · `curve x, y via cx, cy` · `close`. Closed, it is filled; open, or with `stroke`, it is a line |
-| …and every shape | `color` · `opacity` · `rotate` · `stroke` (the outline only) · `blend` (inside a `body`: how much it melts into what came before) · `active` · `cursor` · `show` |
+| …and every shape | `color` · `opacity` · `rotate` · `stroke` (the outline only) · `blend` (inside a `body`: how much it melts into what came before) · `active` · `cursor` · `carries` (below) · `show` |
 | `body` | `color` or `gradient` (below) · `rim` · `light: amount, from_y, height` · `shadow: dx, dy, blur, alpha[, color]` · `border: width, #color` · `glass` · `lens` · `opacity` · `show`, and inside it its shapes, melted into one silhouette |
 | `text` | `at` · `anchor` · `width` · `lines` · `size` · `weight` · `color` · `opacity` · `align:` `left` `center` `right` · `line_height` · `family` · `measure` · `show` · and its effects: `gradient` · `outline` · `shadow` · `letter_move` · `letter_opacity` · `letter_scale` (§8.4) |
 | `image` | `at` (its **top-left corner**, not its centre: it is a rectangle of pixels, not a shape) · `size` · `opacity` · `tint` · `show` |
@@ -1158,6 +1158,8 @@ fact of its own called `locale`, are errors.
 | `event_name` | that event happens: the logic emits it, or another rule, or a gesture, or it comes from outside |
 | `event_name(v)` | the same, and inside the rule —in its `while` and its effects— `v` is the value it arrived with: `on chosen(v) { mode = v }`. It is how a component that says *which* (a segment, a row) is answered without logic |
 
+**And the other way: `carries:`.** A zone with `carries: "{file.$k.path}"` can be dragged out to another program: pressed and moved more than a few pixels, the compositor takes the drag and whatever it is let go on gets that. A path or an address (`/…`, `file://…`, `https://…`, one per line for several) goes as a list of files or links —a browser uploads it, a file manager copies it— and as text too; anything else, as text. From then on the pointer is the compositor's, so the zone's own `drag` rules stop there and it hears its `release`. It works on any compositor with drag and drop (Hyprland, pleamar-wm); not yet from pleamar-wm's own scene.
+
 **Any rule accepts `while expr`** at the end of its header: it is looked at at the moment of firing — **at the state the frame began with**, so two rules that fire in the same frame both see the same one, and the one declared last is the one whose value stays. In `idle` and `every` it also decides whether the wait counts.
 
 | Effect | |
@@ -1327,7 +1329,7 @@ statements: surface permissions model service spring prop pose fact event text i
 library: let spring component permissions fact text model service event image figure shader prop pose gesture posture layer translations
 properties.surface: size anchor margin level reserve screens keyboard open kind title rate
 properties.permissions: run services
-properties.shape: rotate stroke color opacity blend glass lens shine refraction dispersion dome ripple active show cursor grow
+properties.shape: rotate stroke color opacity blend glass lens shine refraction dispersion dome ripple active show cursor carries grow
 properties.ellipse: at radius scale
 properties.box: at from size corner
 properties.arc: at radius span width

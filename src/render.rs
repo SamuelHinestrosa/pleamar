@@ -234,6 +234,8 @@ pub fn run(
     // catcher, a copy on each monitor) the compositor says «gone» and «here»
     // in a row; forgetting the field there left it on another one.
     let mut parked: Option<Editing> = None;
+    // The zone a drag out was tried from, until the button is let go.
+    let mut carry_tried: Option<usize> = None;
     let mut repeat: Option<(String, Option<String>, Mods, Instant)> = None;
     let mut last_key = Instant::now();
     let mut last_pointer: Option<(f32, f32)> = None;
@@ -1105,6 +1107,24 @@ pub fn run(
         // pointer, it closes; if there was, the click belongs to the scene.
         // The platform already closes on its own when NO surface uses the
         // right button, and then this does not even run.
+        // A zone that carries something (`carries:`), dragged far enough: out
+        // to another program. From then on the compositor has the pointer, so
+        // the scene's own drag is over.
+        if let (Some((k, from, _)), Some(p)) = (drag, pointer) {
+            if let Some(content) = scene.zones.get(k).and_then(|z| z.carries.as_ref()) {
+                if carry_tried != Some(k) && (p.0 - from.0).hypot(p.1 - from.1) > 8.0 {
+                    carry_tried = Some(k);
+                    let text = crate::gpu::content_text(content, Ctx { props: &props, facts: &facts }, &texts).into_owned();
+                    if crate::platform::start_drag(&text) {
+                        let _ = to_logic.send(Event::Release(scene.zones[k].id));
+                        drag = None;
+                    }
+                }
+            }
+        }
+        if drag.is_none() {
+            carry_tried = None;
+        }
         let dragged = match (drag, pointer) {
             (Some((k, _, _)), Some(p)) if last_pointer != Some(p) => Some(k),
             _ => None,

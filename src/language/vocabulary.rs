@@ -20,7 +20,7 @@ pub const LIBRARY_STATEMENTS: &[&str] = &["let", "spring", "component", "permiss
 pub const PROPERTIES: &[(&str, &[&str])] = &[
     ("surface", &["size", "anchor", "margin", "level", "reserve", "screens", "keyboard", "open", "kind", "title", "rate"]),
     ("permissions", &["run", "services"]),
-    ("shape", &["rotate", "stroke", "color", "opacity", "blend", "glass", "lens", "shine", "refraction", "dispersion", "dome", "ripple", "active", "show", "cursor", "grow"]),
+    ("shape", &["rotate", "stroke", "color", "opacity", "blend", "glass", "lens", "shine", "refraction", "dispersion", "dome", "ripple", "active", "show", "cursor", "carries", "grow"]),
     ("ellipse", &["at", "radius", "scale"]),
     ("box", &["at", "from", "size", "corner"]),
     ("arc", &["at", "radius", "span", "width"]),

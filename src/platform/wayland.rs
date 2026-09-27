@@ -992,6 +992,9 @@ pub fn run_event_loop(wanted: Vec<Surface>, extra_height: u32, instance: wgpu::I
     let (globals, mut events) = registry_queue_init::<State>(&connection).unwrap();
     let qh = events.handle();
     let compositor = CompositorState::bind(&globals, &qh).expect("no wl_compositor");
+    if let Ok(m) = DataDeviceManagerState::bind(&globals, &qh) {
+        let _ = DRAGS.set(Drags { connection: connection.clone(), qh: qh.clone(), manager: m.data_device_manager().clone(), device: Mutex::default(), press: Mutex::default(), under_way: Mutex::default() });
+    }
     if let Ok(m) = globals.bind::<ExtBackgroundEffectManagerV1, _, _>(&qh, 1..=1, Silent) {
         let _ = BACKGROUND_EFFECTS.set(m);
     }
@@ -1228,6 +1231,10 @@ impl PointerHandler for State {
                     *pp.last_press.lock().unwrap() = Some((serial, std::time::Instant::now()));
                 }
             }
+            // A drag out starts from the press that began it: the compositor asks for its serial.
+            if let (PointerEventKind::Press { serial, .. }, Some(d)) = (&e.kind, DRAGS.get()) {
+                *d.press.lock().unwrap() = Some((*serial, e.surface.clone()));
+            }
             // `PLEAMAR_DEBUG_ZONES=1`: which surface the compositor gives the mouse to,
             // when it enters, leaves or presses —not every motion—.
             if std::env::var_os("PLEAMAR_DEBUG_ZONES").is_some() && !matches!(e.kind, PointerEventKind::Motion { .. } | PointerEventKind::Axis { .. }) {
@@ -1341,14 +1348,71 @@ impl DataOfferHandler for State {
     fn selected_action(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &mut DragOffer, _: DndAction) {}
 }
 
-/// Nothing is dragged OUT yet; the trait has to be fulfilled anyway.
+/// What is dragged out of the scene (a zone with `carries:`): the data
+/// device to start it on, the press it starts from, and while it lasts, its
+/// source and what it gives for each kind asked.
+struct Drags {
+    connection: Connection,
+    qh: QueueHandle<State>,
+    manager: wayland_client::protocol::wl_data_device_manager::WlDataDeviceManager,
+    device: Mutex<Option<wayland_client::protocol::wl_data_device::WlDataDevice>>,
+    press: Mutex<Option<(u32, wl_surface::WlSurface)>>,
+    under_way: Mutex<Option<(wayland_client::protocol::wl_data_source::WlDataSource, Vec<(String, Vec<u8>)>)>>,
+}
+static DRAGS: std::sync::OnceLock<Drags> = std::sync::OnceLock::new();
+
+/// Starts dragging `text` out to whatever program it is let go on. Files and
+/// links go as a list of addresses (and as their text); anything else, as text.
+pub fn start_drag(text: &str) -> bool {
+    let Some(d) = DRAGS.get() else { return false };
+    let Some((serial, origin)) = d.press.lock().unwrap().clone() else { return false };
+    let Some(device) = d.device.lock().unwrap().clone() else { return false };
+    let offers = super::drag_offers(text);
+    if offers.is_empty() {
+        return false;
+    }
+    let source = d.manager.create_data_source(&d.qh, smithay_client_toolkit::data_device_manager::data_source::DataSourceData::<()>::default());
+    for (mime, _) in &offers {
+        source.offer(mime.clone());
+    }
+    if source.version() >= 3 {
+        source.set_actions(DndAction::Copy);
+    }
+    device.start_drag(Some(&source), &origin, None, serial);
+    let _ = d.connection.flush();
+    if let Some((old, _)) = d.under_way.lock().unwrap().replace((source, offers)) {
+        old.destroy();
+    }
+    true
+}
+
 impl DataSourceHandler for State {
     fn accept_mime(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &wayland_client::protocol::wl_data_source::WlDataSource, _: Option<String>) {}
-    fn send_request(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &wayland_client::protocol::wl_data_source::WlDataSource, _: String, _: WritePipe) {}
-    fn cancelled(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &wayland_client::protocol::wl_data_source::WlDataSource) {}
+    // The program it was let go on asks for it in one of the kinds offered.
+    fn send_request(&mut self, _: &Connection, _: &QueueHandle<Self>, source: &wayland_client::protocol::wl_data_source::WlDataSource, mime: String, mut pipe: WritePipe) {
+        let Some(d) = DRAGS.get() else { return };
+        let data = d.under_way.lock().unwrap().as_ref().filter(|(s, _)| s == source).and_then(|(_, o)| o.iter().find(|(m, _)| *m == mime).map(|(_, b)| b.clone()));
+        if let Some(bytes) = data {
+            let _ = std::io::Write::write_all(&mut pipe, &bytes);
+        }
+    }
+    fn cancelled(&mut self, _: &Connection, _: &QueueHandle<Self>, source: &wayland_client::protocol::wl_data_source::WlDataSource) {
+        end_drag(source);
+    }
     fn dnd_dropped(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &wayland_client::protocol::wl_data_source::WlDataSource) {}
-    fn dnd_finished(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &wayland_client::protocol::wl_data_source::WlDataSource) {}
+    fn dnd_finished(&mut self, _: &Connection, _: &QueueHandle<Self>, source: &wayland_client::protocol::wl_data_source::WlDataSource) {
+        end_drag(source);
+    }
     fn action(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &wayland_client::protocol::wl_data_source::WlDataSource, _: DndAction) {}
+}
+
+fn end_drag(source: &wayland_client::protocol::wl_data_source::WlDataSource) {
+    let Some(d) = DRAGS.get() else { return };
+    let mut under_way = d.under_way.lock().unwrap();
+    if under_way.as_ref().is_some_and(|(s, _)| s == source) {
+        *under_way = None;
+    }
+    source.destroy();
 }
 
 fn key_name(e: &KeyEvent) -> String {
@@ -1410,6 +1474,9 @@ impl SeatHandler for State {
         }
         if self.data_device.is_none() {
             self.data_device = self.drag_and_drop.as_ref().map(|m| m.get_data_device(qh, &seat));
+            if let (Some(d), Some(dd)) = (DRAGS.get(), &self.data_device) {
+                *d.device.lock().unwrap() = Some(dd.inner().clone());
+            }
         }
         if c == Capability::Keyboard && self.keyboard.is_none() && self.wanted.iter().any(|s| s.keyboard != Keyboard::Never) {
             self.keyboard = self.seats.get_keyboard(qh, &seat, None).ok();

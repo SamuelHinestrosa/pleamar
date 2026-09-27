@@ -147,6 +147,8 @@ struct Candidate {
     under: Vec<Transform>,
     forced: bool,
     cursor: Cursor,
+    /// What it carries when dragged out to another program (`carries:`).
+    carries: Option<Content>,
 }
 
 /// What holds inside a component or an iteration of `repeat`: its
@@ -1478,6 +1480,21 @@ impl<'a> Compiler<'a> {
             Some(c) => read_cursor(c)?,
             None => Cursor::Normal,
         };
+        // `carries: "file://{path}"`: dragged out of the scene, it goes to
+        // another program as that (a file, a link, a text).
+        let carries = match p.get_mut("carries") {
+            Some(c) => match c.peek() {
+                Some(TokenKind::Str(s)) => {
+                    let s = s.clone();
+                    let k = self.content_of_one(&s, &c.tokens[c.i])?;
+                    c.i += 1;
+                    c.expect_end()?;
+                    Some(k)
+                }
+                _ => return c.error("`carries:` takes a text, with holes if it needs them: `carries: \"file://{path}\"`"),
+            },
+            None => None,
+        };
         let mut extent: Option<(Expr, Expr)> = None;
         let mut shape = match class.as_str() {
             "ellipse" => {
@@ -1553,7 +1570,7 @@ impl<'a> Compiler<'a> {
         // which it is painted. Whether it is or not is decided at the end: see `materialize_zones`.
         if let Some(name) = &name {
             let name = &self.declare_zone(name);
-            self.candidates.push(Candidate { name: name.clone(), at: self.e.instrs.len(), zblock: self.zblock, shape: shape.clone(), active, visible: None, under: self.under.clone(), forced: false, cursor });
+            self.candidates.push(Candidate { name: name.clone(), at: self.e.instrs.len(), zblock: self.zblock, shape: shape.clone(), active, visible: None, under: self.under.clone(), forced: carries.is_some(), cursor, carries });
         }
         Ok(ParsedShape { shape, color, opacity, blend, size: extent, glass_spec })
     }
@@ -2976,7 +2993,7 @@ impl<'a> Compiler<'a> {
             at: self.e.instrs.len(),
             zblock: self.zblock,
             shape: Shape::Rect { center: (at.0.clone() + width.clone() * 0.5, at.1.clone() + height * 0.5), half_size: (width.clone() * 0.5, (height * 0.5 + 3.0).into()), radius: 0.0.into() },
-            active: None, visible: None, under: self.under.clone(), forced: true, cursor: Cursor::Text,
+            active: None, visible: None, under: self.under.clone(), forced: true, cursor: Cursor::Text, carries: None,
         });
         self.last_size = Some((width.clone(), height.into()));
         self.e.paint(Instr::Field { text, zone: interned(&zone), at, width, style, alpha, placeholder, selection, secret });
@@ -4672,7 +4689,7 @@ impl<'a> Compiler<'a> {
                 under.push(t.clone());
             }
             let bounds = Shape::Rect { center: (size.0.clone() * 0.5, size.1.clone() * 0.5), half_size: (size.0.clone() * 0.5, size.1.clone() * 0.5), radius: zone_corner };
-            self.candidates.insert(base_candidates, Candidate { name: name.clone(), at: instr_base, zblock: self.zblock, shape: bounds, active: None, visible: None, under, forced: scroller.is_some(), cursor: stack_cursor });
+            self.candidates.insert(base_candidates, Candidate { name: name.clone(), at: instr_base, zblock: self.zblock, shape: bounds, active: None, visible: None, under, forced: scroller.is_some(), cursor: stack_cursor, carries: None });
             // A hidden stack does not catch the mouse: neither its children nor IT, which with
             // `view:` has a zone of its own —the one for the wheel and dragging— the
             // size of its window. Hidden and in front, that zone
@@ -5294,6 +5311,7 @@ impl<'a> Compiler<'a> {
             under: self.under.clone(),
             forced: true,
             cursor: Cursor::Normal,
+            carries: None,
         });
         self.e.paint(Instr::Window { slot, target: (x, y, w, h), alpha, ask });
         Ok(())
@@ -5541,6 +5559,7 @@ impl<'a> Compiler<'a> {
                 self.e.zones[z.0 as usize].cursor = k.cursor;
                 self.e.zones[z.0 as usize].at = k.at;
                 self.e.zones[z.0 as usize].zblock = k.zblock;
+                self.e.zones[z.0 as usize].carries = k.carries;
                 self.zones.insert(k.name, z);
             }
         }

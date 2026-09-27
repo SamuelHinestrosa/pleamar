@@ -1168,6 +1168,8 @@ pub struct Zone {
     /// it is inside, if any: a zone is on top where what holds it is drawn.
     pub at: usize,
     pub zblock: Option<u16>,
+    /// Dragged out, what it gives another program: a file, a link, a text.
+    pub carries: Option<Content>,
 }
 
 /// A `group` with `z:`: its instructions, and which groups it is sorted
@@ -1826,7 +1828,7 @@ impl Scene {
         self.zone_under(id, shape, active, vec![])
     }
     pub fn zone_under(&mut self, id: &'static str, shape: Shape, active: impl Into<Expr>, under: Vec<Transform>) -> ZoneId {
-        self.zones.push(Zone { id, shape, active: active.into(), cursor: Cursor::Normal, under, at: self.instrs.len(), zblock: None });
+        self.zones.push(Zone { id, shape, active: active.into(), cursor: Cursor::Normal, under, at: self.instrs.len(), zblock: None, carries: None });
         ZoneId(self.zones.len() as u16 - 1)
     }
     /// Claims go from more to less priority; the last one should be

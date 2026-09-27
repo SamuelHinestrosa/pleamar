@@ -222,6 +222,42 @@ pub fn relayer(which: usize, level: crate::scene::Level) {
 }
 
 /// A surface keeps more or less room for itself while running: `reserve: n while …`.
+/// Something dragged out of the scene (a zone with `carries:`), from the
+/// press that began it: whether a drag could start.
+pub fn start_drag(text: &str) -> bool {
+    #[cfg(target_os = "linux")]
+    if LAYER_HOOKS.get().is_none() {
+        return wayland::start_drag(text);
+    }
+    let _ = text;
+    false
+}
+
+/// What a text dragged out offers, kind by kind. Addresses —a file's path, a
+/// `file://`, a link— go as `text/uri-list` (one per line), and as text too.
+pub fn drag_offers(text: &str) -> Vec<(String, Vec<u8>)> {
+    let lines: Vec<&str> = text.lines().map(str::trim).filter(|l| !l.is_empty()).collect();
+    if lines.is_empty() {
+        return Vec::new();
+    }
+    let is_address = |l: &str| l.starts_with('/') || l.contains("://");
+    let plain = text.trim().as_bytes().to_vec();
+    let mut offers = Vec::new();
+    if lines.iter().all(|l| is_address(l)) {
+        let uris: String = lines.iter().map(|l| if l.starts_with('/') { format!("file://{}\r\n", encode_path(l)) } else { format!("{l}\r\n") }).collect();
+        offers.push(("text/uri-list".to_owned(), uris.into_bytes()));
+    }
+    for kind in ["text/plain;charset=utf-8", "UTF8_STRING", "text/plain"] {
+        offers.push((kind.to_owned(), plain.clone()));
+    }
+    offers
+}
+
+/// A path as an address: what is not a plain letter, digit or `/-._~` goes as `%XX`.
+fn encode_path(path: &str) -> String {
+    path.bytes().map(|b| if b.is_ascii_alphanumeric() || b"/-._~".contains(&b) { (b as char).to_string() } else { format!("%{b:02X}") }).collect()
+}
+
 pub fn rezone(which: usize, zone: i32) {
     // A platform that places surfaces itself (pleamar-wm's session) keeps none.
     if LAYER_HOOKS.get().is_some() {
