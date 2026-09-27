@@ -1,8 +1,9 @@
 //! The desktop's notifications. Here nobody is listened to: **we are** the
 //! server. Applications call `org.freedesktop.Notifications.Notify`, and
 //! whoever holds that name on the bus is the one who shows them. There can be
-//! only one: if someone else already has it (another bar, a daemon), the service
-//! says it is not available.
+//! only one: the newest shell takes it from an older one (which gets it back
+//! when the newest leaves); a daemon that will not give it up keeps it, and
+//! the service waits behind it.
 //!
 //! On Windows it will be `UserNotificationListener`; macOS does not let you read other apps' ones.
 //!
@@ -179,15 +180,27 @@ pub fn service(dispatch: Box<dyn Fn(SysValue) + Send>) -> bool {
     }
     let (tx, events) = channel();
     let hub = Arc::new(Hub { state: Mutex::default(), events: Mutex::new(tx) });
-    // Without queueing or taking it from anybody: if the name has an owner, there is no service here.
+    // The newest one takes the name, and lets the next one take it too: the
+    // bus is one per user, so a shell started in another session (another
+    // TTY) would otherwise find it held by the one left behind. Whoever had
+    // it waits in the queue and gets it back when this one goes. A daemon
+    // that does not let it go (mako, a desktop's own) keeps it: this one
+    // waits behind it, and serves from the moment it leaves.
+    use zbus::fdo::{RequestNameFlags, RequestNameReply};
+    let flags = RequestNameFlags::AllowReplacement | RequestNameFlags::ReplaceExisting;
     let connection = zbus::blocking::connection::Builder::session()
         .and_then(|b| b.serve_at(PATH, Server(hub.clone())))
         .and_then(|b| b.build())
-        .and_then(|c| c.request_name_with_flags(NAME, zbus::fdo::RequestNameFlags::DoNotQueue.into()).map(|_| c));
+        .and_then(|c| c.request_name_with_flags(NAME, flags).map(|reply| (c, reply)));
     let connection = match connection {
-        Ok(c) => c,
+        Ok((c, reply)) => {
+            if reply == RequestNameReply::InQueue {
+                eprintln!("notifications · another program has them and will not let them go: they come here once it leaves");
+            }
+            c
+        }
         Err(e) => {
-            eprintln!("notifications · I cannot be the one receiving notifications ({e}): does another program already have them?");
+            eprintln!("notifications · I cannot be the one receiving notifications ({e})");
             return false;
         }
     };
