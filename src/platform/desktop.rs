@@ -11,12 +11,17 @@ pub fn applications() -> SysValue {
     let mut folders = vec![format!("{home}/.local/share/applications")];
     folders.extend(data_dirs.split(':').map(|d| format!("{d}/applications")));
     // By name, and the first folder wins: the user's overrides the system's.
-    let mut apps: BTreeMap<String, (String, String)> = BTreeMap::new();
+    // Name → (command, icon, the file's id, the X11 class it says it has).
+    let mut apps: BTreeMap<String, (String, String, String, String)> = BTreeMap::new();
     for folder in folders {
         let Ok(dir) = std::fs::read_dir(&folder) else { continue };
         for f in dir.filter_map(Result::ok).filter(|f| f.path().extension().is_some_and(|e| e == "desktop")) {
             let Ok(text) = std::fs::read_to_string(f.path()) else { continue };
             let (mut name, mut command, mut icon, mut hidden, mut inside) = (None, None, String::new(), false, false);
+            let mut class = String::new();
+            // `org.gnome.Calculator.desktop` is `org.gnome.Calculator`: the
+            // app id its windows say, so a window can be told whose it is.
+            let id = f.path().file_stem().and_then(|s| s.to_str()).unwrap_or("").to_owned();
             for l in text.lines() {
                 if l.starts_with('[') {
                     inside = l == "[Desktop Entry]";
@@ -25,6 +30,7 @@ pub fn applications() -> SysValue {
                         Some(("Name", v)) => name = name.or(Some(v.to_owned())),
                         Some(("Exec", v)) => command = Some(v.split_whitespace().filter(|p| !p.starts_with('%')).collect::<Vec<_>>().join(" ")),
                         Some(("Icon", v)) => icon = v.to_owned(),
+                        Some(("StartupWMClass", v)) => class = v.to_owned(),
                         Some(("NoDisplay" | "Hidden", "true")) => hidden = true,
                         Some(("Type", v)) if v != "Application" => hidden = true,
                         _ => {}
@@ -32,11 +38,15 @@ pub fn applications() -> SysValue {
                 }
             }
             if let (Some(n), Some(o), false) = (name, command, hidden) {
-                apps.entry(n).or_insert((o, icon));
+                apps.entry(n).or_insert((o, icon, id, class));
             }
         }
     }
-    SysValue::List(apps.into_iter().map(|(n, (o, i))| SysValue::Map(vec![("name".into(), SysValue::Text(n)), ("exec".into(), SysValue::Text(o)), ("icon".into(), SysValue::Text(i))])).collect())
+    SysValue::List(
+        apps.into_iter()
+            .map(|(n, (o, i, id, class))| SysValue::Map(vec![("name".into(), SysValue::Text(n)), ("exec".into(), SysValue::Text(o)), ("icon".into(), SysValue::Text(i)), ("id".into(), SysValue::Text(id)), ("wmclass".into(), SysValue::Text(class))]))
+            .collect(),
+    )
 }
 
 /// Launches a command and forgets about it: it is not a child of the logic, and does not die with us.
