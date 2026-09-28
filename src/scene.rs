@@ -2142,7 +2142,8 @@ pub enum ToNest {
     /// Nobody has the keyboard: what had it is on a workspace no longer shown.
     Blur,
     /// Where a window is seen: on which monitor (by its name) and its box
-    /// there, in pixels. Told when it changes (for screenshots of it).
+    /// there, in pixels. Told when it changes (for screenshots of it); no
+    /// monitor and an empty box, once it is no longer drawn.
     Shown { slot: usize, monitor: String, rect: [i32; 4] },
     /// The monitor the pointer is on: where new windows open.
     OnScreen(usize),

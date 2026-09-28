@@ -2416,6 +2416,12 @@ pub fn run(
                     send(ToNest::Shown { slot: *slot, monitor: now.0, rect });
                 }
             }
+            // And the ones no longer drawn (another workspace, put away): seen nowhere.
+            let hidden: Vec<usize> = nest_shown.keys().filter(|k| !seen.contains(k)).copied().collect();
+            for slot in hidden {
+                nest_shown.remove(&slot);
+                send(ToNest::Shown { slot, monitor: String::new(), rect: [0; 4] });
+            }
         }
 
         // Where the mouse comes in: the active zones, and nothing else. The rest of
