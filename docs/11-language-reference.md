@@ -289,6 +289,8 @@ model menu max 8 {
 for m in menu { …  for it in m.items { text it.label { … } } }
 ```
 
+**A file that is written again under the same name** —a cover, a capture, a picture made for the moment— is asked for with a version: `"/tmp/cover.jpg?3"`, whatever follows the last `?` being a number. Each new number loads the file again **into the place the last one had** in the atlas, so changing it a thousand times costs the same as once; a new name, instead, takes new room. An image asked for bigger than a quarter of the atlas (2048² real pixels) is loaded smaller —a wallpaper at a monitor's size comes out softer, not missing—.
+
 An inner list is walked with `for it in m.items`, and it has its `m.items.count` and its `m.items.total`. **`list children max 6 depth 2`**, with no block, are records like the outer one, nested inside each other down to that depth (1 to 6): a tree, like the menu of an application. It is walked with as many `for` as levels are to be shown. Everything unfolds on load: 8 × 6 is 48 records, and the ceiling across all the lists of a model is 4096.
 
 **Services, with no logic.** `service` asks the system for something by its name and says which of the fields that service brings it wants. Each field is an ordinary fact or text —of whatever type it is given— with the name in front, and it fills itself whenever the system reports something:

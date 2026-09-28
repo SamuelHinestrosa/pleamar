@@ -271,12 +271,25 @@ impl Typesetter {
         (slots, animations)
     }
 
+    /// How many real pixels a live image takes: its size times the scale, but
+    /// never more than a quarter of the atlas —a wallpaper asked for at a
+    /// monitor's size is shown a little softer rather than not at all—.
+    fn live_px(&self, (w, h): (u32, u32)) -> (u32, u32) {
+        let (w, h) = ((w as f32) * self.scale, (h as f32) * self.scale);
+        let k = ((LIVE_BUDGET as f32) / (w * h)).sqrt().min(1.0);
+        ((w * k).round().max(1.0) as u32, (h * k).round().max(1.0) as u32)
+    }
+
     /// An image some data has asked for: an icon by its name, or a path.
-    fn load_live(&mut self, name: &str, (w, h): (u32, u32)) -> Option<AtlasSlot> {
-        let px = (((w as f32) * self.scale).round().max(1.0) as u32, ((h as f32) * self.scale).round().max(1.0) as u32);
+    /// With `into`, a new version of one already loaded, painted over it.
+    fn load_live(&mut self, name: &str, size: (u32, u32), into: Option<AtlasSlot>) -> Option<AtlasSlot> {
+        let px = self.live_px(size);
         let path = if name.starts_with('/') { Some(std::path::PathBuf::from(name)) } else { crate::platform::icon(name) };
         let rgba = rasterize_image(&path?, px)?;
-        let slot = self.shelves.request(px.0, px.1)?;
+        let slot = match into {
+            Some(s) if (s.width, s.height) == px => s,
+            _ => self.shelves.request(px.0, px.1)?,
+        };
         self.pending_upload.push((slot, rgba));
         Some(slot)
     }
@@ -288,6 +301,8 @@ enum Job {
     Layout(LayoutKey, u32),
     Images(Vec<(ImageSource, (u32, u32))>, u32),
     Live(String, (u32, u32), u32),
+    /// A new version of a live image, over the place the old one had.
+    Reload(String, (u32, u32), AtlasSlot, u32),
     /// New atlas, at this scale. Everything from previous generations is thrown away.
     Clear(f32),
 }
@@ -320,6 +335,9 @@ pub struct Texts {
     /// The ones the data have asked for, by name and size. `None`: it was looked for and does not exist.
     live: HashMap<(String, (u32, u32)), Option<AtlasSlot>>,
     live_requested: HashSet<(String, (u32, u32))>,
+    /// Which version of each live image was asked for: what follows the last
+    /// `?` of its name, when it is a number (`/tmp/cover.jpg?3`).
+    live_version: HashMap<(String, (u32, u32)), String>,
     /// The last thing each live image showed, while the new one arrives.
     last_live: HashMap<usize, AtlasSlot>,
     pub pending_upload: Vec<(AtlasSlot, Vec<u8>)>,
@@ -351,7 +369,11 @@ impl Texts {
                             Delivery::Images { slots, animations, generation }
                         }
                         Job::Live(name, size, generation) => {
-                            let slot = t.load_live(&name, size);
+                            let slot = t.load_live(&name, size, None);
+                            Delivery::Live { name, size, slot, generation }
+                        }
+                        Job::Reload(name, size, into, generation) => {
+                            let slot = t.load_live(&name, size, Some(into));
                             Delivery::Live { name, size, slot, generation }
                         }
                     };
@@ -363,7 +385,7 @@ impl Texts {
                 }
             })
             .unwrap();
-        Texts { to_workshop, layouts: HashMap::new(), requested: HashSet::new(), last: HashMap::new(), images: Vec::new(), animations: Vec::new(), sources: Vec::new(), live: HashMap::new(), live_requested: HashSet::new(), last_live: HashMap::new(), pending_upload: Vec::new(), generation: 0, scale: 1.0 }
+        Texts { to_workshop, layouts: HashMap::new(), requested: HashSet::new(), last: HashMap::new(), images: Vec::new(), animations: Vec::new(), sources: Vec::new(), live: HashMap::new(), live_requested: HashSet::new(), live_version: HashMap::new(), last_live: HashMap::new(), pending_upload: Vec::new(), generation: 0, scale: 1.0 }
     }
 
     pub fn scale(&self) -> f32 {
@@ -383,6 +405,7 @@ impl Texts {
         self.sources = images.to_vec();
         self.live.clear();
         self.live_requested.clear();
+        self.live_version.clear();
         self.last_live.clear();
         self.pending_upload.clear();
         let _ = self.to_workshop.send(Job::Clear(scale));
@@ -445,19 +468,36 @@ impl Texts {
 
     /// Image number `k` of the scene. If it comes from a live text, the one that
     /// text says now; while it arrives, the one that was there. An empty text is none.
+    ///
+    /// A name that ends in `?` and a number is a version of the same image: a
+    /// file that is written again under the same name. The new version is
+    /// painted where the old one was, so changing it costs the atlas nothing.
     pub fn image(&mut self, k: usize, texts: &[String]) -> Option<AtlasSlot> {
         let Some((ImageSource::Live(t), size)) = self.sources.get(k) else {
             return self.images.get(k).copied().flatten();
         };
         let name = texts.get(t.0 as usize).filter(|n| !n.is_empty())?;
-        let key = (name.clone(), *size);
-        match self.live.get(&key) {
+        let (base, version) = match name.rsplit_once('?') {
+            Some((b, v)) if !b.is_empty() && !v.is_empty() && v.bytes().all(|c| c.is_ascii_digit()) => (b, v),
+            _ => (name.as_str(), ""),
+        };
+        let key = (base.to_string(), *size);
+        let known = self.live.get(&key).copied();
+        if known.is_some() && self.live_version.get(&key).map(String::as_str) != Some(version) {
+            self.live_version.insert(key.clone(), version.to_string());
+            let _ = self.to_workshop.send(match known {
+                Some(Some(slot)) => Job::Reload(key.0.clone(), key.1, slot, self.generation),
+                _ => Job::Live(key.0.clone(), key.1, self.generation),
+            });
+        }
+        match known {
             Some(Some(slot)) => {
-                self.last_live.insert(k, *slot);
-                Some(*slot)
+                self.last_live.insert(k, slot);
+                Some(slot)
             }
             Some(None) => None,
             None => {
+                self.live_version.insert(key.clone(), version.to_string());
                 if self.live_requested.insert(key.clone()) {
                     let _ = self.to_workshop.send(Job::Live(key.0, key.1, self.generation));
                 }
@@ -479,6 +519,9 @@ pub struct Animation {
 /// One that asks for more keeps every other frame —or one in three…—, each
 /// lasting what the ones it stands for lasted, so it runs at the same pace.
 const ANIMATION_BUDGET: u64 = (ATLAS_SIZE as u64 * ATLAS_SIZE as u64) / 4;
+
+/// The most one live image takes, in real pixels: a quarter of the atlas too.
+const LIVE_BUDGET: u64 = (ATLAS_SIZE as u64 * ATLAS_SIZE as u64) / 4;
 
 /// A GIF, an animated PNG or an animated WebP, frame by frame, fitted like
 /// `rasterize_image` and premultiplied, each with how long it lasts. `None`
