@@ -56,18 +56,23 @@ fn now(c: &Connection) -> SysValue {
             let d = i.get(DEVICE)?;
             let paired = flag(d, "Paired");
             let connected = flag(d, "Connected");
-            let name = [word(d, "Alias"), word(d, "Name")].into_iter().find(|n| !n.is_empty()).unwrap_or_default();
+            // With no name of its own, BlueZ's alias is its address with dashes
+            // («45-1B-85-DD-04-24»): that is no name.
+            let address = word(d, "Address");
+            let no_name = |n: &String| n.is_empty() || n.replace('-', ":").eq_ignore_ascii_case(&address);
+            let name = [word(d, "Alias"), word(d, "Name")].into_iter().find(|n| !no_name(n)).unwrap_or_default();
             // A device that has not even said its name and was never paired is noise.
             if name.is_empty() && !paired {
                 return None;
             }
+            let name = if name.is_empty() { address.clone() } else { name };
             let battery = i.get(BATTERY).and_then(|b| b.get("Percentage")).and_then(|v| u8::try_from(v).ok()).map_or(-1.0, |p| p as f64 / 100.0);
             Some((
                 connected,
                 paired,
                 SysValue::Map(vec![
                     ("name".into(), SysValue::Text(name)),
-                    ("address".into(), SysValue::Text(word(d, "Address"))),
+                    ("address".into(), SysValue::Text(address.clone())),
                     ("paired".into(), SysValue::Bool(paired)),
                     ("connected".into(), SysValue::Bool(connected)),
                     ("battery".into(), SysValue::Num(battery)),
@@ -174,8 +179,20 @@ fn connect(address: String) -> Result<(), String> {
     device.call_method("Connect", &()).map(|_| ()).map_err(|e| format!("could not connect: {e}"))
 }
 
-pub fn command(what: &str, args: &[SysValue]) -> Result<(), String> {
+/// The connection commands go through, kept: BlueZ stops a discovery the
+/// moment whoever asked for it leaves the bus, and a connection per command
+/// left as soon as it had asked —«scan» started and stopped at once—.
+fn commands() -> Result<Connection, String> {
+    static KEPT: std::sync::OnceLock<Connection> = std::sync::OnceLock::new();
+    if let Some(c) = KEPT.get() {
+        return Ok(c.clone());
+    }
     let c = Connection::system().map_err(|e| e.to_string())?;
+    Ok(KEPT.get_or_init(|| c).clone())
+}
+
+pub fn command(what: &str, args: &[SysValue]) -> Result<(), String> {
+    let c = commands()?;
     let o = objects(&c).ok_or("BlueZ is not running")?;
     let (adapter_path, _) = adapter(&o).ok_or("there is no Bluetooth adapter")?;
     let adapter = Proxy::new(&c, BLUEZ, adapter_path.as_str(), ADAPTER).map_err(|e| e.to_string())?;
