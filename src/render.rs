@@ -1024,6 +1024,10 @@ pub fn run(
                 combo.push_str("Shift+");
             }
             combo.push_str(&name);
+            // `PLEAMAR_DEBUG_KEYS=1`: each key as the rules see it.
+            if std::env::var_os("PLEAMAR_DEBUG_KEYS").is_some() {
+                eprintln!("keys   · «{combo}» (typed {typed:?}, code {code})");
+            }
             // A key the scene has no rule for belongs to the window that has
             // the keyboard. With a rule —`on key Super+Return`—, to the scene.
             // (A rule whose `while` does not hold now does not take it: `on key
@@ -3140,7 +3144,7 @@ impl Editing {
             }
             "Return" | "KP_Enter" => KeyOutcome::Submitted,
             _ => match typed {
-                Some(letters) if !m.ctrl && !m.alt && !m.logo => {
+                Some(letters) if !letters.is_empty() && !m.ctrl && !m.alt && !m.logo => {
                     self.delete_selection(t);
                     t.insert_str(self.cursor, letters);
                     self.cursor += letters.len();

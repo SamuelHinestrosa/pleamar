@@ -1429,7 +1429,9 @@ impl KeyboardHandler for State {
         let _ = self.to_render.send(ToRender::KeyboardFocus(false));
     }
     fn press_key(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &wayland_client::protocol::wl_keyboard::WlKeyboard, _: u32, e: KeyEvent) {
-        let typed = e.utf8.clone().filter(|t| !t.chars().any(char::is_control));
+        // An arrow, an F key: some compositors say they type "" rather than
+        // nothing. Nothing is what they type.
+        let typed = e.utf8.clone().filter(|t| !t.is_empty() && !t.chars().any(char::is_control));
         let _ = self.to_render.send(ToRender::Key(key_name(&e), typed, self.mods, e.raw_code));
     }
     /// The layout as the user has it: the scene's own compositor hands the
