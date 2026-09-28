@@ -317,6 +317,8 @@ pub fn run(
     let mut nest_screens: Vec<usize> = Vec::new();
     let mut nest_on_screen: Option<usize> = None;
     let mut desks = Desks::default();
+    let mut over_later: Option<usize> = None;
+    let mut pointer_later = false;
     // The last `z:` values and the arrangement they gave.
     let mut z_memo: Option<(Vec<f32>, Option<crate::scene::ZArrangement>)> = None;
     // Where the windows' instructions are, by how many instructions there were.
@@ -359,6 +361,14 @@ pub fn run(
         let mut key_releases: Vec<u32> = Vec::new();
         let mut focus_changes: Vec<bool> = Vec::new();
         let mut drops: Vec<(String, String)> = Vec::new();
+        // `drag.over` going back to 0 in the same round a drop arrives: after
+        // it, so the zones only there while something is over receive it.
+        if let Some(k) = over_later.take() {
+            facts[k] = 0.0;
+        }
+        if std::mem::take(&mut pointer_later) {
+            pointer = None;
+        }
         // (which one, whether it comes from the logic)
         let mut signals: Vec<(usize, bool, Option<f32>)> = late_signals.drain(..).map(|s| (s.0 as usize, false, None)).collect();
         let mut gestures_asked: Vec<usize> = Vec::new();
@@ -668,6 +678,7 @@ pub fn run(
                     None => eprintln!("render · I don't know the text '{name}'"),
                 },
                 ToRender::Fact(name, v) => match scene.facts.iter().position(|h| h.0 == name) {
+                    Some(i) if name == "drag.over" && v == 0.0 && !drops.is_empty() => over_later = Some(i),
                     Some(i) => facts[i] = v,
                     None => eprintln!("render · I don't know the fact '{name}'"),
                 },
@@ -756,6 +767,9 @@ pub fn run(
                     }
                     cursor = Some((at, monitors));
                 }
+                // Gone in the same round something is let go: after it, so the
+                // zone it was let go on receives it.
+                ToRender::Pointer(None) if !drops.is_empty() => pointer_later = true,
                 ToRender::Pointer(p) => {
                     pointer = p;
                     last_activity = Instant::now();

@@ -1042,6 +1042,9 @@ impl Script for LuauScript {
             Event::Submit(n, value) => self.dispatch_text(&format!("submit:{n}"), value),
             Event::Focus(yes) => self.dispatch(if yes { "focus" } else { "blur" }, Value::Nil),
             Event::Received(zone, kind, data) => {
+                // By its name as written: a zone in a copy per monitor is
+                // `pool#screen1` inside, and `on("drop:pool", …)` outside.
+                let zone = zone.split('#').next().unwrap_or(zone);
                 let listeners = self.c.lock().unwrap().handlers.get(&format!("drop:{zone}")).cloned().unwrap_or_default();
                 listeners.iter().for_each(|f| self.call_handler(f, (data.clone(), kind.clone())));
             }

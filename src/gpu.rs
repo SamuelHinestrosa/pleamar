@@ -771,9 +771,13 @@ impl DrawList {
         // are one stretch of the scene, wherever `z:` puts it.
         self.hidden.clear();
         self.hidden.resize(instrs.len(), false);
+        // (From just after its opening: a zone is placed by the instruction
+        // that follows it, and one declared right before a hidden group
+        // stands on that group's opening without being in it —Marea's body
+        // was, and she caught no click—.)
         fn hide(hidden: &mut [bool], from: usize, to: usize) {
-            let (a, b) = (from.min(to), from.max(to).min(hidden.len().saturating_sub(1)));
-            for h in &mut hidden[a..=b] {
+            let (a, b) = (from.min(to) + 1, from.max(to).min(hidden.len().saturating_sub(1)));
+            for h in hidden.iter_mut().take(b + 1).skip(a) {
                 *h = true;
             }
         }

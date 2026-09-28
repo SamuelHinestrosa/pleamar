@@ -1320,18 +1320,27 @@ impl DataDeviceHandler for State {
         let _ = self.to_render.send(ToRender::Pointer(Some((x as f32, y as f32))));
     }
     fn leave(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &wayland_client::protocol::wl_data_device::WlDataDevice) {
-        let _ = self.to_render.send(ToRender::Fact("drag.over", 0.0));
-        let _ = self.to_render.send(ToRender::Pointer(None));
+        // Let go on it, it stays over until what was let go has arrived: the
+        // zones that receive it may only be there while something is over.
+        // (And where it was let go too: the zone it lands on is the one under it.)
+        if !DROPPING.load(std::sync::atomic::Ordering::Acquire) {
+            let _ = self.to_render.send(ToRender::Fact("drag.over", 0.0));
+            let _ = self.to_render.send(ToRender::Pointer(None));
+        }
     }
     fn motion(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &wayland_client::protocol::wl_data_device::WlDataDevice, x: f64, y: f64) {
         let _ = self.to_render.send(ToRender::Pointer(Some((x as f32, y as f32))));
     }
     fn selection(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &wayland_client::protocol::wl_data_device::WlDataDevice) {}
     fn drop_performed(&mut self, conn: &Connection, _: &QueueHandle<Self>, d: &wayland_client::protocol::wl_data_device::WlDataDevice) {
-        let _ = self.to_render.send(ToRender::Fact("drag.over", 0.0));
-        let Some(o) = current_drag_offer(d) else { return };
-        let Some(mime) = o.with_mime_types(|t| MIME_TYPES.iter().find(|q| t.iter().any(|x| x == *q)).map(|q| q.to_string())) else { return };
-        let Ok(mut pipe) = o.receive(mime.clone()) else { return };
+        let over_no_more = |tx: &std::sync::mpsc::Sender<ToRender>| {
+            DROPPING.store(false, std::sync::atomic::Ordering::Release);
+            let _ = tx.send(ToRender::Fact("drag.over", 0.0));
+        };
+        let Some(o) = current_drag_offer(d) else { return over_no_more(&self.to_render) };
+        let Some(mime) = o.with_mime_types(|t| MIME_TYPES.iter().find(|q| t.iter().any(|x| x == *q)).map(|q| q.to_string())) else { return over_no_more(&self.to_render) };
+        let Ok(mut pipe) = o.receive(mime.clone()) else { return over_no_more(&self.to_render) };
+        DROPPING.store(true, std::sync::atomic::Ordering::Release);
         let _ = conn.flush();
         // Reading the pipe can take as long as the writer takes: in another thread.
         let tx = self.to_render.clone();
@@ -1342,6 +1351,9 @@ impl DataDeviceHandler for State {
             o.finish();
             o.destroy();
             let _ = tx.send(ToRender::Dropped(mime, data.trim_end().to_owned()));
+            DROPPING.store(false, std::sync::atomic::Ordering::Release);
+            let _ = tx.send(ToRender::Fact("drag.over", 0.0));
+            let _ = tx.send(ToRender::Pointer(None));
         });
     }
 }
@@ -1419,6 +1431,9 @@ fn end_drag(source: &wayland_client::protocol::wl_data_source::WlDataSource) {
     }
     source.destroy();
 }
+
+/// Something let go on a surface whose data has not arrived yet.
+static DROPPING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 fn key_name(e: &KeyEvent) -> String {
     // As xkb calls it: `Escape`, `Return`, `BackSpace`, `a`.
