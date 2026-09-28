@@ -73,6 +73,9 @@ pub struct DrawList {
     pub skip: Vec<std::ops::Range<usize>>,
     /// The order the instructions are painted in, if groups with `z:` changed it.
     pub order: Option<Vec<usize>>,
+    /// By instruction: inside a group that was hidden the last time it was
+    /// put together. Its zones catch nothing, and are not even looked at.
+    pub hidden: Vec<bool>,
     /// And which edges it is attached to: nothing is reported against those.
     attached_edges: [bool; 4],
     /// Where there is glass this frame, in strips of the scene plane: what the
@@ -732,12 +735,53 @@ impl DrawList {
                 asleep[k] = true;
             }
         }
-        let order = self.order.clone();
-        let sequence: Box<dyn Iterator<Item = usize>> = match &order {
-            Some(o) => Box::new(o.iter().copied()),
-            None => Box::new(0..instrs.len()),
+        let sequence: Vec<usize> = match &self.order {
+            Some(o) => o.clone(),
+            None => (0..instrs.len()).collect(),
         };
-        for idx in sequence {
+        // Where each group that opens in the sequence closes, and how many
+        // emitters come before each place: a group that is hidden is jumped
+        // over whole, instead of being looked at instruction by instruction
+        // (a window manager's sixteen slots, most of them empty, are most of
+        // its drawing). Not one with an emitter inside: an emitter keeps
+        // count of its own while hidden, so it does not burst late on appearing.
+        let mut closes = vec![usize::MAX; sequence.len()];
+        let mut emitters_before = vec![0u32; sequence.len() + 1];
+        {
+            let mut open: Vec<usize> = Vec::new();
+            for (p, idx) in sequence.iter().enumerate() {
+                emitters_before[p + 1] = emitters_before[p] + matches!(instrs[*idx], Instr::Particles(_)) as u32;
+                match &instrs[*idx] {
+                    Instr::Opacity(Some(_)) | Instr::Fade(_) | Instr::Effect(_) => open.push(p),
+                    Instr::Opacity(None) => {
+                        if let Some(o) = open.pop() {
+                            closes[o] = p;
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+        // Jumped over from `p` (an opening that turned out hidden): past its close.
+        let jump = |p: usize| -> Option<usize> {
+            let close = *closes.get(p)?;
+            (close != usize::MAX && emitters_before[close] == emitters_before[p]).then_some(close + 1)
+        };
+        // A hidden group's instructions, from its opening to its close: they
+        // are one stretch of the scene, wherever `z:` puts it.
+        self.hidden.clear();
+        self.hidden.resize(instrs.len(), false);
+        fn hide(hidden: &mut [bool], from: usize, to: usize) {
+            let (a, b) = (from.min(to), from.max(to).min(hidden.len().saturating_sub(1)));
+            for h in &mut hidden[a..=b] {
+                *h = true;
+            }
+        }
+        let mut next = 0usize;
+        while next < sequence.len() {
+            let here = next;
+            let idx = sequence[here];
+            next += 1;
             if asleep[idx] {
                 continue;
             }
@@ -749,6 +793,13 @@ impl DrawList {
             match i {
                 Instr::Opacity(Some(a)) => {
                     let a = a.eval(c).clamp(0.0, 1.0);
+                    if a <= 0.001 {
+                        if let Some(past) = jump(here) {
+                            hide(&mut self.hidden, idx, sequence[past - 1]);
+                            next = past;
+                            continue;
+                        }
+                    }
                     let inside_layer = opacity_groups.iter().any(|g| matches!(g, OpacityGroup::Layer { .. }));
                     opacity_groups.push(if a <= 0.001 {
                         OpacityGroup::Hidden
@@ -763,6 +814,13 @@ impl DrawList {
                 }
                 Instr::Effect(fx) => {
                     let a = fx.alpha.eval(c).clamp(0.0, 1.0);
+                    if a <= 0.001 {
+                        if let Some(past) = jump(here) {
+                            hide(&mut self.hidden, idx, sequence[past - 1]);
+                            next = past;
+                            continue;
+                        }
+                    }
                     let inside_layer = opacity_groups.iter().any(|g| matches!(g, OpacityGroup::Layer { .. }));
                     let full = self.offscreen_groups.len() >= MAX_LAYERS;
                     if full && !std::mem::replace(&mut self.effects_warned, true) {
@@ -909,6 +967,13 @@ impl DrawList {
                 }
                 Instr::Fade(a) => {
                     let a = a.eval(c).clamp(0.0, 1.0);
+                    if a <= 0.001 {
+                        if let Some(past) = jump(here) {
+                            hide(&mut self.hidden, idx, sequence[past - 1]);
+                            next = past;
+                            continue;
+                        }
+                    }
                     opacity_groups.push(if a <= 0.001 { OpacityGroup::Hidden } else { OpacityGroup::Multiply(a) });
                 }
                 Instr::Opacity(None) => {
@@ -2699,3 +2764,4 @@ thread_local! {
     /// How long this thread's waits for the card usually take, in ms.
     static WAIT_USUALLY: std::cell::Cell<f64> = const { std::cell::Cell::new(0.0) };
 }
+

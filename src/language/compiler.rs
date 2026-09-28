@@ -2054,20 +2054,27 @@ impl<'a> Compiler<'a> {
             (Some(v), o) => Some(o.map_or(v.clone(), |o| o * v.clone())),
             (None, o) => o,
         };
+        let effects = self.group_effects(n, &mut p, &opacity)?;
+        // With no effects, whether it is seen goes first and how it moves
+        // after: a hidden group is jumped over whole when drawing, its
+        // transform included (a window manager's empty slots, each with its
+        // `pivot` and its `scale`). With effects, the transform first: the
+        // effect's mask moves with the group.
+        let opacity_first = effects.is_none() && opacity.is_some();
+        if opacity_first {
+            if let Some(o) = &opacity {
+                self.e.paint(Instr::Opacity(Some(o.clone())));
+            }
+        }
         if transforms {
             self.e.paint(Instr::Transform(Some(t.clone())));
             self.under.push(t);
         }
-        let effects = self.group_effects(n, &mut p, &opacity)?;
-        match (&effects, &opacity) {
-            (Some(fx), _) => {
-                if self.effects_depth > 0 {
-                    return Err(CompileError::at(n.line, n.col, "a group with effects inside another group with effects: only the outer one would get them. Put the effects on one of the two, or side by side"));
-                }
-                self.e.paint(Instr::Effect(Box::new(fx.clone())));
+        if let Some(fx) = &effects {
+            if self.effects_depth > 0 {
+                return Err(CompileError::at(n.line, n.col, "a group with effects inside another group with effects: only the outer one would get them. Put the effects on one of the two, or side by side"));
             }
-            (None, Some(o)) => self.e.paint(Instr::Opacity(Some(o.clone()))),
-            (None, None) => {}
+            self.e.paint(Instr::Effect(Box::new(fx.clone())));
         }
         self.effects_depth += effects.is_some() as usize;
         let from = self.candidates.len();
@@ -2092,12 +2099,15 @@ impl<'a> Compiler<'a> {
         if size.is_some() {
             self.last_size = size;
         }
-        if opacity.is_some() || effects.is_some() {
+        if effects.is_some() {
             self.e.paint(Instr::Opacity(None));
         }
         if transforms {
             self.under.pop();
             self.e.paint(Instr::Transform(None));
+        }
+        if opacity_first {
+            self.e.paint(Instr::Opacity(None));
         }
         Ok(())
     }
@@ -5287,6 +5297,12 @@ impl<'a> Compiler<'a> {
             fact(self, format!("{name}.{k}.fullscreen"), 0.0, true);
             fact(self, format!("{name}.{k}.dialog"), 0.0, true);
             fact(self, format!("{name}.{k}.minimized"), 0.0, true);
+            // Workspaces: which one it is on (they start at 1), how many share
+            // its monitor and workspace (what its layout is shared out
+            // among), and its turn among the windows shown.
+            fact(self, format!("{name}.{k}.workspace"), 1.0, false);
+            fact(self, format!("{name}.{k}.among"), 0.0, false);
+            fact(self, format!("{name}.{k}.rank"), -1.0, false);
             for field in ["title", "app"] {
                 let full = format!("{name}.{k}.{field}");
                 let id = self.e.live_text(interned(&full), "");
@@ -5305,6 +5321,8 @@ impl<'a> Compiler<'a> {
             for edge in ["top", "right", "bottom", "left"] {
                 fact(self, format!("{name}.reserved.{s}.{edge}"), 0.0, false);
             }
+            // The workspace each monitor shows.
+            fact(self, format!("{name}.shown.{s}"), 1.0, false);
         }
         fact(self, format!("{name}.focus"), -1.0, false);
         let full = format!("{name}.socket");
@@ -5758,11 +5776,25 @@ impl<'a> Compiler<'a> {
                         "fullscreen" => Effect::Window(WindowAction::Fullscreen, self.which_window(&mut c)?),
                         "minimize" => Effect::Window(WindowAction::Minimize, self.which_window(&mut c)?),
                         "restore" => Effect::Window(WindowAction::Restore, self.which_window(&mut c)?),
-                        // `send win(win.focus) to 1`: to that monitor's copy of the scene.
+                        // `send win(win.focus) to 1`: to that monitor's copy of the scene;
+                        // `send win(win.focus) to workspace 2`: to that workspace.
                         "send" => {
                             let which = self.which_window(&mut c)?;
                             c.expect_word("to")?;
-                            Effect::WindowTo(which, self.expr(&mut c)?)
+                            if c.word("workspace") {
+                                Effect::WindowToWorkspace(which, self.expr(&mut c)?)
+                            } else {
+                                Effect::WindowTo(which, self.expr(&mut c)?)
+                            }
+                        }
+                        // `workspace 3`: shown on the monitor the pointer is on; `workspace 3 on 1`, on that one.
+                        "workspace" => {
+                            if self.e.nest.is_none() {
+                                return c.error("`workspace` shows one of the scene's windows' workspaces: declare them first, `windows win max 16`");
+                            }
+                            let n = self.expr(&mut c)?;
+                            let on = if c.word("on") { Some(self.expr(&mut c)?) } else { None };
+                            Effect::Workspace(n, on)
                         }
                         // `swap win(a) with win(b)`: they change places.
                         "swap" => {

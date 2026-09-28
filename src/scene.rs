@@ -1194,6 +1194,7 @@ pub struct ZBlock {
 
 /// Where the groups with `z:` are drawn this frame: the instructions in the
 /// order they are painted, and each zone's place in it (bigger, on top).
+#[derive(Clone)]
 pub struct ZArrangement {
     pub order: Vec<usize>,
     pub zone_rank: Vec<(usize, u8, usize)>,
@@ -1534,6 +1535,11 @@ pub enum Effect {
     /// Two windows change places, in the order and on their monitors:
     /// `swap win(a) with win(b)`.
     WindowSwap(Expr, Expr),
+    /// A workspace shown: `workspace 3` on the monitor the pointer is on, or
+    /// `workspace 3 on 1` on that one.
+    Workspace(Expr, Option<Expr>),
+    /// A window to another workspace: `send win(win.focus) to workspace 2`.
+    WindowToWorkspace(Expr, Expr),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -1562,6 +1568,8 @@ impl Effect {
             Effect::Window(a, e) => Effect::Window(*a, e.with_payload(v)),
             Effect::WindowTo(w, to) => Effect::WindowTo(w.with_payload(v), to.with_payload(v)),
             Effect::WindowSwap(a, b) => Effect::WindowSwap(a.with_payload(v), b.with_payload(v)),
+            Effect::Workspace(w, on) => Effect::Workspace(w.with_payload(v), on.as_ref().map(|e| e.with_payload(v))),
+            Effect::WindowToWorkspace(w, to) => Effect::WindowToWorkspace(w.with_payload(v), to.with_payload(v)),
             other => other.clone(),
         }
     }
@@ -1994,6 +2002,9 @@ pub enum NestEvent {
     Opened { slot: usize, title: String, app: String, screen: usize },
     /// A window went to another monitor.
     Screen(usize, usize),
+    /// A window goes to that workspace: a rule of the compositor's said so
+    /// when it opened (`window app=discord workspace 3`).
+    Workspace(usize, usize),
     /// What other programs' bars keep for themselves on that monitor, at
     /// each edge: top, right, bottom, left (layer-shell's exclusive zones).
     Reserved(usize, [f32; 4]),
@@ -2102,6 +2113,8 @@ pub enum ToNest {
     Send(usize, usize),
     /// Those two windows change places.
     Swap(usize, usize),
+    /// Nobody has the keyboard: what had it is on a workspace no longer shown.
+    Blur,
     /// Where a window is seen: on which monitor (by its name) and its box
     /// there, in pixels. Told when it changes (for screenshots of it).
     Shown { slot: usize, monitor: String, rect: [i32; 4] },
@@ -2180,6 +2193,16 @@ impl Animated {
     /// frame arrives late.
     pub fn step(&mut self, dt: f32) {
         if self.spring.is_instant() {
+            self.settle();
+            return;
+        }
+        // Still, where it is going: nothing to work out. Most of a scene's
+        // properties are like this most of the time, and each one used to
+        // take eight small steps a frame to stay where it was.
+        if self.v == 0.0 && self.x == self.target {
+            return;
+        }
+        if (self.x - self.target).abs() < 1e-4 && self.v.abs() < 1e-3 {
             self.settle();
             return;
         }

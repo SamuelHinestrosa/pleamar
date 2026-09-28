@@ -54,22 +54,52 @@ struct NestPiece {
     uploaded: bool,
 }
 
-/// Each window's turn in the layout of its own monitor, how many there are on
-/// each, and the order of all of them.
-fn nest_places(scene: &Scene, facts: &mut [f32], to_logic: &Sender<Event>, n: &crate::scene::Nest, order: &[usize], screens: &[usize]) {
+/// The workspaces of the scene's windows: which one each window is on, which
+/// one each monitor shows, and the window that last had the keyboard on each
+/// (monitor, workspace), to give it back when that workspace is shown again.
+struct Desks {
+    of: Vec<usize>,
+    shown: [usize; 4],
+    last: std::collections::HashMap<(usize, usize), usize>,
+}
+
+impl Default for Desks {
+    fn default() -> Self {
+        Desks { of: Vec::new(), shown: [1; 4], last: Default::default() }
+    }
+}
+
+impl Desks {
+    fn of(&self, slot: usize) -> usize {
+        self.of.get(slot).copied().unwrap_or(1)
+    }
+}
+
+/// Each window's turn in the layout of its own monitor and workspace, how
+/// many share them, and the order of the ones shown. A workspace not shown
+/// is laid out all the same: its windows are in their places when it slides in.
+fn nest_places(scene: &Scene, facts: &mut [f32], to_logic: &Sender<Event>, n: &crate::scene::Nest, order: &[usize], screens: &[usize], desks: &Desks) {
     let name = &n.name;
     let screen_of = |slot: usize| screens.get(slot).copied().unwrap_or(0);
+    let together = |a: usize, b: usize| screen_of(a) == screen_of(b) && desks.of(a) == desks.of(b);
+    let shown = |slot: usize| desks.of(slot) == desks.shown[screen_of(slot).min(3)];
+    let visible: Vec<usize> = order.iter().copied().filter(|k| shown(*k)).collect();
     for k in 0..n.max {
-        let place = order.iter().position(|s| *s == k).map_or(-1.0, |_| order.iter().take_while(|s| **s != k).filter(|s| screen_of(**s) == screen_of(k)).count() as f32);
+        let listed = order.contains(&k);
+        let place = if listed { order.iter().take_while(|s| **s != k).filter(|s| together(**s, k)).count() as f32 } else { -1.0 };
         nest_fact(scene, facts, to_logic, &format!("{name}.{k}.place"), place);
+        nest_fact(scene, facts, to_logic, &format!("{name}.{k}.among"), if listed { order.iter().filter(|s| together(**s, k)).count() as f32 } else { 0.0 });
+        nest_fact(scene, facts, to_logic, &format!("{name}.{k}.rank"), visible.iter().position(|s| *s == k).map_or(-1.0, |p| p as f32));
+        nest_fact(scene, facts, to_logic, &format!("{name}.{k}.workspace"), desks.of(k) as f32);
     }
     for p in 0..n.max {
-        nest_fact(scene, facts, to_logic, &format!("{name}.order.{p}"), order.get(p).map_or(-1.0, |s| *s as f32));
+        nest_fact(scene, facts, to_logic, &format!("{name}.order.{p}"), visible.get(p).map_or(-1.0, |s| *s as f32));
     }
     for s in 0..4 {
-        nest_fact(scene, facts, to_logic, &format!("{name}.on.{s}"), order.iter().filter(|k| screen_of(**k) == s).count() as f32);
+        nest_fact(scene, facts, to_logic, &format!("{name}.on.{s}"), visible.iter().filter(|k| screen_of(**k) == s).count() as f32);
+        nest_fact(scene, facts, to_logic, &format!("{name}.shown.{s}"), desks.shown[s] as f32);
     }
-    nest_fact(scene, facts, to_logic, &format!("{name}.count"), order.len() as f32);
+    nest_fact(scene, facts, to_logic, &format!("{name}.count"), visible.len() as f32);
 }
 
 /// A fact of the scene's windows, by name: set, and told to the logic.
@@ -286,6 +316,11 @@ pub fn run(
     let mut nest_order: Vec<usize> = Vec::new();
     let mut nest_screens: Vec<usize> = Vec::new();
     let mut nest_on_screen: Option<usize> = None;
+    let mut desks = Desks::default();
+    // The last `z:` values and the arrangement they gave.
+    let mut z_memo: Option<(Vec<f32>, Option<crate::scene::ZArrangement>)> = None;
+    // Where the windows' instructions are, by how many instructions there were.
+    let mut window_instrs: Option<(usize, Vec<usize>)> = None;
     // The buffers copied this round, and the copy to wait for before handing them back.
     let mut nest_copied: (Vec<u64>, bool) = (Vec::new(), false);
     // Programs' buffers the card is still copying, by the work they went in:
@@ -456,6 +491,9 @@ pub fn run(
                         fresh.gestures.len(), fresh.rules.len(), fresh.zones.len()
                     );
                     scene = fresh;
+                    z_memo = None;
+                    window_instrs = None;
+                    draw.hidden.clear();
                     if let Some(n) = &scene.nest {
                         if nest.is_none() {
                             nest = crate::platform::start_nest(n.max, op.to_self.clone());
@@ -775,6 +813,11 @@ pub fn run(
                             }
                             nest_screens[slot] = screen;
                             nest_fact(&scene, &mut facts, &to_logic, &format!("{name}.{slot}.screen"), screen as f32);
+                            // It opens on the workspace its monitor shows.
+                            if desks.of.len() < n.max {
+                                desks.of.resize(n.max, 1);
+                            }
+                            desks.of[slot] = desks.shown[screen.min(3)];
                             // What the slot showed before —a window closing, still fading— is no longer it.
                             if let Some(w) = nest_windows.get_mut(slot) {
                                 for p in w.pieces.drain(..) {
@@ -858,7 +901,19 @@ pub fn run(
                                 nest_grab = None;
                             }
                         }
+                        NestEvent::Workspace(slot, ws) => {
+                            if desks.of.len() < n.max {
+                                desks.of.resize(n.max, 1);
+                            }
+                            if slot < n.max {
+                                desks.of[slot] = ws.max(1);
+                                nest_places(&scene, &mut facts, &to_logic, &n, &nest_order, &nest_screens, &desks);
+                            }
+                        }
                         NestEvent::Focused(which) => {
+                            if let Some(k) = which {
+                                desks.last.insert((nest_screens.get(k).copied().unwrap_or(0), desks.of(k)), k);
+                            }
                             for k in 0..n.max {
                                 nest_fact(&scene, &mut facts, &to_logic, &format!("{name}.{k}.focused"), (which == Some(k)) as u8 as f32);
                             }
@@ -892,14 +947,14 @@ pub fn run(
                             }
                             nest_screens[slot] = screen;
                             nest_fact(&scene, &mut facts, &to_logic, &format!("{name}.{slot}.screen"), screen as f32);
-                            nest_places(&scene, &mut facts, &to_logic, &n, &nest_order, &nest_screens);
+                            nest_places(&scene, &mut facts, &to_logic, &n, &nest_order, &nest_screens, &desks);
                         }
                         NestEvent::Order(order) => {
                             nest_order = order;
                             if nest_screens.len() < n.max {
                                 nest_screens.resize(n.max, 0);
                             }
-                            nest_places(&scene, &mut facts, &to_logic, &n, &nest_order, &nest_screens);
+                            nest_places(&scene, &mut facts, &to_logic, &n, &nest_order, &nest_screens, &desks);
                         }
                     }
                 }
@@ -1038,12 +1093,19 @@ pub fn run(
         let mut keyboard_changed = false;
         let mut appointments: Vec<Instant> = Vec::new();
 
+        // The copies of a `screens: each` surface for monitors that are not
+        // there (see `asleep`, below): their zones catch nothing.
+        let absent_spans: Vec<&crate::scene::Span> = scene.spans.iter().filter(|t| scene.surfaces.get(t.surface).is_some_and(|s| s.instance > 0) && !sheets.iter().any(|l| l.view.surface == t.surface)).collect();
+        let absent: Vec<std::ops::Range<usize>> = absent_spans.iter().map(|t| t.instrs.clone()).collect();
+        // Nor do their `follow`s follow: nothing of theirs is seen. When the
+        // monitor comes, they catch up with what changed meanwhile.
+        let absent_behaviors: Vec<std::ops::Range<usize>> = absent_spans.iter().map(|t| t.behaviors.clone()).collect();
         // Zones: who has the mouse over them.
         let mut edges: Vec<(bool, usize)> = Vec::new(); // (enters, zone)
         {
             let c = Ctx { props: &props, facts: &facts };
             for (k, (z, was_inside)) in scene.zones.iter().zip(inside.iter_mut()).enumerate() {
-                let is_inside = z.active.is_true(c) && pointer.is_some_and(|(x, y)| z.contains(c, x, y));
+                let is_inside = !draw.hidden.get(z.at).copied().unwrap_or(false) && !absent.iter().any(|r| r.contains(&z.at)) && z.active.is_true(c) && pointer.is_some_and(|(x, y)| z.contains(c, x, y));
                 if is_inside != *was_inside {
                     *was_inside = is_inside;
                     edges.push((is_inside, k));
@@ -1053,7 +1115,15 @@ pub fn run(
         }
         // The topmost one is the last declared; or, with groups with `z:`, the
         // one drawn last.
-        let arrangement = scene.z_arrange(Ctx { props: &props, facts: &facts });
+        // Worked out again only when some `z:` changed: it walks the whole drawing.
+        let arrangement = {
+            let c = Ctx { props: &props, facts: &facts };
+            let zs: Vec<f32> = scene.zblocks.iter().map(|b| b.z.eval(c)).collect();
+            if z_memo.as_ref().is_none_or(|(before, _)| *before != zs) {
+                z_memo = Some((zs, scene.z_arrange(c)));
+            }
+            z_memo.as_ref().and_then(|(_, a)| a.clone())
+        };
         let hovered = match &arrangement {
             Some(a) => inside.iter().enumerate().filter(|(_, d)| **d).max_by_key(|(k, _)| (a.zone_rank[*k], *k)).map(|(k, _)| k),
             None => inside.iter().rposition(|d| *d),
@@ -1407,9 +1477,20 @@ pub fn run(
         // and asleep it would never come back. They are cheap; the expensive part is reading the drawing.
         // Without this two copies were twice the scene per frame even if one was not
         // visible.
+        // And the copies of a `screens: each` surface for monitors that are not
+        // there: `each max 4` with one monitor was four times the scene's rules
+        // every frame, for three copies nobody sees. The first copy always runs.
         let asleep: Vec<&crate::scene::Span> = {
             let c = Ctx { props: &props, facts: &facts };
-            scene.spans.iter().filter(|t| scene.surfaces.get(t.surface).and_then(|s| s.open.as_ref()).is_some_and(|e| !e.is_true(c))).collect()
+            let shown = |k: usize| sheets.iter().any(|l| l.view.surface == k);
+            scene
+                .spans
+                .iter()
+                .filter(|t| {
+                    let Some(s) = scene.surfaces.get(t.surface) else { return false };
+                    s.open.as_ref().is_some_and(|e| !e.is_true(c)) || (s.instance > 0 && !shown(t.surface))
+                })
+                .collect()
         };
         let rule_asleep = |k: usize| asleep.iter().any(|t| t.rules.contains(&k));
 
@@ -1592,6 +1673,47 @@ pub fn run(
                         let (slot, screen) = (which.eval(c).round(), to.eval(c).round());
                         if let (Some(send), true) = (&nest, slot >= 0.0 && screen >= 0.0) {
                             send(ToNest::Send(slot as usize, screen as usize));
+                        }
+                    }
+                    // A workspace shown: its windows come, the others go, and the
+                    // keyboard goes to the one that last had it there.
+                    Effect::Workspace(ws, on) => {
+                        let c = Ctx { props: &props, facts: &facts };
+                        let ws = ws.eval(c).round().max(1.0) as usize;
+                        let screen = on.map_or(nest_on_screen.unwrap_or(0) as f32, |e| e.eval(c)).round().clamp(0.0, 3.0) as usize;
+                        if let Some(n) = scene.nest.clone() {
+                            if desks.shown[screen] != ws {
+                                desks.shown[screen] = ws;
+                                nest_places(&scene, &mut facts, &to_logic, &n, &nest_order, &nest_screens, &desks);
+                                if let Some(send) = &nest {
+                                    let here = desks.last.get(&(screen, ws)).copied().filter(|k| nest_order.contains(k) && desks.of(*k) == ws && nest_screens.get(*k) == Some(&screen));
+                                    let first = || nest_order.iter().copied().find(|k| desks.of(*k) == ws && nest_screens.get(*k) == Some(&screen));
+                                    match here.or_else(first) {
+                                        Some(k) => send(ToNest::Focus(k)),
+                                        // Nobody there: the keyboard leaves the one that had it, now out of sight.
+                                        None => {
+                                            let focused = facts.iter().zip(&scene.facts).find(|(_, h)| h.0 == format!("{}.focus", n.name)).map_or(-1.0, |(v, _)| *v);
+                                            if focused >= 0.0 && nest_screens.get(focused as usize) == Some(&screen) {
+                                                send(ToNest::Blur);
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    Effect::WindowToWorkspace(which, to) => {
+                        let c = Ctx { props: &props, facts: &facts };
+                        let (slot, ws) = (which.eval(c).round(), to.eval(c).round().max(1.0) as usize);
+                        if let (Some(n), true) = (scene.nest.clone(), slot >= 0.0) {
+                            let slot = slot as usize;
+                            if desks.of.len() < n.max {
+                                desks.of.resize(n.max, 1);
+                            }
+                            if slot < n.max && desks.of[slot] != ws {
+                                desks.of[slot] = ws;
+                                nest_places(&scene, &mut facts, &to_logic, &n, &nest_order, &nest_screens, &desks);
+                            }
                         }
                     }
                     Effect::WindowSwap(a, b) => {
@@ -1808,6 +1930,7 @@ pub fn run(
                     props[prop.0 as usize].set(a * (t_total * frequency).sin());
                     alive |= a.abs() > 0.01;
                 }
+                Behavior::Follow { .. } | Behavior::Bind { .. } if absent_behaviors.iter().any(|r| r.contains(&k)) => {}
                 Behavior::Follow { prop, to } => {
                     let v = follows.value(k, to, &props, &facts);
                     props[prop.0 as usize].target = v;
@@ -2133,7 +2256,13 @@ pub fn run(
             }
             if let Some(send) = &nest {
                 // The size each window is told to have: only when it changes.
-                for i in to_paint {
+                // (Only the windows' own instructions, found once per scene; and not
+                // those of the copies for monitors that are not there.)
+                if window_instrs.as_ref().is_none_or(|(n, _)| *n != to_paint.len()) {
+                    window_instrs = Some((to_paint.len(), to_paint.iter().enumerate().filter(|(_, i)| matches!(i, Instr::Window { .. })).map(|(k, _)| k).collect()));
+                }
+                let found = window_instrs.as_ref().map_or(&[][..], |(_, v)| v.as_slice());
+                for i in found.iter().filter(|k| !absent.iter().any(|r| r.contains(k))).map(|k| &to_paint[*k]) {
                     let Instr::Window { slot, ask, alpha, .. } = i else { continue };
                     // Only where it is shown: with a copy of the scene per monitor,
                     // the copies where it is not would ask it for another size.
@@ -2265,6 +2394,7 @@ pub fn run(
         let boxes: Vec<[i32; 4]> = scene
             .zones
             .iter()
+            .filter(|z| !draw.hidden.get(z.at).copied().unwrap_or(false) && !absent.iter().any(|r| r.contains(&z.at)))
             .filter(|z| z.active.is_true(c))
             .filter_map(|z| z.bounds(c))
             .filter(|b| !closed.iter().any(|v| b[0] < v[2] && b[2] > v[0] && b[1] < v[3] && b[3] > v[1]))

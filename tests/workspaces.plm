@@ -1,0 +1,16 @@
+// expect: ok
+// Workspaces in the compositor inside a scene: which one each window is on,
+// which one each monitor shows, and the effects that change them.
+scene Workspaces {
+    surface { size: 400, 300 }
+    windows win max 4
+    event go
+    event send_to
+    on go(v) { workspace v }
+    on send_to(v) while win.focus >= 0 { send win(win.focus) to workspace v }
+    on key Alt+w { workspace 2 on 0 }
+    repeat i in 0..4 {
+        let shown = win.$i.workspace == win.shown.0
+        window win.$i { at: 10 + 90 * win.$i.place, 10; size: 80, 80; show: win.$i.open and shown and win.$i.rank >= 0 and win.$i.among > 0 }
+    }
+}

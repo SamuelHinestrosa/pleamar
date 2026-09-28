@@ -1060,11 +1060,15 @@ reloads on save while the programs in it keep running.
 | `win.$i.minimized` | it is put away: its minimize button, the scene (`minimize`), or whoever lists the windows (a dock, Marea). It is left out of the layout's order, as a dialog is; `restore` brings it back |
 | `win.$i.dialog` | it is a dialog: it belongs to another window, or has a size of its own it cannot leave (a message, a file chooser). It is left out of the layout's order (`place` −1, not counted in `win.on`): float it over the rest, at its own size (`ask: 0, 0`) |
 | `win.$i.fullscreen` | it is fullscreen: it asked (a video, a game, F11) or the scene did. Where it goes is still the scene's: draw it over the whole monitor, and ask it for that size |
+| `win.$i.workspace` | the workspace it is on (they start at 1): the one its monitor showed when it opened, or the one it was sent to |
+| `win.$i.among` | how many windows share its monitor **and** its workspace: what its layout is shared out among. `place` is its turn among them |
+| `win.$i.rank` | its turn among all the windows shown, −1 if it is not (another workspace, put away, a dialog) |
 | **for all of them** | |
-| `win.count` · `win.focus` | how many are open, and which slot has the keyboard (−1, none) |
-| `win.on.$s` | how many are on monitor `s` (0 to 3) |
+| `win.count` · `win.focus` | how many are shown (on the workspaces their monitors show), and which slot has the keyboard (−1, none) |
+| `win.on.$s` | how many are shown on monitor `s` (0 to 3) |
+| `win.shown.$s` | the workspace monitor `s` shows |
 | `win.reserved.$s.top` · `.right` · `.bottom` · `.left` | what other programs' bars keep on monitor `s` at that edge, in pixels (layer-shell's exclusive zones): lay the windows out around it |
-| `win.order.$p` | which slot is at each place: `win.order.0` leads |
+| `win.order.$p` | which slot is at each place among the ones shown: `win.order.0` leads |
 | `win.socket` | where programs connect |
 
 `window win.$i { at: x, y; size: w, h }` draws that slot's window in that box.
@@ -1088,8 +1092,14 @@ that holds), which are the scene's.
 | `swap win.$i with win.$j` · `swap win(a) with win(b)` | they change places: their turn in the layout, and their monitors |
 | `minimize win.$i` · `restore win.$i` | put away, and back: the program and whoever lists the windows are told |
 | `fullscreen win.$i` · `fullscreen win(win.focus)` | to fullscreen, or back from it: the program is told (it hides its own bars) and `win.$i.fullscreen` says so |
+| `workspace 3` · `workspace n on 1` | that workspace shown on the monitor the pointer is on, or on that one. The keyboard goes to the window that last had it there; with none there, nobody has it |
+| `send win(win.focus) to workspace 2` | that window to that workspace (on its monitor) |
 
-With a copy of the scene per monitor (`screens: each`), a window opens on the
+**Workspaces** are a number on each window and one on each monitor: what
+is on another workspace is still laid out —`place` and `among` count per
+monitor and workspace—, so a scene can slide one workspace out and the next
+in, drawing each window offset by how far its workspace is from the one
+shown (pleamar-wm's `session.plm` does, with a spring). With a copy of the scene per monitor (`screens: each`), a window opens on the
 monitor the pointer is on, and each copy draws the ones whose `screen` is its
 own (`show: win.$i.screen == screen.index`); a window is only asked for a size
 by the copy that shows it.
@@ -1382,7 +1392,7 @@ properties.layout: at anchor gap padding align fill glass lens shine refraction 
 functions: min max abs floor ceil sin cos clamp smooth mix if vel sqrt pow fract mod sign round exp log tan atan2 length noise random pick
 text_functions: upper lower
 triggers: press release scroll drag hold enter leave hover away idle key submit focus blur drop carry change still
-effects: toggle emit impulse play focus blur close promote fullscreen minimize restore launch send swap
+effects: toggle emit impulse play focus blur close promote fullscreen minimize restore launch send swap workspace
 curves: linear in_quad out_quad in_cubic out_cubic in_out_sine out_back bezier
 frame: hold emit
 classes: ambient reflex asked state
