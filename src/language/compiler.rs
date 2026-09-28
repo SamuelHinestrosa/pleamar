@@ -5325,6 +5325,8 @@ impl<'a> Compiler<'a> {
             fact(self, format!("{name}.shown.{s}"), 1.0, false);
         }
         fact(self, format!("{name}.focus"), -1.0, false);
+        // What the compositor asks the scene to choose: 1 a monitor, 2 a window, 3 either.
+        fact(self, format!("{name}.picking"), 0.0, false);
         let full = format!("{name}.socket");
         let id = self.e.live_text(interned(&full), "");
         self.texts.insert(full, id);
@@ -5795,6 +5797,20 @@ impl<'a> Compiler<'a> {
                             let n = self.expr(&mut c)?;
                             let on = if c.word("on") { Some(self.expr(&mut c)?) } else { None };
                             Effect::Workspace(n, on)
+                        }
+                        // `pick win(x)`, `pick screen 1`, `pick none`: what the compositor
+                        // asked to be chosen (`win.picking`).
+                        "pick" => {
+                            if self.e.nest.is_none() {
+                                return c.error("`pick` answers what the scene's compositor asks: declare its windows first, `windows win max 16`");
+                            }
+                            if c.word("none") {
+                                Effect::Pick(None)
+                            } else if c.word("screen") {
+                                Effect::Pick(Some((false, self.expr(&mut c)?)))
+                            } else {
+                                Effect::Pick(Some((true, self.which_window(&mut c)?)))
+                            }
                         }
                         // `swap win(a) with win(b)`: they change places.
                         "swap" => {

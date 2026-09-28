@@ -307,6 +307,9 @@ pub fn run(
     // A window drew something new: what it covers is painted again.
     // Which windows drew something new this round: what they cover is painted again.
     let mut nest_changed: Vec<usize> = Vec::new();
+    // The windows someone is sharing: each is read back after it draws.
+    let mut nest_watch: Vec<(usize, std::sync::mpsc::Sender<crate::scene::WindowPicture>)> = Vec::new();
+    let mut nest_watch_due: Vec<usize> = Vec::new();
     let mut nest_cursor = Cursor::Normal;
     // Which layers of the windows' texture are taken, and whether the
     // compositor already knows what the card can read straight from a program.
@@ -816,6 +819,13 @@ pub fn run(
                         }
                     }
                 }
+                ToRender::WatchWindow(slot, to) => {
+                    nest_watch.retain(|(s, _)| *s != slot);
+                    if let Some(to) = to {
+                        nest_watch.push((slot, to));
+                        nest_watch_due.push(slot);
+                    }
+                }
                 ToRender::Nest(e) => {
                     let Some(n) = scene.nest.clone() else { continue };
                     let name = &n.name;
@@ -890,6 +900,9 @@ pub fn run(
                                 }
                                 w.geometry = geometry;
                                 nest_changed.push(slot);
+                                if nest_watch.iter().any(|(s, _)| *s == slot) {
+                                    nest_watch_due.push(slot);
+                                }
                             }
                             // The buffers kept for a window that has now moved on go.
                             #[cfg(target_os = "linux")]
@@ -935,6 +948,7 @@ pub fn run(
                         }
                         NestEvent::Cursor(kind) => nest_cursor = kind,
                         NestEvent::Dragging(yes) => nest_dragging = yes,
+                        NestEvent::Pick(what) => nest_fact(&scene, &mut facts, &to_logic, &format!("{name}.picking"), what as f32),
                         // A buffer a window is still showing is kept until it shows
                         // another: a program that resizes destroys the old one before
                         // the new frame arrives, and a copy asked for in between —the
@@ -1739,6 +1753,16 @@ pub fn run(
                         let (a, b) = (a.eval(c).round(), b.eval(c).round());
                         if let (Some(send), true) = (&nest, a >= 0.0 && b >= 0.0 && a != b) {
                             send(ToNest::Swap(a as usize, b as usize));
+                        }
+                    }
+                    Effect::Pick(what) => {
+                        let c = Ctx { props: &props, facts: &facts };
+                        let picked = what.as_ref().and_then(|(window, e)| {
+                            let k = e.eval(c).round();
+                            (k >= 0.0).then(|| if *window { crate::scene::Picked::Window(k as usize) } else { crate::scene::Picked::Screen(k as usize) })
+                        });
+                        if let Some(send) = &nest {
+                            send(ToNest::Picked(picked));
                         }
                     }
                     Effect::Launch(command) => {
@@ -2822,6 +2846,30 @@ pub fn run(
             let done = std::mem::take(&mut nest_copied.0);
             if let (Some(index), false) = (g.last_submission(), done.is_empty()) {
                 nest_lent.push((index, done));
+            }
+        }
+        // The windows being shared that drew something: read back, now that
+        // their layers have it, and sent.
+        if !nest_watch_due.is_empty() {
+            if let Some(g) = &gpu {
+                nest_watch_due.sort_unstable();
+                nest_watch_due.dedup();
+                for slot in std::mem::take(&mut nest_watch_due) {
+                    let Some(w) = nest_windows.get(slot) else { continue };
+                    // Its pixels per unit, from its main surface; its box, the window
+                    // itself (without the shadow around it), or the whole surface.
+                    let Some(main) = w.pieces.iter().find(|p| p.size.0 > 0) else { continue };
+                    let s = main.px.0 as f32 / main.size.0 as f32;
+                    let g_box = if w.geometry[2] > 0 && w.geometry[3] > 0 { w.geometry } else { [0, 0, main.size.0 as i32, main.size.1 as i32] };
+                    let size = (((g_box[2] as f32) * s).round() as u32, ((g_box[3] as f32) * s).round() as u32);
+                    let pieces: Vec<(u32, (i32, i32), (u32, u32), bool)> = w.pieces.iter().map(|p| (p.layer, (((p.at.0 - g_box[0]) as f32 * s).round() as i32, ((p.at.1 - g_box[1]) as f32 * s).round() as i32), p.px, p.opaque)).collect();
+                    if let Some(pixels) = g.read_window(&pieces, size) {
+                        let gone = nest_watch.iter().find(|(k, _)| *k == slot).is_some_and(|(_, to)| to.send(crate::scene::WindowPicture { size, pixels }).is_err());
+                        if gone {
+                            nest_watch.retain(|(k, _)| *k != slot);
+                        }
+                    }
+                }
             }
         }
         // What the windows drew has been shown: they may draw the next one.

@@ -1072,6 +1072,7 @@ reloads on save while the programs in it keep running.
 | `win.reserved.$s.top` · `.right` · `.bottom` · `.left` | what other programs' bars keep on monitor `s` at that edge, in pixels (layer-shell's exclusive zones): lay the windows out around it |
 | `win.order.$p` | which slot is at each place among the ones shown: `win.order.0` leads |
 | `win.socket` | where programs connect |
+| `win.picking` | what the compositor asks the scene to choose, 0 while it asks nothing: 1 a monitor, 2 a window, 3 either (a program wants to share the screen). The scene draws its chooser and answers with `pick` |
 
 `window win.$i { at: x, y; size: w, h }` draws that slot's window in that box.
 `ask: w, h` is the size it is told to have, by default `size` (`ask: 0, 0`: the one it chooses): let the box
@@ -1096,6 +1097,7 @@ that holds), which are the scene's.
 | `fullscreen win.$i` · `fullscreen win(win.focus)` | to fullscreen, or back from it: the program is told (it hides its own bars) and `win.$i.fullscreen` says so |
 | `workspace 3` · `workspace n on 1` | that workspace shown on the monitor the pointer is on, or on that one. The keyboard goes to the window that last had it there; with none there, nobody has it |
 | `send win(win.focus) to workspace 2` | that window to that workspace (on its monitor) |
+| `pick win.$i` · `pick win(x)` · `pick screen 1` · `pick none` | the answer to `win.picking`: that window, that monitor, or nothing (the program's request is turned down). The compositor stops asking: `win.picking` goes back to 0 |
 
 **Workspaces** are a number on each window and one on each monitor: what
 is on another workspace is still laid out —`place` and `among` count per
@@ -1394,7 +1396,7 @@ properties.layout: at anchor gap padding align fill glass lens shine refraction 
 functions: min max abs floor ceil sin cos clamp smooth mix if vel sqrt pow fract mod sign round exp log tan atan2 length noise random pick
 text_functions: upper lower
 triggers: press release scroll drag hold enter leave hover away idle key submit focus blur drop carry change still
-effects: toggle emit impulse play focus blur close promote fullscreen minimize restore launch send swap workspace
+effects: toggle emit impulse play focus blur close promote fullscreen minimize restore launch send swap workspace pick
 curves: linear in_quad out_quad in_cubic out_cubic in_out_sine out_back bezier
 frame: hold emit
 classes: ambient reflex asked state

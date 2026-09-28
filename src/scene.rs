@@ -1540,6 +1540,10 @@ pub enum Effect {
     Workspace(Expr, Option<Expr>),
     /// A window to another workspace: `send win(win.focus) to workspace 2`.
     WindowToWorkspace(Expr, Expr),
+    /// The answer to what the compositor asked the scene to choose (`win.picking`:
+    /// what to share of the screen): a window (`pick win(x)`, true), a monitor
+    /// (`pick screen 1`, false), or nothing (`pick none`).
+    Pick(Option<(bool, Expr)>),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -1570,6 +1574,7 @@ impl Effect {
             Effect::WindowSwap(a, b) => Effect::WindowSwap(a.with_payload(v), b.with_payload(v)),
             Effect::Workspace(w, on) => Effect::Workspace(w.with_payload(v), on.as_ref().map(|e| e.with_payload(v))),
             Effect::WindowToWorkspace(w, to) => Effect::WindowToWorkspace(w.with_payload(v), to.with_payload(v)),
+            Effect::Pick(Some((window, e))) => Effect::Pick(Some((*window, e.with_payload(v)))),
             other => other.clone(),
         }
     }
@@ -1982,6 +1987,9 @@ pub enum ToRender {
     Dropped(String, String),
     /// What the compositor inside the scene has to say.
     Nest(NestEvent),
+    /// Someone wants a window's picture every time it draws (sharing it):
+    /// its slot, and where to send it. `None` stops.
+    WatchWindow(usize, Option<std::sync::mpsc::Sender<WindowPicture>>),
     /// What was on screen has been lost —back from another TTY—: everything is painted again.
     Repaint,
     Quit,
@@ -2034,6 +2042,24 @@ pub enum NestEvent {
     /// A program is dragging something (drag and drop): the pointer goes to
     /// whichever window it is over, not only to the one it was pressed on.
     Dragging(bool),
+    /// The compositor asks the scene to choose (what to share of the screen):
+    /// 1 a monitor, 2 a window, 3 either; 0, it no longer asks. The scene sees
+    /// it as `win.picking`, and answers with `pick`.
+    Pick(u32),
+}
+
+/// A window as it is now, for whoever shares it: its box (the window, without
+/// the shadow its program may draw around it), in pixels, BGRA premultiplied.
+pub struct WindowPicture {
+    pub size: (u32, u32),
+    pub pixels: Vec<u8>,
+}
+
+/// What the scene chose, when the compositor asked it to (`pick`).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Picked {
+    Window(usize),
+    Screen(usize),
 }
 
 /// One surface of a window: which one (it keeps its place on the card from
@@ -2129,6 +2155,8 @@ pub enum ToNest {
     Gpu { device: u64, formats: Vec<(u32, u64)> },
     /// These buffers have been copied: they can go back to their program.
     Released(Vec<u64>),
+    /// What the scene chose when asked (`pick`); `None`, nothing.
+    Picked(Option<Picked>),
     Quit,
 }
 

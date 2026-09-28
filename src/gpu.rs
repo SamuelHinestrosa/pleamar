@@ -2019,8 +2019,8 @@ impl Gpu {
             dimension: wgpu::TextureDimension::D2,
             // As the programs hand them over: BGRA, premultiplied.
             format: wgpu::TextureFormat::Bgra8Unorm,
-            // Painted into as well: video, made RGB there.
-            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST | wgpu::TextureUsages::RENDER_ATTACHMENT,
+            // Painted into as well: video, made RGB there. And read back: a window shared.
+            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST | wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
             view_formats: &[],
         });
         let v = t.create_view(&wgpu::TextureViewDescriptor { dimension: Some(wgpu::TextureViewDimension::D2Array), ..Default::default() });
@@ -2046,6 +2046,82 @@ impl Gpu {
         self.windows_dims = dims;
         self.scene_group = Self::build_scene_group(&self.device, &self.pipeline, &self.shapes_buffer, &self.elements_buffer, &self.points_buffer, &self.stops_buffer, &self.atlas_view, &self.sampler, &self.windows_view);
         true
+    }
+
+    /// A window's picture, back from the card: its pieces (layer, where in the
+    /// picture, in pixels, how many pixels, and whether it is opaque —XRGB,
+    /// whose fourth byte means nothing—), put together over transparent in a
+    /// picture of that size. BGRA, premultiplied.
+    pub fn read_window(&self, pieces: &[(u32, (i32, i32), (u32, u32), bool)], size: (u32, u32)) -> Option<Vec<u8>> {
+        let (w, h) = size;
+        if w == 0 || h == 0 {
+            return None;
+        }
+        let (dw, dh, dn) = self.windows_dims;
+        let mut encoder = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("a window, read") });
+        let mut reads = Vec::new();
+        for (layer, at, (pw, ph), opaque) in pieces {
+            let (pw, ph) = ((*pw).min(dw), (*ph).min(dh));
+            if pw == 0 || ph == 0 || *layer >= dn {
+                continue;
+            }
+            let row = (pw * 4).div_ceil(256) * 256;
+            let out = self.device.create_buffer(&wgpu::BufferDescriptor { label: None, size: (row * ph) as u64, usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ, mapped_at_creation: false });
+            encoder.copy_texture_to_buffer(
+                wgpu::TexelCopyTextureInfo { texture: &self.windows, mip_level: 0, origin: wgpu::Origin3d { x: 0, y: 0, z: *layer }, aspect: wgpu::TextureAspect::All },
+                wgpu::TexelCopyBufferInfo { buffer: &out, layout: wgpu::TexelCopyBufferLayout { offset: 0, bytes_per_row: Some(row), rows_per_image: None } },
+                wgpu::Extent3d { width: pw, height: ph, depth_or_array_layers: 1 },
+            );
+            reads.push((out, row, *at, (pw, ph), *opaque));
+        }
+        if reads.is_empty() {
+            return None;
+        }
+        self.queue.submit(Some(encoder.finish()));
+        let left = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(reads.len()));
+        for (out, ..) in &reads {
+            let left = left.clone();
+            out.slice(..).map_async(wgpu::MapMode::Read, move |_| {
+                left.fetch_sub(1, std::sync::atomic::Ordering::AcqRel);
+            });
+        }
+        let start = std::time::Instant::now();
+        while left.load(std::sync::atomic::Ordering::Acquire) > 0 && start.elapsed() < std::time::Duration::from_secs(1) {
+            let _ = self.device.poll(wgpu::PollType::Poll);
+            std::thread::sleep(std::time::Duration::from_micros(200));
+        }
+        if left.load(std::sync::atomic::Ordering::Acquire) > 0 {
+            return None;
+        }
+        // Over transparent, each piece over what is under it (premultiplied).
+        let mut picture = vec![0u8; (w * h * 4) as usize];
+        for (out, row, (ax, ay), (pw, ph), opaque) in &reads {
+            let Ok(data) = out.slice(..).get_mapped_range() else { continue };
+            for y in 0..*ph as i32 {
+                let ty = ay + y;
+                if ty < 0 || ty >= h as i32 {
+                    continue;
+                }
+                for x in 0..*pw as i32 {
+                    let tx = ax + x;
+                    if tx < 0 || tx >= w as i32 {
+                        continue;
+                    }
+                    let s = (y as u32 * row + x as u32 * 4) as usize;
+                    let d = ((ty as u32 * w + tx as u32) * 4) as usize;
+                    let a = if *opaque { 255 } else { data[s + 3] as u32 };
+                    if a == 255 {
+                        picture[d..d + 3].copy_from_slice(&data[s..s + 3]);
+                        picture[d + 3] = 255;
+                    } else if a > 0 {
+                        for k in 0..4 {
+                            picture[d + k] = (data[s + k] as u32 + picture[d + k] as u32 * (255 - a) / 255).min(255) as u8;
+                        }
+                    }
+                }
+            }
+        }
+        Some(picture)
     }
 
     /// What a window of the scene's compositor drew, to its layer. Returns true

@@ -1,0 +1,15 @@
+// expect: ok
+// The compositor asks the scene to choose (sharing the screen): `win.picking`
+// says what, and `pick` answers with a window, a monitor or nothing.
+scene Pick {
+    surface { size: 400, 300 }
+    windows win max 4
+    repeat i in 0..4 {
+        window win.$i { at: 10 + 90 * i, 10; size: 80, 80; show: win.$i.open }
+        zone box choose.$i { at: 50 + 90 * i, 50; size: 80, 80; active: win.picking >= 2 and win.$i.open }
+        on press choose.$i { pick win.$i }
+    }
+    zone box whole { at: 200, 200; size: 200, 40; active: win.picking == 1 or win.picking == 3 }
+    on press whole { pick screen 0 }
+    on key Escape while win.picking > 0 { pick none }
+}
