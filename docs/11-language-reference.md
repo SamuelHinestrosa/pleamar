@@ -1193,7 +1193,7 @@ fact of its own called `locale`, are errors.
 | `key Escape` · `key Ctrl+k` | a key; the surface has to ask for the keyboard. Modifiers: `Ctrl+` `Alt+` `Super+` `Shift+`, in any order. `Shift+` counts with another modifier or a key that writes nothing (`Super+Shift+Left`, `Shift+F5`); a character already says it: `key question`, not `Shift+question` |
 | `submit field` | Enter inside that `input` |
 | `focus` · `blur` | the surface gains or loses the keyboard |
-| `drop zone` | something dragged from another application is dropped on it |
+| `drop zone` | something dragged from another application is dropped on it. While it is being carried over the surface, not yet let go, the fact `drag.over` is 1: a scene can open its arms before it arrives |
 | `carry zone` | what that zone carries (`carries:`, below) has just been dragged out of it to another program |
 | `idle for 14s` | nobody touches anything for that long. In a scene that names `cursor.x`, moving the mouse anywhere on the desktop counts as touching |
 | `event_name` | that event happens: the logic emits it, or another rule, or a gesture, or it comes from outside |

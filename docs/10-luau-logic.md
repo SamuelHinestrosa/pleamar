@@ -21,6 +21,7 @@ on("text:query", function(value) … end)   -- someone typed in the `query` fiel
 on("submit:query", function(value) … end) -- Enter in the field
 on("focus", …)  on("blur", …)             -- the surface gains or loses the keyboard
 on("drop:tray", function(data, mime) … end)  -- something was dropped from another application: text, or a list of `file://…`
+json.decode(text)  json.encode(t)  -- what a program prints (`run`'s output) as tables, and back
 focus("query")                            -- give the typing caret to a field; `focus()` takes it away
 on("layer:card", function(claim) … end)   -- a layer changed hands
 on("fact:open", function(v) … end)        -- a scene RULE changed a fact

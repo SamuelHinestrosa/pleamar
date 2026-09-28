@@ -1314,9 +1314,13 @@ impl DataDeviceHandler for State {
             o.accept_mime_type(o.serial, mime);
             o.set_actions(DndAction::Copy, DndAction::Copy);
         }
+        // `drag.over`: something is being carried over the surface, not
+        // yet let go. A scene can open its arms before it arrives.
+        let _ = self.to_render.send(ToRender::Fact("drag.over", 1.0));
         let _ = self.to_render.send(ToRender::Pointer(Some((x as f32, y as f32))));
     }
     fn leave(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &wayland_client::protocol::wl_data_device::WlDataDevice) {
+        let _ = self.to_render.send(ToRender::Fact("drag.over", 0.0));
         let _ = self.to_render.send(ToRender::Pointer(None));
     }
     fn motion(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &wayland_client::protocol::wl_data_device::WlDataDevice, x: f64, y: f64) {
@@ -1324,6 +1328,7 @@ impl DataDeviceHandler for State {
     }
     fn selection(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &wayland_client::protocol::wl_data_device::WlDataDevice) {}
     fn drop_performed(&mut self, conn: &Connection, _: &QueueHandle<Self>, d: &wayland_client::protocol::wl_data_device::WlDataDevice) {
+        let _ = self.to_render.send(ToRender::Fact("drag.over", 0.0));
         let Some(o) = current_drag_offer(d) else { return };
         let Some(mime) = o.with_mime_types(|t| MIME_TYPES.iter().find(|q| t.iter().any(|x| x == *q)).map(|q| q.to_string())) else { return };
         let Ok(mut pipe) = o.receive(mime.clone()) else { return };

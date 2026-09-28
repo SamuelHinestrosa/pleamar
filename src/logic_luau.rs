@@ -943,6 +943,16 @@ impl LuauScript {
             Ok(())
         })?)?;
 
+        // `json.decode(text)` and `json.encode(table)`: what a program prints
+        // (`run`'s output) read as tables, and tables written for one.
+        let json = lua.create_table()?;
+        json.set("decode", lua.create_function(|lua, text: String| match crate::platform::json_decode(&text) {
+            Ok(v) => value_to_lua(lua, &v),
+            Err(e) => Err(mlua::Error::RuntimeError(format!("json.decode: {e}"))),
+        })?)?;
+        json.set("encode", lua.create_function(|_, v: Value| Ok(crate::platform::json_encode(&lua_to_value(&v, 0))))?)?;
+        g.set("json", json)?;
+
         // The sandbox, last of all: from here on the globals are not touched.
         lua.sandbox(true)?;
         Ok(lua)

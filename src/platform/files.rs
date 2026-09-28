@@ -34,7 +34,7 @@ fn path_in(owner: &str, name: &str) -> Result<PathBuf, String> {
 }
 
 /// From JSON to what the logic sees: tables, numbers and texts.
-fn from_json(v: serde_json::Value) -> SysValue {
+pub(crate) fn from_json(v: serde_json::Value) -> SysValue {
     use serde_json::Value as J;
     match v {
         J::Null => SysValue::Null,
@@ -47,7 +47,7 @@ fn from_json(v: serde_json::Value) -> SysValue {
 }
 
 /// And the other way round, to save it.
-fn to_json(v: &SysValue) -> serde_json::Value {
+pub(crate) fn to_json(v: &SysValue) -> serde_json::Value {
     use serde_json::Value as J;
     match v {
         SysValue::Null => J::Null,

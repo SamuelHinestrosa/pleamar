@@ -585,6 +585,15 @@ mod tray;
 #[cfg(target_os = "linux")]
 mod compositor;
 mod files;
+
+/// JSON to what the logic sees, and back: `json.decode` and `json.encode`.
+pub fn json_decode(text: &str) -> Result<SysValue, String> {
+    serde_json::from_str(text).map(files::from_json).map_err(|e| e.to_string())
+}
+
+pub fn json_encode(v: &SysValue) -> String {
+    files::to_json(v).to_string()
+}
 mod clock;
 #[cfg(target_os = "linux")]
 mod desktop;
