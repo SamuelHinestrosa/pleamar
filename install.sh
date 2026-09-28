@@ -70,8 +70,10 @@ command -v git > /dev/null || missing="$missing git"
 command -v cargo > /dev/null || missing="$missing cargo"
 command -v cc > /dev/null || command -v gcc > /dev/null || missing="$missing a-C-compiler"
 command -v c++ > /dev/null || command -v g++ > /dev/null || command -v clang++ > /dev/null || missing="$missing a-C++-compiler"
+# PipeWire's bindings (pleamar-wm shares the screen) are made with libclang.
+command -v clang > /dev/null || missing="$missing clang"
 if command -v pkg-config > /dev/null; then
-    for lib in libinput libseat libudev gbm xkbcommon; do
+    for lib in libinput libseat libudev gbm xkbcommon libpipewire-0.3; do
         pkg-config --exists "$lib" || missing="$missing $lib"
     done
 else
@@ -80,11 +82,11 @@ fi
 if [ -n "$missing" ]; then
     say "to build it, this is missing:$missing"
     if command -v pacman > /dev/null; then
-        hint="sudo pacman -S --needed git rust base-devel pkgconf libinput seatd libxkbcommon mesa vulkan-icd-loader xorg-xwayland"
+        hint="sudo pacman -S --needed git rust base-devel pkgconf clang libinput seatd libxkbcommon mesa vulkan-icd-loader xorg-xwayland pipewire"
     elif command -v apt > /dev/null; then
-        hint="sudo apt install git cargo build-essential pkg-config libinput-dev libseat-dev libudev-dev libgbm-dev libxkbcommon-dev libvulkan1 xwayland"
+        hint="sudo apt install git cargo build-essential pkg-config clang libclang-dev libinput-dev libseat-dev libudev-dev libgbm-dev libxkbcommon-dev libvulkan1 xwayland libpipewire-0.3-dev"
     elif command -v dnf > /dev/null; then
-        hint="sudo dnf install git cargo gcc-c++ pkgconf libinput-devel libseat-devel systemd-devel mesa-libgbm-devel libxkbcommon-devel vulkan-loader xorg-x11-server-Xwayland"
+        hint="sudo dnf install git cargo gcc-c++ pkgconf clang-devel libinput-devel libseat-devel systemd-devel mesa-libgbm-devel libxkbcommon-devel vulkan-loader xorg-x11-server-Xwayland pipewire-devel"
     elif command -v zypper > /dev/null; then
         hint="sudo zypper install git cargo gcc-c++ pkgconf libinput-devel libseat-devel systemd-devel libgbm-devel libxkbcommon-devel libvulkan1 xwayland"
     else
@@ -155,6 +157,7 @@ if $session; then
         chmod 755 /usr/local/bin/pleamar-wm-session
         install -Dm644 '$src/pleamar-wm/pleamar-wm.desktop' /usr/share/wayland-sessions/pleamar-wm.desktop
         install -Dm644 '$src/pleamar-wm/pleamar-portals.conf' /usr/share/xdg-desktop-portal/pleamar-portals.conf
+        install -Dm644 '$src/pleamar-wm/pleamar.portal' /usr/share/xdg-desktop-portal/portals/pleamar.portal
     "
 fi
 
