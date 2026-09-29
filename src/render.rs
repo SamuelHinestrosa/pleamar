@@ -875,6 +875,9 @@ pub fn run(
                         NestEvent::Dialog(slot, yes) => nest_fact(&scene, &mut facts, &to_logic, &format!("{name}.{slot}.dialog"), yes as u8 as f32),
                         NestEvent::Frame { slot, geometry, pieces } => {
                             prof_window_frames += 1;
+                            // Buffers that were waiting to be copied and never will be.
+                            #[allow(unused_mut)]
+                            let mut unread: Vec<u64> = Vec::new();
                             if let Some(w) = nest_windows.get_mut(slot) {
                                 let mut old = std::mem::take(&mut w.pieces);
                                 for p in pieces {
@@ -895,6 +898,10 @@ pub fn run(
                                     match p.content {
                                         PieceContent::Kept => {}
                                         PieceContent::Pixels(px) => {
+                                            #[cfg(unix)]
+                                            if let Some(before) = piece.fresh.take() {
+                                                unread.push(before.buffer);
+                                            }
                                             piece.pixels = px;
                                             piece.buffer = None;
                                             piece.uploaded = false;
@@ -906,6 +913,14 @@ pub fn run(
                                             {
                                                 piece.opaque = crate::dmabuf::opaque(d.fourcc);
                                             }
+                                            // A frame on top of one not copied yet: that one goes back to
+                                            // its program now. Kept, it was never handed back, and a
+                                            // program with three buffers froze after losing them.
+                                            if let Some(before) = piece.fresh.take() {
+                                                if before.buffer != d.buffer {
+                                                    unread.push(before.buffer);
+                                                }
+                                            }
                                             piece.pixels = Vec::new();
                                             piece.buffer = Some(d.buffer);
                                             piece.fresh = Some(d);
@@ -916,6 +931,15 @@ pub fn run(
                                 }
                                 for gone in old {
                                     nest_layers[gone.layer as usize] = false;
+                                    #[cfg(unix)]
+                                    if let Some(before) = gone.fresh {
+                                        unread.push(before.buffer);
+                                    }
+                                }
+                                if !unread.is_empty() {
+                                    if let Some(send) = &nest {
+                                        send(ToNest::Released(std::mem::take(&mut unread)));
+                                    }
                                 }
                                 w.geometry = geometry;
                                 nest_changed.push(slot);
