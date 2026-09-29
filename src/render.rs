@@ -856,7 +856,22 @@ pub fn run(
                         NestEvent::Title(slot, t) => nest_text(&scene, &mut texts, &to_logic, &format!("{name}.{slot}.title"), t),
                         NestEvent::App(slot, t) => nest_text(&scene, &mut texts, &to_logic, &format!("{name}.{slot}.app"), t),
                         NestEvent::Fullscreen(slot, yes) => nest_fact(&scene, &mut facts, &to_logic, &format!("{name}.{slot}.fullscreen"), yes as u8 as f32),
-                        NestEvent::Minimized(slot, yes) => nest_fact(&scene, &mut facts, &to_logic, &format!("{name}.{slot}.minimized"), yes as u8 as f32),
+                        NestEvent::Minimized(slot, yes) => {
+                            // Brought back, it comes to the workspace its monitor shows:
+                            // left on the one it was put away from, it had the keyboard
+                            // and could not be seen.
+                            if !yes && slot < n.max {
+                                if desks.of.len() < n.max {
+                                    desks.of.resize(n.max, 1);
+                                }
+                                let here = desks.shown[nest_screens.get(slot).copied().unwrap_or(0).min(3)];
+                                if desks.of[slot] != here {
+                                    desks.of[slot] = here;
+                                    nest_places(&scene, &mut facts, &to_logic, &n, &nest_order, &nest_screens, &desks);
+                                }
+                            }
+                            nest_fact(&scene, &mut facts, &to_logic, &format!("{name}.{slot}.minimized"), yes as u8 as f32);
+                        }
                         NestEvent::Dialog(slot, yes) => nest_fact(&scene, &mut facts, &to_logic, &format!("{name}.{slot}.dialog"), yes as u8 as f32),
                         NestEvent::Frame { slot, geometry, pieces } => {
                             prof_window_frames += 1;
