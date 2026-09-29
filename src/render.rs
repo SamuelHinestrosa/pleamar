@@ -306,6 +306,8 @@ pub fn run(
     let mut nest_size: (i32, i32) = (0, 0);
     // A window drew something new: what it covers is painted again.
     // Which windows drew something new this round: what they cover is painted again.
+    // A surface presented its first frame: the input regions are given again (see `Sheet::presented`).
+    let mut regions_again = false;
     let mut nest_changed: Vec<usize> = Vec::new();
     // The windows someone is sharing: each is read back after it draws.
     let mut nest_watch: Vec<(usize, std::sync::mpsc::Sender<crate::scene::WindowPicture>)> = Vec::new();
@@ -2390,11 +2392,11 @@ pub fn run(
             && !draw.particles_alive
             && draw.wake_at.is_none()
             && compose_memo.as_ref().is_some_and(|m: &ComposeMemo| {
-                m.size == size && m.view == view && m.facts == facts && m.texts == texts && m.window_tex == draw.window_tex && m.props.len() == props.len() && m.props.iter().zip(&props).all(|(a, b)| *a == b.x)
+                m.size == size && m.view == view && m.views == draw.views && m.facts == facts && m.texts == texts && m.window_tex == draw.window_tex && m.props.len() == props.len() && m.props.iter().zip(&props).all(|(a, b)| *a == b.x)
             });
         if !same_scene {
             draw.compose(to_paint, c, &texts, &mut letters, view, size, op.hud);
-            compose_memo = Some(ComposeMemo { size, view, facts: facts.clone(), texts: texts.clone(), window_tex: draw.window_tex.clone(), props: props.iter().map(|a| a.x).collect() });
+            compose_memo = Some(ComposeMemo { size, view, views: draw.views.clone(), facts: facts.clone(), texts: texts.clone(), window_tex: draw.window_tex.clone(), props: props.iter().map(|a| a.x).collect() });
         }
         // Particles carry themselves: while one is alive, the scene does not rest.
         alive |= draw.particles_alive;
@@ -2494,7 +2496,8 @@ pub fn run(
             .filter(|b| !closed.iter().any(|v| b[0] < v[2] && b[2] > v[0] && b[1] < v[3] && b[3] > v[1]))
             .map(|b| [(b[0] - 3.0).floor() as i32, (b[1] - 3.0).floor() as i32, (b[2] + 3.0).ceil() as i32, (b[3] + 3.0).ceil() as i32])
             .collect();
-        let region_changes = boxes != region;
+        // (A surface that has just presented its first frame gets its region now.)
+        let region_changes = boxes != region || std::mem::take(&mut regions_again);
         // `PLEAMAR_REGIONS=card`: and the zones whose name has that in it, with
         // where they are and whether a closed surface is hiding them.
         if region_changes {
@@ -2531,7 +2534,7 @@ pub fn run(
                 // region is committed with the next frame presented, and a
                 // surface that draws nothing —a full-screen catcher— may never
                 // present another, leaving its new region pending for ever.
-                if l.input_region != its_own {
+                if l.input_region != its_own && l.presented {
                     if std::env::var_os("PLEAMAR_REGIONS").is_some() {
                         eprintln!("regions · surface {} ({}): {:?}", l.view.surface, scene.surfaces.get(l.view.surface).map_or("", |s| s.name.as_str()), its_own);
                     }
@@ -2845,6 +2848,10 @@ pub fn run(
                 l.request_backdrop(false);
             }
             l.painted_now = was_painted;
+            if was_painted && !l.presented {
+                l.presented = true;
+                regions_again = true;
+            }
             if asks {
                 frame_requested = was_painted.then_some(l.id);
                 frame_ready = false;
@@ -3418,6 +3425,9 @@ impl Follows {
 struct ComposeMemo {
     size: (f32, f32),
     view: Option<crate::gpu::FieldView>,
+    /// What falls on no sheet is left out of the list: a sheet that comes
+    /// (a lock screen, after its `open:` had already been read) makes it again.
+    views: Vec<[f32; 4]>,
     facts: Vec<f32>,
     texts: Vec<String>,
     window_tex: Vec<Option<crate::gpu::WindowTex>>,

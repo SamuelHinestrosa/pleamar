@@ -3489,12 +3489,21 @@ impl<'a> Compiler<'a> {
                 return Ok(());
             }
             let copies: Vec<(f32, f32, usize, bool)> = self.e.surfaces.iter().filter(|s| s.name == name).map(|s| (s.origin.0, s.origin.1, s.instance, matches!(s.screens, Screens::Number(_)))).collect();
+            // A lock screen covers all of its monitor, whatever its `size:`
+            // says: inside it, what the monitor measures is what it measures.
+            let lock = self.e.surfaces.iter().any(|s| s.name == name && s.lock_screen);
             for (ox, oy, instance, per_screen) in copies {
                 let mark = self.rules.len();
                 // With `screens: each`, each copy has its own: its properties, its zones
                 // and its rules. `$screen` is its number, and `screen.name` that of its monitor.
                 if per_screen {
                     self.scopes.push(self.screen_scope(instance));
+                } else if lock {
+                    let mut env = Scope::default();
+                    for part in ["width", "height"] {
+                        env.alias.insert(format!("screen.{part}"), format!("{name}.{part}"));
+                    }
+                    self.scopes.push(env);
                 }
                 let t = Transform { translate: (ox.into(), oy.into()), ..Transform::at((0.0.into(), 0.0.into())) };
                 self.e.paint(Instr::Transform(Some(t.clone())));
@@ -3504,6 +3513,8 @@ impl<'a> Compiler<'a> {
                 self.e.paint(Instr::Transform(None));
                 if per_screen {
                     self.close_scope(mark);
+                } else if lock {
+                    self.scopes.pop();
                 }
             }
             return Ok(());

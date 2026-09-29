@@ -270,6 +270,15 @@ use wayland_client::{
 
 
 /// What the render needs from a Wayland surface, and nothing else.
+/// Every surface's number —layers, popups, lock faces— from one counter:
+/// three counters in ranges of a thousand met after the thousandth popup, and
+/// the render could not tell which surface a message was for.
+static SURFACE_IDS: AtomicU32 = AtomicU32::new(0);
+
+fn next_surface_id() -> u32 {
+    SURFACE_IDS.fetch_add(1, Ordering::Relaxed)
+}
+
 struct WaylandWindow {
     wl: wl_surface::WlSurface,
     compositor: CompositorState,
@@ -467,7 +476,6 @@ struct State {
     wanted: Vec<Surface>,
     extra_height: u32,
     placed: Vec<Placed>,
-    next_id: u32,
     pointer: Option<wl_pointer::WlPointer>,
     keyboard: Option<wayland_client::protocol::wl_keyboard::WlKeyboard>,
     cursor_shapes: Option<CursorShapeManager>,
@@ -578,8 +586,7 @@ impl State {
                 window.set_title(if title.is_empty() { "pleamar" } else { title });
                 window.set_app_id("pleamar");
                 window.set_min_size(Some((p.width, height)));
-                let id = self.next_id;
-                self.next_id += 1;
+                let id = next_surface_id();
                 window.commit();
                 let role = Role::Window(window);
                 let viewport = self.viewporter.as_ref().map(|v| v.get_viewport(role.wl(), qh, Silent));
@@ -607,8 +614,7 @@ impl State {
             layer.set_exclusive_zone(if p.reserve_while.is_some() { 0 } else { p.exclusive_zone });
             // If the keyboard depends on something (`exclusive while open`), it's born without it.
             layer.set_keyboard_interactivity(keyboard_interactivity(if p.keyboard_while { Keyboard::Never } else { p.keyboard }));
-            let id = self.next_id;
-            self.next_id += 1;
+            let id = next_surface_id();
             // With a viewport, the logical size is fixed and the real pixels are
             // decided by the scale: that way a scale that isn't whole also works.
             // Width 0 is "the whole monitor": how much that is, the compositor will say when configuring it.
@@ -659,7 +665,6 @@ struct Popups {
     /// The last press: with it one can ask for a click outside to close it.
     last_press: Mutex<Option<(u32, std::time::Instant)>>,
     open: Mutex<Vec<OpenPopup>>,
-    next_id: AtomicU32,
 }
 
 #[derive(Clone)]
@@ -711,7 +716,6 @@ struct Locks {
     /// Wayland thread keeps them up to date, and one is needed per face.
     monitors: Mutex<Vec<(wl_output::WlOutput, String, i32)>>,
     engaged: Mutex<Option<Engaged>>,
-    next_id: AtomicU32,
 }
 
 struct Engaged {
@@ -774,7 +778,7 @@ pub fn lock_screen(which: usize, what: Option<((u32, u32), (f32, f32))>) {
         .iter()
         .map(|(output, name, mhz)| {
             let wl = c.compositor.create_surface(&c.qh);
-            let id = 2000 + c.next_id.fetch_add(1, Ordering::Relaxed);
+            let id = next_surface_id();
             let surface = lock.create_lock_surface(wl, output, &c.qh);
             let viewport = c.viewporter.as_ref().map(|v| v.get_viewport(surface.wl_surface(), &c.qh, Silent));
             let fractional_scale = c.fractional_scales.as_ref().map(|m| m.get_fractional_scale(surface.wl_surface(), &c.qh, ScaleFor(id)));
@@ -907,7 +911,7 @@ pub fn popup(k: usize, what: Option<([i32; 4], (f32, f32))>) {
                 popup.xdg_popup().grab(seat, serial);
             }
         }
-        let id = 1000 + e.next_id.fetch_add(1, Ordering::Relaxed);
+        let id = next_surface_id();
         let viewport = e.viewporter.as_ref().map(|v| v.get_viewport(popup.wl_surface(), &e.qh, Silent));
         let fractional_scale = e.fractional_scales.as_ref().map(|m| m.get_fractional_scale(popup.wl_surface(), &e.qh, ScaleFor(id)));
         popup.wl_surface().commit();
@@ -1016,7 +1020,6 @@ pub fn run_event_loop(wanted: Vec<Surface>, extra_height: u32, instance: wgpu::I
         wanted,
         extra_height,
         placed: Vec::new(),
-        next_id: 0,
         pointer: None,
         keyboard: None,
         cursor_shapes: CursorShapeManager::bind(&globals, &qh).ok(),
@@ -1045,7 +1048,6 @@ pub fn run_event_loop(wanted: Vec<Surface>, extra_height: u32, instance: wgpu::I
                 seat: Mutex::default(),
                 last_press: Mutex::default(),
                 open: Mutex::default(),
-                next_id: AtomicU32::new(0),
             });
         }
         Err(_) => eprintln!("warning: the compositor has no xdg-shell; there will be no popup surfaces"),
@@ -1060,7 +1062,6 @@ pub fn run_event_loop(wanted: Vec<Surface>, extra_height: u32, instance: wgpu::I
         fractional_scales: state.fractional_scales.clone(),
         monitors: Mutex::default(),
         engaged: Mutex::default(),
-        next_id: AtomicU32::new(0),
     });
     if state.viewporter.is_none() || state.fractional_scales.is_none() {
         eprintln!("warning: the compositor gives no fractional scale; it will paint at whatever whole scale it says");
