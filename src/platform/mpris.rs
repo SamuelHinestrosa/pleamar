@@ -1,7 +1,7 @@
 //! What is playing, through MPRIS: the D-Bus agreement that players and browsers
 //! follow on Linux. On Windows it will be SMTC; on macOS, MediaRemote.
 //!
-//! `{ playing, title, artist, album, player }`. If there are several, the one
+//! `{ playing, title, artist, album, length, art, player }`. If there are several, the one
 //! that is playing is reported; if none is playing, the first. With no players, `player = ""`.
 
 use super::SysValue;
@@ -43,10 +43,16 @@ fn text(v: &OwnedValue) -> String {
     <Vec<String>>::try_from(v.clone()).map(|l| l.join(", ")).unwrap_or_default()
 }
 
+/// `mpris:length` is in microseconds, and the spec says `x`, but some players send `t`.
+fn seconds(v: &OwnedValue) -> f64 {
+    let us = i64::try_from(v).ok().or_else(|| u64::try_from(v).ok().map(|n| n as i64)).unwrap_or(0);
+    us.max(0) as f64 / 1e6
+}
+
 fn now(c: &Connection) -> SysValue {
     let field = |k: &str, v: SysValue| (k.to_owned(), v);
     let Some((name, p, playing)) = active_player(c) else {
-        return SysValue::Map(vec![field("playing", SysValue::Bool(false)), field("title", SysValue::Text(String::new())), field("artist", SysValue::Text(String::new())), field("album", SysValue::Text(String::new())), field("player", SysValue::Text(String::new()))]);
+        return SysValue::Map(vec![field("playing", SysValue::Bool(false)), field("title", SysValue::Text(String::new())), field("artist", SysValue::Text(String::new())), field("album", SysValue::Text(String::new())), field("length", SysValue::Num(0.0)), field("art", SysValue::Text(String::new())), field("player", SysValue::Text(String::new()))]);
     };
     let metadata: HashMap<String, OwnedValue> = p.get_property("Metadata").unwrap_or_default();
     let from_metadata = |k: &str| SysValue::Text(metadata.get(k).map(text).unwrap_or_default());
@@ -55,6 +61,8 @@ fn now(c: &Connection) -> SysValue {
         field("title", from_metadata("xesam:title")),
         field("artist", from_metadata("xesam:artist")),
         field("album", from_metadata("xesam:album")),
+        field("length", SysValue::Num(metadata.get("mpris:length").map(seconds).unwrap_or(0.0))),
+        field("art", from_metadata("mpris:artUrl")),
         field("player", SysValue::Text(name.trim_start_matches(PREFIX).split('.').next().unwrap_or_default().to_owned())),
     ])
 }

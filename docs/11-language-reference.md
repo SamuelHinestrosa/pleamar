@@ -1428,7 +1428,7 @@ services.battery: present percent charging
 services.brightness: present level
 services.network: online kind name strength wifi networks
 services.bluetooth: present powered discovering devices
-services.media: playing title artist album player
+services.media: playing title artist album length art player
 services.window: title class monitor list
 services.workspaces: active list
 services.apps: list
