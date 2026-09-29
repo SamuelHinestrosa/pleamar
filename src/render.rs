@@ -815,10 +815,14 @@ pub fn run(
                 ToRender::KeyboardFocus(yes) => {
                     focus_changes.push(yes);
                     if let Some(send) = &nest {
-                        send(ToNest::HostFocus(yes));
+                        // What the windows had held is let go before they lose the
+                        // keyboard: forgotten, it stayed held for the next one.
                         if !yes {
-                            nest_keys.clear();
+                            for code in nest_keys.drain(..) {
+                                send(ToNest::Key { code, down: false });
+                            }
                         }
+                        send(ToNest::HostFocus(yes));
                     }
                 }
                 ToRender::WatchWindow(slot, to) => {
