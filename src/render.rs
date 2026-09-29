@@ -901,7 +901,11 @@ pub fn run(
                                         }
                                         #[cfg(unix)]
                                         PieceContent::Dmabuf(d) => {
-                                            piece.opaque = crate::dmabuf::opaque(d.fourcc);
+                                            // (The card's buffers are Linux's: elsewhere nothing sends them.)
+                                            #[cfg(target_os = "linux")]
+                                            {
+                                                piece.opaque = crate::dmabuf::opaque(d.fourcc);
+                                            }
                                             piece.pixels = Vec::new();
                                             piece.buffer = Some(d.buffer);
                                             piece.fresh = Some(d);
