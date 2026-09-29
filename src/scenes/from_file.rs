@@ -78,7 +78,7 @@ fn logic_path_for(path: &str) -> String {
 /// `PLEAMAR_NO_RELAUNCH=1` turns it off, for whoever does not want updating the
 /// package to restart their bar.
 fn watch_binary() {
-    if std::env::var_os("PLEAMAR_NO_RELAUNCH").is_some() {
+    if std::env::var_os("PLEAMAR_NO_RELAUNCH").is_some() || super::STAY_ON_UPDATE.load(std::sync::atomic::Ordering::Relaxed) {
         return;
     }
     let Ok(me) = std::env::current_exe() else { return };

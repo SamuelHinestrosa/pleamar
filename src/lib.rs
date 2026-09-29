@@ -170,6 +170,13 @@ fn args(given: Vec<String>) -> Args {
     a
 }
 
+/// Not starting again when the program changes on disk (see `watch_binary`):
+/// for a compositor, starting again closes every window it holds. Only this
+/// process; the programs it starts still reload as ever.
+pub fn stay_on_update() {
+    scenes::STAY_ON_UPDATE.store(true, std::sync::atomic::Ordering::Relaxed);
+}
+
 /// The program: reads the command line and runs what it asks for.
 pub fn run() {
     run_with(std::env::args().skip(1).collect());

@@ -2323,7 +2323,10 @@ pub fn run(
                     window_instrs = Some((to_paint.len(), to_paint.iter().enumerate().filter(|(_, i)| matches!(i, Instr::Window { .. })).map(|(k, _)| k).collect()));
                 }
                 let found = window_instrs.as_ref().map_or(&[][..], |(_, v)| v.as_slice());
-                for i in found.iter().filter(|k| !absent.iter().any(|r| r.contains(k))).map(|k| &to_paint[*k]) {
+                // Not inside a hidden group either (`show:` false —the copy of
+                // another monitor—): it asked for another size too, and the
+                // window was told two sizes over and over (Discord, black).
+                for i in found.iter().filter(|k| !absent.iter().any(|r| r.contains(k)) && !draw.hidden.get(**k).copied().unwrap_or(false)).map(|k| &to_paint[*k]) {
                     let Instr::Window { slot, ask, alpha, .. } = i else { continue };
                     // Only where it is shown: with a copy of the scene per monitor,
                     // the copies where it is not would ask it for another size.
