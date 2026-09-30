@@ -418,6 +418,13 @@ pub fn run(
     // from the rest of the world while waiting (it is handled on the next round).
     let mut frame_requested: Option<u32> = None;
     let mut frame_ready = false;
+    // The other sheets' frames still on their way to the screen, and since
+    // when; the sheets that have ever answered (a platform that never does is
+    // never waited for); and those that skipped a round waiting, to paint as
+    // soon as theirs arrives. See where they are painted.
+    let mut in_flight: Vec<(u32, Instant)> = Vec::new();
+    let mut answers: Vec<u32> = Vec::new();
+    let mut owed: Vec<u32> = Vec::new();
     let mut missed_notices = 0u32;
     let mut held_back: Vec<ToRender> = Vec::new();
     let mut atlas_stale = false;
@@ -621,7 +628,15 @@ pub fn run(
                 let wait = until.saturating_duration_since(Instant::now());
                 let wait = if nest_lent.is_empty() { wait } else { wait.min(Duration::from_millis(2)) };
                 match rx.recv_timeout(wait) {
-                    Ok(ToRender::Frame(id)) => frame_ready |= frame_requested == Some(id),
+                    // A sheet that skipped a round for it paints now: it wakes the render.
+                    Ok(ToRender::Frame(id)) if owed.contains(&id) => incoming.push(ToRender::Frame(id)),
+                    Ok(ToRender::Frame(id)) => {
+                        frame_ready |= frame_requested == Some(id);
+                        in_flight.retain(|f| f.0 != id);
+                        if !answers.contains(&id) {
+                            answers.push(id);
+                        }
+                    }
                     Ok(m) => incoming.push(m),
                     Err(RecvTimeoutError::Timeout) if Instant::now() < until => {}
                     Err(RecvTimeoutError::Timeout) => break,
@@ -855,6 +870,10 @@ pub fn run(
                 ToRender::Frame(id) => {
                     if frame_requested == Some(id) {
                         frame_ready = true;
+                    }
+                    in_flight.retain(|f| f.0 != id);
+                    if !answers.contains(&id) {
+                        answers.push(id);
                     }
                 }
                 ToRender::SheetSize(id, new_size) => {
@@ -3183,7 +3202,10 @@ pub fn run(
                                 }
                                 // The frame notice is waited for right after: kept for the
                                 // next round, that wait would not see it and would run out.
-                                Ok(ToRender::Frame(k)) => frame_ready |= frame_requested == Some(k),
+                                Ok(ToRender::Frame(k)) => {
+                                    frame_ready |= frame_requested == Some(k);
+                                    in_flight.retain(|f| f.0 != k);
+                                }
                                 Ok(m) => held_back.push(m),
                                 Err(RecvTimeoutError::Timeout) => {}
                                 Err(RecvTimeoutError::Disconnected) => return,
@@ -3212,7 +3234,10 @@ pub fn run(
                             break;
                         }
                         match rx.recv_timeout(left) {
-                            Ok(ToRender::Frame(k)) => frame_ready |= k == id,
+                            Ok(ToRender::Frame(k)) => {
+                                frame_ready |= k == id;
+                                in_flight.retain(|f| f.0 != k);
+                            }
                             Ok(m) => held_back.push(m),
                             Err(RecvTimeoutError::Timeout) => {}
                             Err(RecvTimeoutError::Disconnected) => return,
@@ -3292,10 +3317,31 @@ pub fn run(
             }
             // The one that sets the pace asks the compositor to notify when it wants another.
             let asks = l.drives_pace && g.uses_mailbox() && !op.no_vsync && !op.naive;
+            // The others ask too, and while their last frame has not been
+            // shown they skip the round instead of painting: on a slower
+            // monitor, painting again waited until the compositor let go of a
+            // buffer, and that held the whole render to that monitor's pace —a
+            // scene on a 165 Hz monitor and a 60 Hz one went at 60 on both—.
+            // Not beyond a while: what is not shown is never answered.
+            let others = !l.drives_pace && g.uses_mailbox() && !op.no_vsync && !op.naive;
+            if others && l.open && in_flight.iter().any(|f| f.0 == l.id && f.1.elapsed() < Duration::from_millis(100)) {
+                if !owed.contains(&l.id) {
+                    owed.push(l.id);
+                }
+                // What changed meanwhile is not lost: it is painted whole when its turn comes.
+                l.painted = None;
+                up_to_date += 1;
+                continue;
+            }
+            owed.retain(|k| *k != l.id);
             // Painting only where something changed needs to know where: not with
             // particles, a shader that reads the time or an image that moves.
             let knows_where = !all_changed && !draw.timed && !draw.particles_alive && draw.particle_marks.is_empty() && draw.wake_at.is_none();
-            let was_painted = g.paint(l, &draw, &uniforms, asks, (knows_where && l.painted == Some(where_)).then_some(&changed[..]));
+            let was_painted = g.paint(l, &draw, &uniforms, asks || others, (knows_where && l.painted == Some(where_)).then_some(&changed[..]));
+            if was_painted && others && answers.contains(&l.id) {
+                in_flight.retain(|f| f.0 != l.id);
+                in_flight.push((l.id, Instant::now()));
+            }
             // With a lens, what was presented is captured to keep track of what is behind.
             // Not on every frame: for Hyprland each capture costs reading the screen
             // back from the card, and at 60 per second that was 14 points of a core.
