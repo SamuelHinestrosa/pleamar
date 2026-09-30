@@ -1539,7 +1539,7 @@ pub enum Effect {
     /// `workspace 3 on 1` on that one.
     Workspace(Expr, Option<Expr>),
     /// A window to another workspace: `send win(win.focus) to workspace 2`.
-    WindowToWorkspace(Expr, Expr),
+    WindowToWorkspace(Expr, Expr, Option<Expr>),
     /// `send workspace n [on s] to t`: a whole workspace to another monitor.
     WorkspaceTo(Expr, Option<Expr>, Expr),
     /// The answer to what the compositor asked the scene to choose (`win.picking`:
@@ -1575,7 +1575,7 @@ impl Effect {
             Effect::WindowTo(w, to) => Effect::WindowTo(w.with_payload(v), to.with_payload(v)),
             Effect::WindowSwap(a, b) => Effect::WindowSwap(a.with_payload(v), b.with_payload(v)),
             Effect::Workspace(w, on) => Effect::Workspace(w.with_payload(v), on.as_ref().map(|e| e.with_payload(v))),
-            Effect::WindowToWorkspace(w, to) => Effect::WindowToWorkspace(w.with_payload(v), to.with_payload(v)),
+            Effect::WindowToWorkspace(w, to, on) => Effect::WindowToWorkspace(w.with_payload(v), to.with_payload(v), on.as_ref().map(|e| e.with_payload(v))),
             Effect::WorkspaceTo(n, on, to) => Effect::WorkspaceTo(n.with_payload(v), on.as_ref().map(|e| e.with_payload(v)), to.with_payload(v)),
             Effect::Pick(Some((window, e))) => Effect::Pick(Some((*window, e.with_payload(v)))),
             other => other.clone(),
@@ -2013,6 +2013,13 @@ pub enum NestEvent {
     Opened { slot: usize, title: String, app: String, screen: usize },
     /// A window went to another monitor.
     Screen(usize, usize),
+    /// A window went to another monitor with its workspace: its own went
+    /// away (unplugged), or came back. The workspace goes whole with it,
+    /// not mixed into the one shown there.
+    Moved(usize, usize),
+    /// Someone asked for that window (a dock, Marea's finder, a link that opens
+    /// the browser already running): its monitor shows its workspace.
+    Reveal(usize),
     /// A window goes to that workspace: a rule of the compositor's said so
     /// when it opened (`window app=discord workspace 3`).
     Workspace(usize, usize),

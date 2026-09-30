@@ -5816,7 +5816,10 @@ impl<'a> Compiler<'a> {
                             let which = self.which_window(&mut c)?;
                             c.expect_word("to")?;
                             if c.word("workspace") {
-                                Effect::WindowToWorkspace(which, self.expr(&mut c)?)
+                                // `… to workspace 2 on 1`: that workspace of another monitor.
+                                let n = self.expr(&mut c)?;
+                                let on = if c.word("on") { Some(self.expr(&mut c)?) } else { None };
+                                Effect::WindowToWorkspace(which, n, on)
                             } else {
                                 Effect::WindowTo(which, self.expr(&mut c)?)
                             }

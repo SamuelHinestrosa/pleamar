@@ -1130,6 +1130,47 @@ pub fn run(
                             nest_fact(&scene, &mut facts, &to_logic, &format!("{name}.{slot}.screen"), screen as f32);
                             nest_places(&scene, &mut facts, &to_logic, &n, &nest_order, &nest_screens, &mut desks);
                         }
+                        NestEvent::Moved(slot, screen) => {
+                            if nest_screens.len() < n.max {
+                                nest_screens.resize(n.max, 0);
+                            }
+                            desks.grow(n.max);
+                            if slot < n.max {
+                                let from = nest_screens[slot].min(3);
+                                let to = screen.min(3);
+                                nest_screens[slot] = screen;
+                                let id = desks.pool[slot];
+                                if id != 0 && desks.index(to, id) == 0 {
+                                    desks.stack[to].push(id);
+                                }
+                                // Left behind with nothing in it, the one it showed there
+                                // is not shown any more: the one beside it is.
+                                if from != to && desks.shown[from] == id && !desks.holds(from, id, &nest_screens) {
+                                    desks.stack[from].retain(|p| *p != id);
+                                    desks.shown[from] = match desks.stack[from].first() {
+                                        Some(p) => *p,
+                                        None => {
+                                            let p = desks.next;
+                                            desks.next += 1;
+                                            p
+                                        }
+                                    };
+                                }
+                            }
+                            nest_fact(&scene, &mut facts, &to_logic, &format!("{name}.{slot}.screen"), screen as f32);
+                            nest_places(&scene, &mut facts, &to_logic, &n, &nest_order, &nest_screens, &mut desks);
+                        }
+                        NestEvent::Reveal(slot) => {
+                            desks.grow(n.max);
+                            if slot < n.max && desks.alive(slot) {
+                                let screen = nest_screens.get(slot).copied().unwrap_or(0).min(3);
+                                let id = desks.pool[slot];
+                                if id != 0 && desks.shown[screen] != id {
+                                    desks.shown[screen] = id;
+                                    nest_places(&scene, &mut facts, &to_logic, &n, &nest_order, &nest_screens, &mut desks);
+                                }
+                            }
+                        }
                         NestEvent::Order(order) => {
                             nest_order = order;
                             if nest_screens.len() < n.max {
@@ -1889,17 +1930,26 @@ pub fn run(
                             }
                         }
                     }
-                    Effect::WindowToWorkspace(which, to) => {
+                    Effect::WindowToWorkspace(which, to, on) => {
                         let c = Ctx { props: &props, facts: &facts };
                         let (slot, ws) = (which.eval(c).round(), to.eval(c).round().max(1.0) as usize);
+                        let on = on.as_ref().map(|e| e.eval(c).round().clamp(0.0, 3.0) as usize);
                         if let (Some(n), true) = (scene.nest.clone(), slot >= 0.0) {
                             let slot = slot as usize;
                             desks.grow(n.max);
                             if slot < n.max {
                                 let screen = nest_screens.get(slot).copied().unwrap_or(0);
-                                let id = desks.at(screen, ws, &nest_screens);
+                                let target = on.unwrap_or(screen);
+                                let id = desks.at(target, ws, &nest_screens);
                                 if desks.pool[slot] != id {
                                     desks.pool[slot] = id;
+                                    // To another monitor: it goes there, and there it stays in
+                                    // this pool (it is already in that monitor's stack).
+                                    if target != screen {
+                                        if let Some(send) = &nest {
+                                            send(ToNest::Send(slot, target));
+                                        }
+                                    }
                                     nest_places(&scene, &mut facts, &to_logic, &n, &nest_order, &nest_screens, &mut desks);
                                 }
                             }

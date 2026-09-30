@@ -1098,7 +1098,7 @@ that holds), which are the scene's.
 | `minimize win.$i` · `restore win.$i` | put away, and back: the program and whoever lists the windows are told |
 | `fullscreen win.$i` · `fullscreen win(win.focus)` | to fullscreen, or back from it: the program is told (it hides its own bars) and `win.$i.fullscreen` says so |
 | `workspace 3` · `workspace n on 1` | that workspace shown on the monitor the pointer is on, or on that one —no further than the empty one past the last that holds windows—. The keyboard goes to the window that last had it there; with none there, nobody has it |
-| `send win(win.focus) to workspace 2` | that window to that workspace (on its monitor; the same limit) |
+| `send win(win.focus) to workspace 2` · `… to workspace 2 on 1` | that window to that workspace, on its monitor or on that one (the same limit) |
 | `send workspace 2 on 0 to 1` · `send workspace n to 1` | the whole workspace, with its windows, to that monitor —from the one the pointer is on, without `on`—: it goes to the end of that one's stack and is shown there; the monitor it left shows the one beside it |
 | `pick win.$i` · `pick win(x)` · `pick screen 1` · `pick none` | the answer to `win.picking`: that window, that monitor, or nothing (the program's request is turned down). The compositor stops asking: `win.picking` goes back to 0 |
 

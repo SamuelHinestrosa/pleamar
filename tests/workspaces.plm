@@ -9,6 +9,7 @@ scene Workspaces {
     event send_to
     on go(v) { workspace v }
     on send_to(v) while win.focus >= 0 { send win(win.focus) to workspace v }
+    on key Alt+o while win.focus >= 0 { send win(win.focus) to workspace 2 on 1 }
     on key Alt+w { workspace 2 on 0 }
     on key Alt+m { send workspace win.shown.0 on 0 to 1 }
     on key Alt+n { send workspace 1 to 1 }
