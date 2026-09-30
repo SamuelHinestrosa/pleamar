@@ -996,6 +996,7 @@ pub fn run(
                                 .collect(),
                             windows: nest_windows.iter().filter(|w| !w.pieces.is_empty()).count(),
                             scene: format!("{} instructions, {} properties, {} rules, {} zones", scene.instrs.len(), scene.props.len(), scene.rules.len(), scene.zones.len()),
+                            rate: scene.surface().max_fps,
                         }),
                         None => "? it was not measuring: `probe start` first".into(),
                     };

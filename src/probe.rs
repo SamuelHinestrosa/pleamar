@@ -53,6 +53,8 @@ pub struct Context {
     pub monitors: Vec<String>,
     pub windows: usize,
     pub scene: String,
+    /// The scene's own `rate:` (0: none, the monitor's).
+    pub rate: u32,
 }
 
 impl Probe {
@@ -121,6 +123,8 @@ impl Probe {
 
         let verdict = if n < 30 {
             "barely animated while measuring: nothing to judge (move windows, open things, while it measures)".to_owned()
+        } else if steady && late_pct < 1.0 && c.rate > 0 && (at(0.5) - 1000.0 / c.rate as f32).abs() < 1.5 {
+            format!("smooth · {:.0} fps, the scene's own `rate: {}` (the screen gives {:.0} Hz)", 1000.0 / at(0.5).max(0.1), c.rate, 1000.0 / period)
         } else if steady && late_pct < 1.0 {
             format!("steady at {:.0} fps, below the screen's {:.0} Hz: something paces it slower (the scene's `rate:`, or the compositor's frame notices)", 1000.0 / at(0.5).max(0.1), 1000.0 / period)
         } else if late_pct < 1.0 && at(0.99) < pace(&self.frames[0]) * 1.6 {
