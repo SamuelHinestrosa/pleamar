@@ -1626,12 +1626,20 @@ impl Gpu {
     /// able to show on it. Without —a monitor driven by the platform itself—,
     /// the card is whatever there is.
     pub fn new(instance: &wgpu::Instance, first: Option<&wgpu::Surface<'static>>) -> Gpu {
+        Self::with_shaders(instance, first, &[])
+    }
+
+    /// The runtime already knows the first scene's shaders. Keep `new` for
+    /// embedding applications that start with the base pipeline.
+    pub fn with_shaders(instance: &wgpu::Instance, first: Option<&wgpu::Surface<'static>>, shaders: &[crate::shaders::UserShader]) -> Gpu {
+        let startup = std::time::Instant::now();
         let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
             compatible_surface: first,
             power_preference: wgpu::PowerPreference::LowPower,
             ..Default::default()
         }))
         .expect("there is no graphics adapter");
+        let adapter_ready = std::time::Instant::now();
         let (device, queue) =
             pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
                 // By default, wgpu reserves blocks of 128 MB on the card and 64 in
@@ -1646,6 +1654,7 @@ impl Gpu {
                 required_features: adapter.features() & (wgpu::Features::VULKAN_EXTERNAL_MEMORY_DMA_BUF | wgpu::Features::TEXTURE_FORMAT_NV12),
                 ..Default::default()
             })).expect("there is no device");
+        let device_ready = std::time::Instant::now();
         let (format, alpha, non_blocking) = match first {
             Some(first) => {
                 let caps = first.get_capabilities(&adapter);
@@ -1690,8 +1699,17 @@ impl Gpu {
         // scene that brings its own shaders gets a new pipeline with the same
         // layout, and every bind group already made keeps being valid for it.
         let pipeline_layout = Self::pipeline_layout(&device);
-        let base = crate::shaders::generate(&[]);
-        let [pipeline, particles, screen, multiply] = Self::build_pipeline(&device, &pipeline_layout, format, &base).expect("pleamar's own shader does not compile");
+        // The first scene is already known. Compiling the base pipelines and
+        // immediately replacing all four with the scene's pipelines doubles
+        // driver compilation work before the first visible frame.
+        let base = crate::shaders::generate(shaders);
+        let pipelines_start = std::time::Instant::now();
+        let [pipeline, particles, screen, multiply] = Self::build_pipeline(&device, &pipeline_layout, format, &base).unwrap_or_else(|error| {
+            if shaders.is_empty() { panic!("pleamar's own shader does not compile: {error}"); }
+            eprintln!("shader · the scene's own shaders could not be built, and they are not painted: {error}");
+            Self::build_pipeline(&device, &pipeline_layout, format, &crate::shaders::generate(&[])).expect("pleamar's own shader does not compile")
+        });
+        let pipelines_ready = std::time::Instant::now();
         // A single atlas for glyphs and images. 2048² in RGBA is 16 MB.
         let atlas = device.create_texture(&wgpu::TextureDescriptor {
             label: Some("atlas"),
@@ -1727,6 +1745,14 @@ impl Gpu {
         #[cfg(target_os = "linux")]
         if first.is_none() {
             g.render_modifiers = g.bgra_modifiers(ash::vk::FormatFeatureFlags::COLOR_ATTACHMENT);
+        }
+        if timing_enabled() {
+            println!("timing · GPU startup ms: adapter {:.1} · device {:.1} · resources {:.1} · shape pipelines {:.1} · remaining {:.1}",
+                (adapter_ready - startup).as_secs_f64() * 1000.0,
+                (device_ready - adapter_ready).as_secs_f64() * 1000.0,
+                (pipelines_start - device_ready).as_secs_f64() * 1000.0,
+                (pipelines_ready - pipelines_start).as_secs_f64() * 1000.0,
+                pipelines_ready.elapsed().as_secs_f64() * 1000.0);
         }
         g
     }
@@ -1793,9 +1819,12 @@ impl Gpu {
     fn build_pipeline(d: &wgpu::Device, layout: &wgpu::PipelineLayout, format: wgpu::TextureFormat, extra: &str) -> Result<[wgpu::RenderPipeline; 4], String> {
         let scope = d.push_error_scope(wgpu::ErrorFilter::Validation);
         let source = format!("{}{extra}", include_str!("shape.wgsl"));
+        let module_start = std::time::Instant::now();
         let module = d.create_shader_module(wgpu::ShaderModuleDescriptor { label: Some("shape"), source: wgpu::ShaderSource::Wgsl(source.into()) });
+        if timing_enabled() { println!("timing · shape module {:.1} ms", module_start.elapsed().as_secs_f64() * 1000.0); }
         let make = |label, vs, fs, blend: wgpu::BlendState| {
-            d.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            let start = std::time::Instant::now();
+            let pipeline = d.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
                 label: Some(label),
                 layout: Some(layout),
                 vertex: wgpu::VertexState { module: &module, entry_point: Some(vs), compilation_options: Default::default(), buffers: &[] },
@@ -1810,7 +1839,9 @@ impl Gpu {
                 }),
                 multiview_mask: None,
                 cache: None,
-            })
+            });
+            if timing_enabled() { println!("timing · {label} pipeline {:.1} ms", start.elapsed().as_secs_f64() * 1000.0); }
+            pipeline
         };
         let over = wgpu::BlendState::PREMULTIPLIED_ALPHA_BLENDING;
         let pipelines = [
@@ -2712,6 +2743,10 @@ impl Sheet {
     /// own, lets the click through to what is underneath.
     pub fn update_input_region(&self, rects: &[[i32; 4]]) {
         self.window.update_input_region(rects);
+    }
+
+    pub fn has_frame_callbacks(&self) -> bool {
+        self.window.has_frame_callbacks()
     }
 
     pub fn cursor(&self, c: Cursor) {

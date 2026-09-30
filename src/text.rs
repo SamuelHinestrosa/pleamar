@@ -284,7 +284,7 @@ impl Typesetter {
     /// With `into`, a new version of one already loaded, painted over it.
     fn load_live(&mut self, name: &str, size: (u32, u32), into: Option<AtlasSlot>) -> Option<AtlasSlot> {
         let px = self.live_px(size);
-        let path = if name.starts_with('/') { Some(std::path::PathBuf::from(name)) } else { crate::platform::icon(name) };
+        let path = if std::path::Path::new(name).is_absolute() { Some(std::path::PathBuf::from(name)) } else { crate::platform::icon(name) };
         let rgba = rasterize_image(&path?, px)?;
         let slot = match into {
             Some(s) if (s.width, s.height) == px => s,
