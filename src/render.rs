@@ -984,6 +984,22 @@ pub fn run(
                             if slot < n.max {
                                 desks.of[slot] = ws.max(1);
                                 nest_places(&scene, &mut facts, &to_logic, &n, &nest_order, &nest_screens, &desks);
+                                // Sent where it is not seen (a rule: `workspace 3`) with the
+                                // keyboard: the keyboard stays where it is seen —the one that
+                                // last had it on that workspace, or the first there—.
+                                let screen = nest_screens.get(slot).copied().unwrap_or(0).min(3);
+                                let focused = facts.iter().zip(&scene.facts).find(|(_, h)| h.0 == format!("{}.focus", n.name)).map_or(-1.0, |(v, _)| *v);
+                                if focused == slot as f32 && desks.of[slot] != desks.shown[screen] {
+                                    if let Some(send) = &nest {
+                                        let shown = desks.shown[screen];
+                                        let here = desks.last.get(&(screen, shown)).copied().filter(|k| *k != slot && nest_order.contains(k) && desks.of(*k) == shown && nest_screens.get(*k) == Some(&screen));
+                                        let first = || nest_order.iter().copied().find(|k| *k != slot && desks.of(*k) == shown && nest_screens.get(*k) == Some(&screen));
+                                        send(match here.or_else(first) {
+                                            Some(k) => ToNest::Focus(k),
+                                            None => ToNest::Blur,
+                                        });
+                                    }
+                                }
                             }
                         }
                         NestEvent::Focused(which) => {
