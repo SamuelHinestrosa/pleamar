@@ -1062,13 +1062,15 @@ reloads on save while the programs in it keep running.
 | `win.$i.minimized` | it is put away: its minimize button, the scene (`minimize`), or whoever lists the windows (a dock, Marea). It is left out of the layout's order, as a dialog is; `restore` brings it back |
 | `win.$i.dialog` | it is a dialog: it belongs to another window, or has a size of its own it cannot leave (a message, a file chooser). It is left out of the layout's order (`place` −1, not counted in `win.on`): float it over the rest, at its own size (`ask: 0, 0`) |
 | `win.$i.fullscreen` | it is fullscreen: it asked (a video, a game, F11) or the scene did. Where it goes is still the scene's: draw it over the whole monitor, and ask it for that size |
-| `win.$i.workspace` | the workspace it is on (they start at 1): the one its monitor showed when it opened, or the one it was sent to |
+| `win.$i.workspace` | the workspace it is on, by its turn in its monitor's stack (from 1): the one its monitor showed when it opened, or the one it was sent to. It changes when one above it dries up |
+| `win.$i.pool` | the same workspace by its identity, which never changes: compare this one to tell whether two windows share a workspace, or whether it is the one shown (`win.pool.$s`) |
 | `win.$i.among` | how many windows share its monitor **and** its workspace: what its layout is shared out among. `place` is its turn among them |
 | `win.$i.rank` | its turn among all the windows shown, −1 if it is not (another workspace, put away, a dialog) |
 | **for all of them** | |
 | `win.count` · `win.focus` | how many are shown (on the workspaces their monitors show), and which slot has the keyboard (−1, none) |
 | `win.on.$s` | how many are shown on monitor `s` (0 to 3) |
-| `win.shown.$s` | the workspace monitor `s` shows |
+| `win.shown.$s` · `win.pool.$s` | the workspace monitor `s` shows: its turn, and its identity |
+| `win.pools.$s` · `win.used.$s` | how many workspaces monitor `s` has (the one shown among them, even empty), and how many hold windows |
 | `win.reserved.$s.top` · `.right` · `.bottom` · `.left` | what other programs' bars keep on monitor `s` at that edge, in pixels (layer-shell's exclusive zones): lay the windows out around it |
 | `win.order.$p` | which slot is at each place among the ones shown: `win.order.0` leads |
 | `win.socket` | where programs connect |
@@ -1095,15 +1097,21 @@ that holds), which are the scene's.
 | `swap win.$i with win.$j` · `swap win(a) with win(b)` | they change places: their turn in the layout, and their monitors |
 | `minimize win.$i` · `restore win.$i` | put away, and back: the program and whoever lists the windows are told |
 | `fullscreen win.$i` · `fullscreen win(win.focus)` | to fullscreen, or back from it: the program is told (it hides its own bars) and `win.$i.fullscreen` says so |
-| `workspace 3` · `workspace n on 1` | that workspace shown on the monitor the pointer is on, or on that one. The keyboard goes to the window that last had it there; with none there, nobody has it |
-| `send win(win.focus) to workspace 2` | that window to that workspace (on its monitor) |
+| `workspace 3` · `workspace n on 1` | that workspace shown on the monitor the pointer is on, or on that one —no further than the empty one past the last that holds windows—. The keyboard goes to the window that last had it there; with none there, nobody has it |
+| `send win(win.focus) to workspace 2` | that window to that workspace (on its monitor; the same limit) |
+| `send workspace 2 on 0 to 1` · `send workspace n to 1` | the whole workspace, with its windows, to that monitor —from the one the pointer is on, without `on`—: it goes to the end of that one's stack and is shown there; the monitor it left shows the one beside it |
 | `pick win.$i` · `pick win(x)` · `pick screen 1` · `pick none` | the answer to `win.picking`: that window, that monitor, or nothing (the program's request is turned down). The compositor stops asking: `win.picking` goes back to 0 |
 
-**Workspaces** are a number on each window and one on each monitor: what
-is on another workspace is still laid out —`place` and `among` count per
-monitor and workspace—, so a scene can slide one workspace out and the next
-in, drawing each window offset by how far its workspace is from the one
-shown (pleamar-wm's `session.plm` does, with a spring). With a copy of the scene per monitor (`screens: each`), a window opens on the
+**Workspaces** are a stack per monitor, each monitor its own, as tide
+pools along a shore: there are as many as hold windows, plus the one shown
+even when it is empty; one left empty dries up when the monitor shows another,
+and the ones below it move up (their `workspace` changes, their `pool` does
+not). Past the last one with windows there is always one more to go to.
+What is on another workspace is still laid out —`place` and `among` count per
+monitor and workspace—, so a scene can draw one leaving and the next arriving
+(pleamar-wm's `session.plm` draws a wave crossing the monitor, and changes
+the windows it shows when the water covers them: by `pool`, so nothing moves
+when the numbers do). With a copy of the scene per monitor (`screens: each`), a window opens on the
 monitor the pointer is on, and each copy draws the ones whose `screen` is its
 own (`show: win.$i.screen == screen.index`); a window is only asked for a size
 by the copy that shows it.

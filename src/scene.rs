@@ -1540,6 +1540,8 @@ pub enum Effect {
     Workspace(Expr, Option<Expr>),
     /// A window to another workspace: `send win(win.focus) to workspace 2`.
     WindowToWorkspace(Expr, Expr),
+    /// `send workspace n [on s] to t`: a whole workspace to another monitor.
+    WorkspaceTo(Expr, Option<Expr>, Expr),
     /// The answer to what the compositor asked the scene to choose (`win.picking`:
     /// what to share of the screen): a window (`pick win(x)`, true), a monitor
     /// (`pick screen 1`, false), or nothing (`pick none`).
@@ -1574,6 +1576,7 @@ impl Effect {
             Effect::WindowSwap(a, b) => Effect::WindowSwap(a.with_payload(v), b.with_payload(v)),
             Effect::Workspace(w, on) => Effect::Workspace(w.with_payload(v), on.as_ref().map(|e| e.with_payload(v))),
             Effect::WindowToWorkspace(w, to) => Effect::WindowToWorkspace(w.with_payload(v), to.with_payload(v)),
+            Effect::WorkspaceTo(n, on, to) => Effect::WorkspaceTo(n.with_payload(v), on.as_ref().map(|e| e.with_payload(v)), to.with_payload(v)),
             Effect::Pick(Some((window, e))) => Effect::Pick(Some((*window, e.with_payload(v)))),
             other => other.clone(),
         }

@@ -5312,6 +5312,9 @@ impl<'a> Compiler<'a> {
             // its monitor and workspace (what its layout is shared out
             // among), and its turn among the windows shown.
             fact(self, format!("{name}.{k}.workspace"), 1.0, false);
+            // And the pool itself, by an identity that does not change when
+            // the ones before it dry up and it moves up the stack.
+            fact(self, format!("{name}.{k}.pool"), 0.0, false);
             fact(self, format!("{name}.{k}.among"), 0.0, false);
             fact(self, format!("{name}.{k}.rank"), -1.0, false);
             for field in ["title", "app"] {
@@ -5332,8 +5335,13 @@ impl<'a> Compiler<'a> {
             for edge in ["top", "right", "bottom", "left"] {
                 fact(self, format!("{name}.reserved.{s}.{edge}"), 0.0, false);
             }
-            // The workspace each monitor shows.
+            // The workspace each monitor shows, by its turn and by its identity;
+            // how many it has (the one shown, even empty, among them) and how
+            // many hold windows.
             fact(self, format!("{name}.shown.{s}"), 1.0, false);
+            fact(self, format!("{name}.pool.{s}"), (s + 1) as f32, false);
+            fact(self, format!("{name}.pools.{s}"), 1.0, false);
+            fact(self, format!("{name}.used.{s}"), 0.0, false);
         }
         fact(self, format!("{name}.focus"), -1.0, false);
         // What the compositor asks the scene to choose: 1 a monitor, 2 a window, 3 either.
@@ -5792,6 +5800,19 @@ impl<'a> Compiler<'a> {
                         // `send win(win.focus) to 1`: to that monitor's copy of the scene;
                         // `send win(win.focus) to workspace 2`: to that workspace.
                         "send" => {
+                            // `send workspace 2 on 0 to 1`: that monitor's whole
+                            // workspace, with its windows, to the other monitor.
+                            if c.word("workspace") {
+                                if self.e.nest.is_none() {
+                                    return c.error("`send workspace` moves one of the scene's windows' workspaces: declare them first, `windows win max 16`");
+                                }
+                                let n = self.expr(&mut c)?;
+                                let on = if c.word("on") { Some(self.expr(&mut c)?) } else { None };
+                                c.expect_word("to")?;
+                                effects.push(Effect::WorkspaceTo(n, on, self.expr(&mut c)?));
+                                c.expect_end()?;
+                                continue;
+                            }
                             let which = self.which_window(&mut c)?;
                             c.expect_word("to")?;
                             if c.word("workspace") {
