@@ -49,7 +49,55 @@ pub enum SysValue {
 ///
 /// And two that can only be asked, with `sys.ask`: `env` (an environment variable) and
 /// `clipboard` (whatever has been copied); `clipboard.set` writes to it.
-pub fn service(from: &str, name: &str, notify: Box<dyn Fn(SysValue) + Send>) -> bool {
+/// Who is told what a service says, and the last thing it said.
+struct Hub {
+    listener: Box<dyn Fn(SysValue) + Send>,
+    last: Option<SysValue>,
+}
+
+/// The services already running, by who asked and which: one thread each,
+/// for as long as the process lives. A logic that is read again (its file
+/// saved while it runs) asks for the same ones again; it is handed the
+/// running one, and told at once what it last said. Started anew each time,
+/// every reload left the old logic's threads behind, still watching for
+/// nobody (the notifications and the tray were the first to show it).
+/// `tag` says which of its subscriptions it is (the scene's `service audio as
+/// sound` and the logic's `sys.watch("audio")` are two, each told apart).
+static HUBS: std::sync::Mutex<Vec<((String, String, String), std::sync::Arc<std::sync::Mutex<Hub>>)>> = std::sync::Mutex::new(Vec::new());
+
+pub fn service(from: &str, name: &str, tag: &str, notify: Box<dyn Fn(SysValue) + Send>) -> bool {
+    // (Read once and done, in a thread that ends: nothing is left behind.)
+    if name == "apps" {
+        return start_service(from, name, notify);
+    }
+    let key = (from.to_owned(), name.to_owned(), tag.to_owned());
+    let mut hubs = HUBS.lock().unwrap();
+    if let Some((_, hub)) = hubs.iter().find(|(k, _)| *k == key) {
+        let mut h = hub.lock().unwrap();
+        if let Some(v) = h.last.clone() {
+            notify(v);
+        }
+        h.listener = notify;
+        return true;
+    }
+    let hub = std::sync::Arc::new(std::sync::Mutex::new(Hub { listener: notify, last: None }));
+    let relay = hub.clone();
+    let started = start_service(
+        from,
+        name,
+        Box::new(move |v| {
+            let mut h = relay.lock().unwrap();
+            h.last = Some(v.clone());
+            (h.listener)(v);
+        }),
+    );
+    if started {
+        hubs.push((key, hub));
+    }
+    started
+}
+
+fn start_service(from: &str, name: &str, notify: Box<dyn Fn(SysValue) + Send>) -> bool {
     // The time, without calling anyone.
     if name == "clock" || name == "clock.seconds" {
         return clock::service(name, notify);

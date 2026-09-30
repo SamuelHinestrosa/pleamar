@@ -393,6 +393,7 @@ impl LuauScript {
         for (_, (_, child)) in c.running.drain() {
             if let Some(mut h) = child.lock().unwrap().take() {
                 let _ = h.kill();
+                let _ = h.wait();
             }
         }
     }
@@ -447,7 +448,7 @@ impl LuauScript {
             }
             self.c.lock().unwrap().subscribed.insert(s.alias.clone());
             let (to_logic, alias) = (Mutex::new(self.to_logic.clone()), s.alias.clone());
-            if !crate::platform::service(&who, &s.name, Box::new(move |v| {
+            if !crate::platform::service(&who, &s.name, &format!("service:{}", s.alias), Box::new(move |v| {
                 let _ = to_logic.lock().unwrap().send(Event::Data(format!("service:{alias}"), v));
             })) {
                 eprintln!("logic  · the '{}' service is not available here: '{}' stays as the scene left it", s.name, s.alias);
@@ -850,7 +851,10 @@ impl LuauScript {
                     c.processes.remove(&id);
                     if let Some((_, child)) = c.running.remove(&id) {
                         if let Some(mut h) = child.lock().unwrap().take() {
+                            // Reaped here: its reader thread finds nothing
+                            // left to wait for, and unwaited it stayed a zombie.
                             let _ = h.kill();
+                            let _ = h.wait();
                         }
                     }
                 }
@@ -874,7 +878,7 @@ impl LuauScript {
                 return Ok(true);
             }
             let (to_logic, n) = (Mutex::new(to_logic.clone()), name.clone());
-            Ok(crate::platform::service(&mine, &name, Box::new(move |v| {
+            Ok(crate::platform::service(&mine, &name, "watch", Box::new(move |v| {
                 let _ = to_logic.lock().unwrap().send(Event::Data(n.clone(), v));
             })))
         })?)?;
