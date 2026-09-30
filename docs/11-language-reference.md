@@ -1074,14 +1074,15 @@ reloads on save while the programs in it keep running.
 | `win.$i.icon` | the icon of its program, from its `.desktop` (a generic one if nothing installed says it): `image i = from win.$i.icon, 64, 64` |
 | `win.docks.$s` · `win.dock.$s.$k.icon` | monitor `s`'s dock: how many items it has (the programs the compositor has pinned, then the others with windows on the workspace it shows, as they opened), and each one's icon |
 | `win.dock.$s.$k.windows` · `.focused` · `.pinned` · `.away` | that item's windows there, whether one of them has the keyboard, whether it is pinned, and how many of them are put away |
-| `win.$i.dockat` · `win.$i.minat` · `win.mins.$s` | its item in its monitor's dock, and its turn among the ones put away there (−1: none); how many are put away on monitor `s` |
+| `win.$i.dockat` · `win.$i.dockturn` · `win.$i.minat` · `win.mins.$s` | its item in its monitor's dock, its turn among that item's windows, and its turn among the ones put away there (−1: none); how many are put away on monitor `s` |
+| `win.dock.$s.$k.name` · `win.dock.$s.$k.badge` | the item's program's name, and how much is unread for it: whoever keeps the notifications says it in `win.badges` (`pleamar-wm --say wm "text win.badges discord:3 telegram:1"`), by any of the names the program goes by |
 | `win.reserved.$s.top` · `.right` · `.bottom` · `.left` | what other programs' bars keep on monitor `s` at that edge, in pixels (layer-shell's exclusive zones): lay the windows out around it |
 | `win.order.$p` | which slot is at each place among the ones shown: `win.order.0` leads |
 | `win.socket` | where programs connect |
 | `win.picking` | what the compositor asks the scene to choose, 0 while it asks nothing: 1 a monitor, 2 a window, 3 either (a program wants to share the screen). The scene draws its chooser and answers with `pick` |
 
 `window win.$i { at: x, y; size: w, h }` draws that slot's window in that box.
-`ask: w, h` is the size it is told to have, by default `size` (`ask: 0, 0`: the one it chooses): let the box
+`ask: w, h` is the size it is told to have, by default `size` (`ask: 0, 0`: the one it chooses; `ask: -1, -1`: none, a picture of it drawn somewhere else —a preview— that must not ask it for another size than the copy that lays it out): let the box
 travel on its springs and `ask` be where it is going, and the program is only
 asked once, not every frame. While box and `ask` differ, the window is scaled
 by as much as its box is; a program that cannot be that small comes out cut at
@@ -1104,6 +1105,7 @@ that holds), which are the scene's.
 | `workspace 3` · `workspace n on 1` | that workspace shown on the monitor the pointer is on, or on that one —no further than the empty one past the last that holds windows—. The keyboard goes to the window that last had it there; with none there, nobody has it |
 | `send win(win.focus) to workspace 2` · `… to workspace 2 on 1` | that window to that workspace, on its monitor or on that one (the same limit) |
 | `dock 2 on 0` · `dock k` | that item of monitor `s`'s dock (the one the pointer is on, without `on`): its window —the next one, if one of them has the keyboard; brought back, if put away— or, with none there, its program started |
+| `dock k on s with drop` · `… pin` · `… unpin` · `… close` | the files just dropped on it (`on drop zone`) opened with its program; the program pinned to the dock, or unpinned (the compositor keeps it: pleamar-wm writes its `dock` line); its windows there asked to close |
 | `send workspace 2 on 0 to 1` · `send workspace n to 1` | the whole workspace, with its windows, to that monitor —from the one the pointer is on, without `on`—: it goes to the end of that one's stack and is shown there; the monitor it left shows the one beside it |
 | `pick win.$i` · `pick win(x)` · `pick screen 1` · `pick none` | the answer to `win.picking`: that window, that monitor, or nothing (the program's request is turned down). The compositor stops asking: `win.picking` goes back to 0 |
 

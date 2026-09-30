@@ -1533,7 +1533,7 @@ pub enum Effect {
     /// `dock k on s`: that item of monitor `s`'s dock: its window (the next
     /// one, if one of them has the keyboard; brought back, if put away), or
     /// the program started.
-    Dock(Expr, Option<Expr>),
+    Dock(Expr, Option<Expr>, DockAction),
     /// A window to another monitor: `send win(win.focus) to 1`.
     WindowTo(Expr, Expr),
     /// Two windows change places, in the order and on their monitors:
@@ -1580,7 +1580,7 @@ impl Effect {
             Effect::WindowSwap(a, b) => Effect::WindowSwap(a.with_payload(v), b.with_payload(v)),
             Effect::Workspace(w, on) => Effect::Workspace(w.with_payload(v), on.as_ref().map(|e| e.with_payload(v))),
             Effect::WindowToWorkspace(w, to, on) => Effect::WindowToWorkspace(w.with_payload(v), to.with_payload(v), on.as_ref().map(|e| e.with_payload(v))),
-            Effect::Dock(k, on) => Effect::Dock(k.with_payload(v), on.as_ref().map(|e| e.with_payload(v))),
+            Effect::Dock(k, on, a) => Effect::Dock(k.with_payload(v), on.as_ref().map(|e| e.with_payload(v)), *a),
             Effect::WorkspaceTo(n, on, to) => Effect::WorkspaceTo(n.with_payload(v), on.as_ref().map(|e| e.with_payload(v)), to.with_payload(v)),
             Effect::Pick(Some((window, e))) => Effect::Pick(Some((*window, e.with_payload(v)))),
             other => other.clone(),
@@ -2017,6 +2017,20 @@ pub struct DockPin {
     pub keys: Vec<String>,
     pub icon: String,
     pub exec: String,
+    pub name: String,
+}
+
+/// What `dock k` does to that item.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum DockAction {
+    /// Its window (the next one, if one has the keyboard), or its program started.
+    Go,
+    /// What was just dropped on it, opened with it.
+    OpenDrop,
+    Pin,
+    Unpin,
+    /// Its windows there, asked to close.
+    Close,
 }
 
 /// How many items a monitor's dock has at most.
@@ -2045,8 +2059,9 @@ pub enum NestEvent {
     Reserved(usize, [f32; 4]),
     Title(usize, String),
     App(usize, String),
-    /// The icon of the program a window belongs to (from its `.desktop`).
-    Icon(usize, String),
+    /// The program a window belongs to, as its `.desktop` says: its icon,
+    /// its name, and how it starts (to open a file dropped on its dock item).
+    Program { slot: usize, icon: String, name: String, exec: String },
     /// The programs pinned to the shore (pleamar-wm's dock), in order.
     Dock(Vec<DockPin>),
     /// A window is fullscreen now, or no longer: it asked, or the scene did.
@@ -2148,6 +2163,8 @@ pub struct DmabufPlane {
 #[derive(Debug)]
 pub enum ToNest {
     Size(i32, i32),
+    /// A program pinned to the dock (true) or unpinned: by its name.
+    Pin(String, bool),
     Pointer { slot: usize, x: f64, y: f64 },
     PointerOut,
     /// evdev codes: 0x110 left, 0x111 right, 0x112 middle.

@@ -5321,6 +5321,7 @@ impl<'a> Compiler<'a> {
             // away there (−1: none).
             fact(self, format!("{name}.{k}.dockat"), -1.0, false);
             fact(self, format!("{name}.{k}.minat"), -1.0, false);
+            fact(self, format!("{name}.{k}.dockturn"), -1.0, false);
             for field in ["title", "app", "icon"] {
                 let full = format!("{name}.{k}.{field}");
                 let id = self.e.live_text(interned(&full), "");
@@ -5355,12 +5356,20 @@ impl<'a> Compiler<'a> {
                 let full = format!("{name}.dock.{s}.{k}.icon");
                 let id = self.e.live_text(interned(&full), "");
                 self.texts.insert(full, id);
-                for field in ["windows", "focused", "pinned", "away"] {
+                let full = format!("{name}.dock.{s}.{k}.name");
+                let id = self.e.live_text(interned(&full), "");
+                self.texts.insert(full, id);
+                for field in ["windows", "focused", "pinned", "away", "badge"] {
                     fact(self, format!("{name}.dock.{s}.{k}.{field}"), 0.0, false);
                 }
             }
         }
         fact(self, format!("{name}.focus"), -1.0, false);
+        // What is unread, by program, as whoever keeps the notifications says
+        // (`discord:3 org.telegram.desktop:1`): the dock shows it on each item.
+        let full = format!("{name}.badges");
+        let id = self.e.live_text(interned(&full), "");
+        self.texts.insert(full, id);
         // What the compositor asks the scene to choose: 1 a monitor, 2 a window, 3 either.
         fact(self, format!("{name}.picking"), 0.0, false);
         let full = format!("{name}.socket");
@@ -5408,7 +5417,14 @@ impl<'a> Compiler<'a> {
             Some(c) => alpha * self.expr(c)?.clamp(0.0, 1.0),
             None => alpha,
         };
-        // Its zone: where it is drawn, and only while it can be seen.
+        // Its zone: where it is drawn, and only while it can be seen. Not for a
+        // picture of it (`ask: -1, -1`, a preview): the mouse over the picture
+        // is not over the window.
+        let picture = matches!((&ask.0, &ask.1), (Expr::K(a), Expr::K(b)) if *a < 0.0 && *b < 0.0);
+        if picture {
+            self.e.paint(Instr::Window { slot, target: (x, y, w, h), alpha, ask });
+            return Ok(());
+        }
         let zone = self.declare_zone(&local);
         self.candidates.push(Candidate {
             name: zone,
@@ -5877,7 +5893,20 @@ impl<'a> Compiler<'a> {
                             }
                             let k = self.expr(&mut c)?;
                             let on = if c.word("on") { Some(self.expr(&mut c)?) } else { None };
-                            Effect::Dock(k, on)
+                            // `… with drop`, `… pin`, `… unpin`, `… close`.
+                            let what = if c.word("with") {
+                                c.expect_word("drop")?;
+                                DockAction::OpenDrop
+                            } else if c.word("pin") {
+                                DockAction::Pin
+                            } else if c.word("unpin") {
+                                DockAction::Unpin
+                            } else if c.word("close") {
+                                DockAction::Close
+                            } else {
+                                DockAction::Go
+                            };
+                            Effect::Dock(k, on, what)
                         }
                         "launch" => {
                             if self.e.nest.is_none() {

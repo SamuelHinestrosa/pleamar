@@ -1163,11 +1163,18 @@ impl DrawList {
                     // small —a minimum of its own— comes out cut, not squashed.
                     let b = [target.0.eval(c), target.1.eval(c), target.2.eval(c).max(1.0), target.3.eval(c).max(1.0)];
                     // Asked for nothing (`ask: 0, 0`, the size it chooses): as it is.
-                    let fit = |box_: f32, asked: f32| if asked < 0.5 { 1.0 } else { box_ / asked };
-                    let (sx, sy) = (fit(b[2], ask.0.eval(c)), fit(b[3], ask.1.eval(c)));
+                    // A picture of it (`ask: -1, -1`): the whole of it, into its box.
                     let g = tex.geometry;
+                    let (ax, ay) = (ask.0.eval(c), ask.1.eval(c));
+                    let picture = ax < 0.0 && ay < 0.0;
+                    let fit = |box_: f32, asked: f32, real: f32| if asked < 0.0 { box_ / real.max(1.0) } else if asked < 0.5 { 1.0 } else { box_ / asked };
+                    let (sx, sy) = (fit(b[2], ax, g[2]), fit(b[3], ay, g[3]));
                     let d = [b[0], b[1], (g[2] * sx).max(1.0), (g[3] * sy).max(1.0)];
-                    self.windows_drawn.push((*slot, d, affine));
+                    // (A picture is not where the mouse reaches the window: the copy
+                    // that lays it out is.)
+                    if !picture {
+                        self.windows_drawn.push((*slot, d, affine));
+                    }
                     // Each piece in its place, and only what falls inside the box is painted.
                     for (layer, uv, r, opaque) in &tex.pieces {
                         let p = [b[0] + (r[0] - g[0]) * sx, b[1] + (r[1] - g[1]) * sy, r[2] * sx, r[3] * sy];

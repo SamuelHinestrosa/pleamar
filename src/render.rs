@@ -79,6 +79,9 @@ struct Desks {
     /// put away, and when it opened (the dock's order).
     apps: Vec<String>,
     icons: Vec<String>,
+    names: Vec<String>,
+    execs: Vec<String>,
+    dialog: Vec<bool>,
     minimized: Vec<bool>,
     born: Vec<u64>,
     stamp: u64,
@@ -95,11 +98,12 @@ struct DockItem {
     pin: Option<usize>,
     icon: String,
     exec: String,
+    name: String,
 }
 
 impl Default for Desks {
     fn default() -> Self {
-        Desks { pool: Vec::new(), alive: Vec::new(), stack: [vec![1], vec![2], vec![3], vec![4]], shown: [1, 2, 3, 4], last: Default::default(), next: 5, apps: Vec::new(), icons: Vec::new(), minimized: Vec::new(), born: Vec::new(), stamp: 0, focus: None, pins: Vec::new(), items: Default::default() }
+        Desks { pool: Vec::new(), alive: Vec::new(), stack: [vec![1], vec![2], vec![3], vec![4]], shown: [1, 2, 3, 4], last: Default::default(), next: 5, apps: Vec::new(), icons: Vec::new(), names: Vec::new(), execs: Vec::new(), dialog: Vec::new(), minimized: Vec::new(), born: Vec::new(), stamp: 0, focus: None, pins: Vec::new(), items: Default::default() }
     }
 }
 
@@ -110,6 +114,9 @@ impl Desks {
             self.alive.resize(max, false);
             self.apps.resize(max, String::new());
             self.icons.resize(max, String::new());
+            self.names.resize(max, String::new());
+            self.execs.resize(max, String::new());
+            self.dialog.resize(max, false);
             self.minimized.resize(max, false);
             self.born.resize(max, 0);
         }
@@ -126,21 +133,35 @@ impl Desks {
 
     /// The windows on the workspace a monitor shows, as they opened.
     fn here(&self, screen: usize, screens: &[usize]) -> Vec<usize> {
-        let mut v: Vec<usize> = (0..self.pool.len()).filter(|k| self.alive(*k) && screens.get(*k).copied().unwrap_or(0).min(3) == screen && self.pool[*k] == self.shown[screen]).collect();
+        // (Not a dialog: a file chooser is its program's, and the portal's is nobody's to pin.)
+        let mut v: Vec<usize> = (0..self.pool.len()).filter(|k| self.alive(*k) && !self.dialog[*k] && screens.get(*k).copied().unwrap_or(0).min(3) == screen && self.pool[*k] == self.shown[screen]).collect();
         v.sort_by_key(|k| self.born[*k]);
         v
+    }
+
+    /// How much is unread for an item: said by its program's name (any of the
+    /// names its windows go by, or its own, or its first word: «Telegram Desktop»).
+    fn badge(&self, item: &DockItem, badges: &[(String, f32)]) -> f32 {
+        let first = |t: &str| t.split(|c: char| !c.is_alphanumeric()).next().unwrap_or("").to_owned();
+        let name = item.name.to_lowercase();
+        let keys: Vec<&String> = match item.pin {
+            Some(p) => self.pins.get(p).map(|pin| pin.keys.iter().collect()).unwrap_or_default(),
+            None => vec![&item.key],
+        };
+        badges.iter().filter(|(a, _)| keys.iter().any(|k| *k == a) || *a == name || (!first(a).is_empty() && first(a) == first(&name))).map(|(_, n)| *n).sum()
     }
 
     /// A monitor's dock: the programs pinned, then the others with windows
     /// on the workspace it shows, in the order they opened.
     fn work_dock(&mut self, screen: usize, screens: &[usize]) {
-        let mut items: Vec<DockItem> = self.pins.iter().enumerate().map(|(k, p)| DockItem { key: p.keys.first().cloned().unwrap_or_default(), pin: Some(k), icon: p.icon.clone(), exec: p.exec.clone() }).collect();
+        let mut items: Vec<DockItem> = self.pins.iter().enumerate().map(|(k, p)| DockItem { key: p.keys.first().cloned().unwrap_or_default(), pin: Some(k), icon: p.icon.clone(), exec: p.exec.clone(), name: p.name.clone() }).collect();
         for slot in self.here(screen, screens) {
             if self.apps[slot].is_empty() || items.iter().any(|i| self.of_item(slot, i)) {
                 continue;
             }
             let icon = if self.icons[slot].is_empty() { self.apps[slot].clone() } else { self.icons[slot].clone() };
-            items.push(DockItem { key: self.apps[slot].clone(), pin: None, icon, exec: String::new() });
+            let name = if self.names[slot].is_empty() { self.apps[slot].clone() } else { self.names[slot].clone() };
+            items.push(DockItem { key: self.apps[slot].clone(), pin: None, icon, exec: self.execs[slot].clone(), name });
         }
         items.truncate(crate::scene::DOCK_ITEMS);
         self.items[screen] = items;
@@ -239,7 +260,10 @@ fn nest_places(scene: &Scene, facts: &mut [f32], texts: &mut [String], to_logic:
         nest_fact(scene, facts, to_logic, &format!("{name}.used.{s}"), desks.used(s, screens) as f32);
     }
     nest_fact(scene, facts, to_logic, &format!("{name}.count"), visible.len() as f32);
-    // The docks.
+    // The docks. What is unread, by program: `discord:3 org.telegram.desktop:1`.
+    let badges: Vec<(String, f32)> = scene.texts.iter().position(|t| t.0 == format!("{name}.badges")).and_then(|k| texts.get(k)).map(|t| {
+        t.split_whitespace().filter_map(|w| w.rsplit_once(':')).filter_map(|(a, n)| Some((a.to_lowercase(), n.parse::<f32>().ok()?))).collect()
+    }).unwrap_or_default();
     for s in 0..4 {
         let items = &desks.items[s];
         let here = desks.here(s, screens);
@@ -248,6 +272,8 @@ fn nest_places(scene: &Scene, facts: &mut [f32], texts: &mut [String], to_logic:
             let item = items.get(k);
             let mine: Vec<usize> = item.map(|i| here.iter().copied().filter(|w| desks.of_item(*w, i)).collect()).unwrap_or_default();
             nest_text(scene, texts, to_logic, &format!("{name}.dock.{s}.{k}.icon"), item.map_or(String::new(), |i| i.icon.clone()));
+            nest_text(scene, texts, to_logic, &format!("{name}.dock.{s}.{k}.name"), item.map_or(String::new(), |i| i.name.clone()));
+            nest_fact(scene, facts, to_logic, &format!("{name}.dock.{s}.{k}.badge"), item.map_or(0.0, |i| desks.badge(i, &badges)));
             nest_fact(scene, facts, to_logic, &format!("{name}.dock.{s}.{k}.windows"), mine.len() as f32);
             nest_fact(scene, facts, to_logic, &format!("{name}.dock.{s}.{k}.focused"), mine.iter().any(|w| desks.focus == Some(*w)) as u8 as f32);
             nest_fact(scene, facts, to_logic, &format!("{name}.dock.{s}.{k}.pinned"), item.is_some_and(|i| i.pin.is_some()) as u8 as f32);
@@ -263,7 +289,29 @@ fn nest_places(scene: &Scene, facts: &mut [f32], texts: &mut [String], to_logic:
         nest_fact(scene, facts, to_logic, &format!("{name}.{k}.dockat"), at);
         let minat = if here && desks.minimized[k] { desks.here(s, screens).iter().filter(|w| desks.minimized[**w]).position(|w| *w == k).map_or(-1.0, |p| p as f32) } else { -1.0 };
         nest_fact(scene, facts, to_logic, &format!("{name}.{k}.minat"), minat);
+        // Its turn among its item's windows there (for a row of their previews).
+        let turn = if here && at >= 0.0 { desks.here(s, screens).iter().filter(|w| desks.items[s].get(at as usize).is_some_and(|i| desks.of_item(**w, i))).position(|w| *w == k).map_or(-1.0, |p| p as f32) } else { -1.0 };
+        nest_fact(scene, facts, to_logic, &format!("{name}.{k}.dockturn"), turn);
     }
+}
+
+/// `%20` and the rest of a file URI, back to the bytes they stand for.
+fn percent_decode(s: &str) -> String {
+    let b = s.as_bytes();
+    let mut out = Vec::with_capacity(b.len());
+    let mut k = 0;
+    while k < b.len() {
+        if b[k] == b'%' && k + 2 < b.len() {
+            if let Ok(v) = u8::from_str_radix(&s[k + 1..k + 3], 16) {
+                out.push(v);
+                k += 3;
+                continue;
+            }
+        }
+        out.push(b[k]);
+        k += 1;
+    }
+    String::from_utf8_lossy(&out).into_owned()
 }
 
 /// A fact of the scene's windows, by name: set, and told to the logic.
@@ -842,6 +890,15 @@ pub fn run(
                 ToRender::Command(Command::Animate(t)) => pending.push((Instant::now() + t.delay, t)),
                 ToRender::Command(Command::Impulse { prop, velocity }) => props[prop.0 as usize].v += velocity,
                 ToRender::Command(Command::Block(d)) => block = Some(d),
+                // What is unread, told from outside (`--say wm "text win.badges discord:2"`): the docks show it.
+                ToRender::Text(name, value) if scene.nest.as_ref().is_some_and(|n| name == format!("{}.badges", n.name)) => {
+                    if let Some(k) = scene.texts.iter().position(|t| t.0 == name) {
+                        texts[k] = value;
+                    }
+                    if let Some(n) = scene.nest.clone() {
+                        nest_places(&scene, &mut facts, &mut texts, &to_logic, &n, &nest_order, &nest_screens, &mut desks);
+                    }
+                }
                 ToRender::Text(name, value) => match scene.texts.iter().position(|t| t.0 == name) {
                     Some(i) => texts[i] = value,
                     None => eprintln!("render · I don't know the text '{name}'"),
@@ -1013,6 +1070,9 @@ pub fn run(
                             desks.alive[slot] = true;
                             desks.apps[slot] = app.to_lowercase();
                             desks.icons[slot] = String::new();
+                            desks.names[slot] = String::new();
+                            desks.execs[slot] = String::new();
+                            desks.dialog[slot] = false;
                             desks.minimized[slot] = false;
                             desks.stamp += 1;
                             desks.born[slot] = desks.stamp;
@@ -1036,10 +1096,12 @@ pub fn run(
                             nest_text(&scene, &mut texts, &to_logic, &format!("{name}.{slot}.app"), t);
                             nest_places(&scene, &mut facts, &mut texts, &to_logic, &n, &nest_order, &nest_screens, &mut desks);
                         }
-                        NestEvent::Icon(slot, icon) => {
+                        NestEvent::Program { slot, icon, name: program, exec } => {
                             desks.grow(n.max);
                             if slot < n.max {
                                 desks.icons[slot] = icon.clone();
+                                desks.names[slot] = program;
+                                desks.execs[slot] = exec;
                             }
                             nest_text(&scene, &mut texts, &to_logic, &format!("{name}.{slot}.icon"), icon);
                             nest_places(&scene, &mut facts, &mut texts, &to_logic, &n, &nest_order, &nest_screens, &mut desks);
@@ -1068,7 +1130,14 @@ pub fn run(
                             }
                             nest_places(&scene, &mut facts, &mut texts, &to_logic, &n, &nest_order, &nest_screens, &mut desks);
                         }
-                        NestEvent::Dialog(slot, yes) => nest_fact(&scene, &mut facts, &to_logic, &format!("{name}.{slot}.dialog"), yes as u8 as f32),
+                        NestEvent::Dialog(slot, yes) => {
+                            nest_fact(&scene, &mut facts, &to_logic, &format!("{name}.{slot}.dialog"), yes as u8 as f32);
+                            desks.grow(n.max);
+                            if slot < n.max {
+                                desks.dialog[slot] = yes;
+                            }
+                            nest_places(&scene, &mut facts, &mut texts, &to_logic, &n, &nest_order, &nest_screens, &mut desks);
+                        }
                         NestEvent::Frame { slot, geometry, pieces } => {
                             prof_window_frames += 1;
                             // Buffers that were waiting to be copied and never will be.
@@ -2072,7 +2141,8 @@ pub fn run(
                     }
                     // A dock's item: its window —the next one, if one of them has the
                     // keyboard—, brought back if it was put away; or its program started.
-                    Effect::Dock(k, on) => {
+                    Effect::Dock(k, on, what) => {
+                        let what = what.clone();
                         let c = Ctx { props: &props, facts: &facts };
                         let k = k.eval(c).round();
                         let screen = on.map_or(nest_on_screen.unwrap_or(0) as f32, |e| e.eval(c)).round().clamp(0.0, 3.0) as usize;
@@ -2080,7 +2150,20 @@ pub fn run(
                             desks.grow(n.max);
                             if let Some(item) = desks.items[screen].get(k as usize).cloned() {
                                 let mine: Vec<usize> = desks.here(screen, &nest_screens).into_iter().filter(|w| desks.of_item(*w, &item)).collect();
-                                if mine.is_empty() {
+                                // Files dropped on it: opened with it (one `sh -c`, each path quoted).
+                                if what == crate::scene::DockAction::OpenDrop {
+                                    let paths: Vec<String> = drops.iter().flat_map(|(_, d)| d.lines().map(str::trim).filter_map(|l| l.strip_prefix("file://")).map(percent_decode).collect::<Vec<_>>()).collect();
+                                    if !paths.is_empty() && !item.exec.is_empty() {
+                                        let quoted: Vec<String> = paths.iter().map(|p| format!("'{}'", p.replace('\'', "'\\''"))).collect();
+                                        send(ToNest::Launch(format!("{} {}", item.exec, quoted.join(" "))));
+                                    }
+                                } else if what == crate::scene::DockAction::Pin || what == crate::scene::DockAction::Unpin {
+                                    send(ToNest::Pin(item.key.clone(), what == crate::scene::DockAction::Pin));
+                                } else if what == crate::scene::DockAction::Close {
+                                    for w in &mine {
+                                        send(ToNest::Close(*w));
+                                    }
+                                } else if mine.is_empty() {
                                     if !item.exec.is_empty() {
                                         send(ToNest::Launch(item.exec.clone()));
                                     }
@@ -2698,8 +2781,14 @@ pub fn run(
                     if alpha.eval(c) <= 0.001 {
                         continue;
                     }
-                    // `ask: 0, 0`: the size it chooses (a dialog of its own size).
-                    let wanted = (ask.0.eval(c).round().max(0.0) as i32, ask.1.eval(c).round().max(0.0) as i32);
+                    // `ask: 0, 0`: the size it chooses (a dialog of its own size);
+                    // `ask: -1, -1`: nothing, a picture of it (a dock's preview) that
+                    // must not ask it for another size than the copy that lays it out.
+                    let (aw, ah) = (ask.0.eval(c), ask.1.eval(c));
+                    if aw < 0.0 || ah < 0.0 {
+                        continue;
+                    }
+                    let wanted = (aw.round() as i32, ah.round() as i32);
                     if let Some(w) = nest_windows.get_mut(*slot) {
                         if w.ask != Some(wanted) {
                             w.ask = Some(wanted);
