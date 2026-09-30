@@ -24,6 +24,8 @@ mod logic;
 mod logic_luau;
 mod permissions;
 mod platform;
+mod probe;
+mod report;
 mod render;
 
 pub use platform::{host_keymap, provide_layer_hooks, provide_platform, provide_windows, set_host_keymap, LayerHooks, NestSender, Platform, PlatformWindow};
@@ -55,6 +57,10 @@ const HELP: &str = "pleamar [options]
                       each word means. For any editor that speaks LSP
   --highlight EDITOR  writes the syntax file for 'vim' or 'vscode', made from the vocabulary
   --version           the version of the program and of the language it understands
+  --report [SCENES]   measures the scenes running (all of them, or those named) for a while
+                      —use the desktop as usual meanwhile— and writes what it saw, with the
+                      machine's details, to a file to send us when something stutters.
+                      «--seconds N» (30), «--out FILE»
   --say [SCENE] CMD   says something to a running scene and exits. Commands:
                       «emit event [n]», «fact name value», «text name whatever it says», «submit input what»
                       (as if typed there and Enter pressed), «focus input», «get name» (answers), «quit»
@@ -110,6 +116,10 @@ fn args(given: Vec<String>) -> Args {
                         1
                     }
                 });
+            }
+            "--report" => {
+                let rest: Vec<String> = it.by_ref().collect();
+                std::process::exit(report(rest, None));
             }
             "--version" => {
                 println!("pleamar {} · language {}.{}", env!("CARGO_PKG_VERSION"), language::VERSION.0, language::VERSION.1);
@@ -168,6 +178,12 @@ fn args(given: Vec<String>) -> Args {
         std::process::exit(2);
     }
     a
+}
+
+/// `pleamar --report`: see `report.rs`. `extra` is what a program built on
+/// pleamar adds about itself (pleamar-wm: its monitors and its configuration).
+pub fn report(args: Vec<String>, extra: Option<String>) -> i32 {
+    report::run(args, extra)
 }
 
 /// Not starting again when the program changes on disk (see `watch_binary`):
@@ -284,6 +300,16 @@ pub fn run_with(options: Vec<String>) {
             let (tx, to_logic) = &*guard;
             let mut p = line.trim().splitn(3, ' ');
             let (what, who, rest) = (p.next().unwrap_or(""), p.next().unwrap_or(""), p.next().unwrap_or(""));
+            // `pleamar --report`: measuring starts, and later its report is asked for.
+            if what == "probe" {
+                if who == "report" {
+                    let (question, answer) = std::sync::mpsc::channel();
+                    let _ = tx.send(ToRender::Probe(Some(question)));
+                    return Some(answer.recv_timeout(std::time::Duration::from_secs(3)).unwrap_or_else(|_| "? the render does not answer".into()));
+                }
+                let _ = tx.send(ToRender::Probe(None));
+                return Some("measuring\n".into());
+            }
             if what == "get" {
                 let (question, answer) = std::sync::mpsc::channel();
                 let _ = tx.send(ToRender::Query(scene::intern(who), question));
@@ -309,7 +335,7 @@ pub fn run_with(options: Vec<String>) {
                 "quit" => quit(),
                 _ => {
                     eprintln!("orders · I don't understand '{line}'");
-                    return Some(format!("? I don't understand '{}': emit, fact, text, submit, focus, get, quit", line.trim()));
+                    return Some(format!("? I don't understand '{}': emit, fact, text, submit, focus, get, probe, quit", line.trim()));
                 }
             };
             None

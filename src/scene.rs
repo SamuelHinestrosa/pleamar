@@ -1991,6 +1991,9 @@ pub enum ToRender {
     LockScreen(bool),
     /// Someone from outside asks how much a fact, a text or a property is worth.
     Query(&'static str, std::sync::mpsc::Sender<String>),
+    /// `pleamar --report`: measure every frame from now (`None`), or answer
+    /// with what was measured and stop (`Some`).
+    Probe(Option<std::sync::mpsc::Sender<String>>),
     /// Something has been dropped on it, dragged from another application: (type, content).
     Dropped(String, String),
     /// What the compositor inside the scene has to say.

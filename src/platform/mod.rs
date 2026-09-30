@@ -422,6 +422,51 @@ fn command_socket_path(scene: &str) -> Option<std::path::PathBuf> {
     Some(dir.join(format!("{scene}.sock")))
 }
 
+/// The scenes running where `--say` reaches: those whose socket answers.
+#[cfg(unix)]
+pub fn running_scenes() -> Vec<String> {
+    let Some(dir) = command_socket_path("x").and_then(|r| r.parent().map(|p| p.to_owned())) else { return Vec::new() };
+    let mut alive: Vec<String> = std::fs::read_dir(&dir)
+        .map(|d| d.filter_map(Result::ok).map(|e| e.path()).filter(|p| p.extension().is_some_and(|x| x == "sock") && std::os::unix::net::UnixStream::connect(p).is_ok()).filter_map(|p| p.file_stem().map(|n| n.to_string_lossy().into_owned())).collect())
+        .unwrap_or_default();
+    alive.sort();
+    // pleamar-wm leaves its scene there under two names (`wm`, and its own):
+    // one is a link to the other, and it would be measured twice.
+    let real = |n: &str| std::fs::canonicalize(dir.join(format!("{n}.sock"))).ok();
+    let mut seen = Vec::new();
+    alive.retain(|n| {
+        let r = real(n);
+        if seen.contains(&r) {
+            return false;
+        }
+        seen.push(r);
+        true
+    });
+    alive
+}
+#[cfg(not(unix))]
+pub fn running_scenes() -> Vec<String> {
+    Vec::new()
+}
+
+/// Tell a running scene something and bring back what it answers.
+#[cfg(unix)]
+pub fn ask(scene: &str, command: &str, wait: std::time::Duration) -> Result<String, String> {
+    use std::io::Write;
+    let path = command_socket_path(scene).ok_or("I don't know where the sockets are")?;
+    let mut s = std::os::unix::net::UnixStream::connect(&path).map_err(|e| format!("{}: {e}", path.display()))?;
+    writeln!(s, "{command}").map_err(|e| e.to_string())?;
+    let _ = s.shutdown(std::net::Shutdown::Write);
+    let _ = s.set_read_timeout(Some(wait));
+    let mut answer = String::new();
+    let _ = std::io::Read::read_to_string(&mut s, &mut answer);
+    Ok(answer)
+}
+#[cfg(not(unix))]
+pub fn ask(_: &str, _: &str, _: std::time::Duration) -> Result<String, String> {
+    Err("this system has nowhere to receive commands yet".into())
+}
+
 /// Tell a running scene something. Without a name, to the only one there is.
 #[cfg(unix)]
 pub fn send(scene: Option<&str>, command: &str) -> Result<(), String> {

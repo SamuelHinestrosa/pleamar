@@ -1889,6 +1889,21 @@ impl Gpu {
     /// refresh, and that is recovered by setting the pace with absolute
     /// deadlines at the monitor's period.
     /// `PLEAMAR_FIFO=1` goes back to the old way, to compare.
+    /// Which card, with which driver, and how frames reach the screen: for a report.
+    pub fn describe(&self) -> String {
+        let i = self.adapter.get_info();
+        let kind = match i.device_type {
+            wgpu::DeviceType::DiscreteGpu => "discrete",
+            wgpu::DeviceType::IntegratedGpu => "integrated",
+            wgpu::DeviceType::VirtualGpu => "virtual",
+            // llvmpipe, lavapipe: no card at all, the CPU paints.
+            wgpu::DeviceType::Cpu => "SOFTWARE (the CPU paints: no GPU driver in use)",
+            wgpu::DeviceType::Other => "other",
+        };
+        let present = if self.uses_mailbox() { "mailbox" } else { "fifo" };
+        format!("{} · {:?} · {kind} · driver {} {} · {present}", i.name, i.backend, i.driver, i.driver_info)
+    }
+
     pub fn uses_mailbox(&self) -> bool {
         self.non_blocking == Some(wgpu::PresentMode::Mailbox) && std::env::var_os("PLEAMAR_FIFO").is_none()
     }
@@ -2715,6 +2730,11 @@ thread_local! {
 }
 
 impl Sheet {
+    /// Its size in pixels.
+    pub fn px(&self) -> (u32, u32) {
+        self.px
+    }
+
     /// Where the mouse gets in. The rest of the surface, even if it is its
     /// own, lets the click through to what is underneath.
     pub fn update_input_region(&self, rects: &[[i32; 4]]) {

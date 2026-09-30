@@ -216,6 +216,12 @@ outside, or from a compositor shortcut), `--mouse "360,90@500 click@3200"` (a
 pretend mouse, to rehearse without touching the real one), `--stall MS` (stall
 the logic on purpose and watch the screen carry on).
 
+If something stutters on your machine, `pleamar --report` measures every scene
+running for 30 seconds while you use the desktop, and writes down what it saw
+—frame times, where the late frames went, the card, the CPU's clock and
+temperature, what else took the CPU— in `~/pleamar-report-….md`, with no personal
+data. Send it to us in an issue.
+
 # The quick comparison
 
 The same bar, written twice: in Quickshell (`proyecto-marea`, 370 QML files) and

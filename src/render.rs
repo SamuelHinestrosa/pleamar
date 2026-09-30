@@ -553,7 +553,12 @@ pub fn run(
     let mut nest_doomed: Vec<u64> = Vec::new();
 
     // `PLEAMAR_TIMING=1`: where a frame's time goes, section by section, without the waits.
-    let profiling = crate::gpu::timing_enabled();
+    // Measured too while `pleamar --report` asks for it (`probe`), but only said then.
+    let timing = crate::gpu::timing_enabled();
+    let mut profiling: bool;
+    let mut probe: Option<crate::probe::Probe> = None;
+    // What the pacing slept in a round: waiting for the screen, not painting.
+    let mut sec_paced = 0f64;
     let mut prof = [0f64; 8];
     // The same, in the thread's own CPU time: what the wall clock counts includes waiting.
     let mut prof_cpu = [0f64; 8];
@@ -956,6 +961,27 @@ pub fn run(
                     }
                     None => eprintln!("render · I don't know the fact '{name}'"),
                 },
+                ToRender::Probe(None) => probe = Some(crate::probe::Probe::new()),
+                ToRender::Probe(Some(reply_to)) => {
+                    let r = match probe.take() {
+                        Some(p) => p.report(&crate::probe::Context {
+                            card: gpu.as_ref().map_or_else(|| "none yet".into(), Gpu::describe),
+                            card_memory: gpu.as_ref().and_then(|g| g.device.generate_allocator_report()).map(|r| r.total_allocated_bytes as f64 / 1e6),
+                            monitors: sheets
+                                .iter()
+                                .map(|l| {
+                                    let (w, h) = l.px();
+                                    let hz = if l.mhz > 0 { format!("{:.0} Hz", l.mhz as f32 / 1000.0) } else { "refresh not told".into() };
+                                    format!("{} · {w}×{h} · {hz} · scale {}{}{}", if l.name.is_empty() { "surface" } else { &l.name }, l.scale, if l.drives_pace { " · sets the pace" } else { "" }, if l.open { "" } else { " · closed" })
+                                })
+                                .collect(),
+                            windows: nest_windows.iter().filter(|w| !w.pieces.is_empty()).count(),
+                            scene: format!("{} instructions, {} properties, {} rules, {} zones", scene.instrs.len(), scene.props.len(), scene.rules.len(), scene.zones.len()),
+                        }),
+                        None => "? it was not measuring: `probe start` first".into(),
+                    };
+                    let _ = reply_to.send(r);
+                }
                 ToRender::Query(name, reply_to) => {
                     let number = |v: f32| if v.fract() == 0.0 { format!("{}", v as i64) } else { format!("{v}") };
                     let r = if let Some(i) = scene.facts.iter().position(|h| h.0 == name) {
@@ -1140,6 +1166,9 @@ pub fn run(
                         }
                         NestEvent::Frame { slot, geometry, pieces } => {
                             prof_window_frames += 1;
+                            if let Some(p) = &mut probe {
+                                p.window_frames += 1;
+                            }
                             // Buffers that were waiting to be copied and never will be.
                             #[allow(unused_mut)]
                             let mut unread: Vec<u64> = Vec::new();
@@ -1381,6 +1410,7 @@ pub fn run(
                 }
             }
         }
+        profiling = timing || probe.is_some();
         if profiling {
             prof_t = Instant::now();
             prof_c = thread_cpu_ms();
@@ -3306,6 +3336,7 @@ pub fn run(
             let since = before_painting.elapsed();
             if since < period {
                 std::thread::sleep(period - since);
+                sec_paced = (period - since).as_secs_f64() * 1000.0;
             }
             last_presented = Instant::now();
         }
@@ -3441,7 +3472,7 @@ pub fn run(
             prof_cpu[6] += c - prof_c;
             prof_c = c;
         }
-        if profiling {
+        if timing {
             prof_frames += 1;
             if prof_frames >= 300 {
                 let f = prof_frames as f64;
@@ -3473,8 +3504,20 @@ pub fn run(
                 println!("render · slow frame: {ms:.0} ms at {t_total:.2} s");
             }
         }
+        if let Some(p) = &mut probe {
+            // What the screen gives: the monitor that sets the pace, if it says.
+            let pace = sheets.iter().find(|l| l.drives_pace && l.open && l.mhz > 0).map_or(period_ms, |l| 1_000_000.0 / l.mhz as f32);
+            let mut s = [0f32; crate::probe::SECTIONS];
+            for (k, v) in sec.iter().enumerate() {
+                s[k] = *v as f32;
+            }
+            s[5] = (sec[5] - sec_paced).max(0.0) as f32;
+            s[8] = (sec_wait + sec_paced) as f32;
+            p.round(!first_frame && !cycle.dts.is_empty() && !op.no_vsync, ms, pace, s, blocked);
+        }
         sec = [0.0; 8];
         sec_wait = 0.0;
+        sec_paced = 0.0;
         history.copy_within(1.., 0);
         history[119] = if blocked { -ms } else { ms };
         cycle.dts.push(ms);
@@ -3515,6 +3558,9 @@ pub fn run(
             cycle.close();
             next_appointment = appointments.iter().min().copied();
             resting = true;
+            if let Some(p) = &mut probe {
+                p.rest();
+            }
             // Still now: if something overflowed, this is what stays watching.
             draw.report_pending();
         }
