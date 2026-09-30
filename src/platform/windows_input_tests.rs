@@ -31,7 +31,7 @@ impl Probe {
             cursor: AtomicU8::new(0), keyboard: AtomicU8::new(0),
             mouse_inside: AtomicBool::new(false), mouse_buttons: AtomicU8::new(0),
             right_click_quits: false, is_window: true,
-            placement: Mutex::new(None), appbar: AtomicBool::new(false), gone: AtomicBool::new(false),
+            placement: Mutex::new(None), appbar: AtomicBool::new(false), fullscreen: AtomicBool::new(false), gone: AtomicBool::new(false),
             surrogate: Mutex::new(None), monitor_name: String::new(), copy: 0, popup: None,
             popup_armed: AtomicBool::new(false), released: AtomicBool::new(false), backdrop: OnceLock::new(),
         };
@@ -124,6 +124,62 @@ fn native_windows_use_timer_pacing_without_compositor_callbacks() {
     let probe = Probe::new();
     let window = WindowsWindow(probe._state.clone());
     assert!(!window.has_frame_callbacks(), "Win32 never delivers ToRender::Frame callbacks");
+}
+
+#[test]
+fn native_appbar_yields_to_fullscreen_and_restores_both_windows() {
+    let panel = Probe::configured(|state| {
+        state.is_window = false;
+        *state.placement.lock().unwrap() = Some(Placement {
+            monitor: RECT::default(), anchor: SurfaceAnchor::Top, margin: [0; 4],
+            width: 100, height: 100, exclusive_zone: 0, level: Level::Above,
+        });
+    });
+    let input = Probe::new();
+    panel._state.input_hwnd.store(input.hwnd.0 as isize, Ordering::Relaxed);
+    // Only model the registration flag; these hidden windows never reserve
+    // work area. Exercise the real HWND z-order and production restacking.
+    panel._state.appbar.store(true, Ordering::Relaxed);
+    let live = [panel._state.clone()];
+    let topmost = |hwnd| unsafe { GetWindowLongPtrW(hwnd, GWL_EXSTYLE) as u32 & WS_EX_TOPMOST.0 != 0 };
+    restack_panels(&live);
+    assert!(topmost(panel.hwnd) && topmost(input.hwnd));
+    unsafe { SendMessageW(panel.hwnd, WM_PLEAMAR_APPBAR,
+        Some(WPARAM(windows::Win32::UI::Shell::ABN_FULLSCREENAPP as usize)), Some(LPARAM(1))); }
+    assert!(!topmost(panel.hwnd) && !topmost(input.hwnd), "The AppBar still covers a full-screen application");
+    restack_panels(&live);
+    assert!(!topmost(panel.hwnd) && !topmost(input.hwnd), "Restacking raised the AppBar back over full-screen content");
+    unsafe { SendMessageW(panel.hwnd, WM_PLEAMAR_APPBAR,
+        Some(WPARAM(windows::Win32::UI::Shell::ABN_FULLSCREENAPP as usize)), Some(LPARAM(0))); }
+    restack_panels(&live);
+    assert!(topmost(panel.hwnd) && topmost(input.hwnd), "The AppBar failed to restore its scene layer");
+    unsafe { SendMessageW(panel.hwnd, WM_PLEAMAR_APPBAR,
+        Some(WPARAM(windows::Win32::UI::Shell::ABN_FULLSCREENAPP as usize)), Some(LPARAM(1))); }
+    panel._state.placement.lock().unwrap().as_mut().unwrap().level = Level::Below;
+    unsafe { SendMessageW(panel.hwnd, WM_PLEAMAR_APPBAR,
+        Some(WPARAM(windows::Win32::UI::Shell::ABN_FULLSCREENAPP as usize)), Some(LPARAM(0))); }
+    restack_panels(&live);
+    assert!(!topmost(panel.hwnd) && !topmost(input.hwnd), "Restoration ignored a scene layer change");
+    assert!(!unsafe { IsWindowVisible(panel.hwnd).as_bool() || IsWindowVisible(input.hwnd).as_bool() });
+    panel._state.input_hwnd.store(0, Ordering::Relaxed);
+}
+
+#[test]
+fn native_fullscreen_notice_leaves_unregistered_and_retired_windows_alone() {
+    for kind in 0..3 {
+        let probe = Probe::configured(|state| {
+            state.is_window = kind == 0;
+            state.gone.store(kind == 2, Ordering::Relaxed);
+            state.appbar.store(kind == 2, Ordering::Relaxed);
+        });
+        unsafe {
+            SetWindowPos(probe.hwnd, Some(HWND_TOPMOST), 0, 0, 0, 0,
+                SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE).unwrap();
+            SendMessageW(probe.hwnd, WM_PLEAMAR_APPBAR,
+                Some(WPARAM(windows::Win32::UI::Shell::ABN_FULLSCREENAPP as usize)), Some(LPARAM(1)));
+            assert_ne!(GetWindowLongPtrW(probe.hwnd, GWL_EXSTYLE) as u32 & WS_EX_TOPMOST.0, 0);
+        }
+    }
 }
 
 #[test]

@@ -192,8 +192,12 @@ core without default features as an extra diagnostic. The CI CLI test deliberate
 does not claim graphical validation. The existing Linux `run-tests.sh` remains
 available; the Python runner covers its scene, documentation, vocabulary and
 highlighter checks and additionally verifies process exit codes.
-The workflow has been added but has not run remotely in this work. Linux
-execution was deferred at the user's request; no Linux success is claimed.
+The September 30 source snapshot `304ab966` passed both Windows and Linux in
+[the fork's CI run](https://github.com/SamuelHinestrosa/pleamar/actions/runs/36754047849).
+Windows passed 103 unit tests and one integration; Linux passed 48 unit tests
+and one integration. Both passed 225 language checks. This is compilation and
+automated runtime evidence, not a Linux desktop session or Windows graphical
+validation. Subsequent changes require their own checks.
 
 For manual GUI validation, open `tests/native-interaction.plm`: check the timer,
 click the button, click the popup, scroll over the button, type/paste Unicode and
@@ -212,6 +216,16 @@ the old registration is removed before retrying to avoid duplicate registration.
 Retired surfaces ignore pending placements. Hidden native-window tests cover
 notification dispatch and retirement; an actual Explorer restart, primary-DPI
 change and desktop work-area recovery still require interactive verification.
+
+Registered AppBars also honor the Shell's
+[`ABN_FULLSCREENAPP`](https://learn.microsoft.com/en-us/windows/win32/shell/abn-fullscreenapp)
+notification: both drawing and input HWNDs drop below full-screen content, stay
+there during restacking, and restore the current scene layer when it ends.
+Activation and position changes notify Shell so it can order autohide bars on
+the same edge. Hidden-window tests reproduce the previous always-on-top fault
+and verify restoration, including a layer change. Full-screen applications and
+taskbar autohide still need interactive validation; panels without a reservation
+do not receive this AppBar notification.
 
 See [the validation record and PR review](windows-validation.md) for what was
 actually executed and what remains pending.

@@ -35,6 +35,7 @@ use windows::Win32::UI::Input::KeyboardAndMouse::{
 };
 use windows::Win32::UI::Shell::{
     ABE_BOTTOM, ABE_LEFT, ABE_RIGHT, ABE_TOP, ABM_NEW, ABM_QUERYPOS, ABM_REMOVE, ABM_SETPOS,
+    ABM_ACTIVATE, ABM_WINDOWPOSCHANGED, ABN_FULLSCREENAPP, ABN_POSCHANGED,
     APPBARDATA, SHAppBarMessage,
 };
 use windows::Win32::UI::WindowsAndMessaging::*;
@@ -92,6 +93,7 @@ struct WindowState {
     is_window: bool,
     placement: Mutex<Option<Placement>>,
     appbar: AtomicBool,
+    fullscreen: AtomicBool,
     gone: AtomicBool,
     surrogate: Mutex<Option<u16>>,
     monitor_name: String,
@@ -419,6 +421,7 @@ fn appbar_edge(a: SurfaceAnchor) -> u32 {
 }
 
 unsafe fn remove_appbar(e: &WindowState) {
+    e.fullscreen.store(false, Ordering::Relaxed);
     if e.appbar.swap(false, Ordering::Relaxed) {
         let mut d = APPBARDATA {
             cbSize: size_of::<APPBARDATA>() as u32,
@@ -500,10 +503,7 @@ unsafe fn reposition(e: &WindowState) {
             }
         }
     }
-    let z = match c.level {
-        Level::Background | Level::Below => Some(HWND_BOTTOM),
-        Level::Above | Level::Overlay => Some(HWND_TOPMOST),
-    };
+    let z = Some(panel_z(e, c.level));
     let _ = unsafe {
         SetWindowPos(
             e.hwnd(),
@@ -571,7 +571,7 @@ fn restack_panels(live: &[Arc<WindowState>]) {
     // Keep an outside-click catcher below its overlay even when Windows (or
     // an accessibility client) activates or repositions that catcher.
     let mut panels: Vec<_> = live.iter().filter_map(|v| {
-        if v.is_window || v.gone.load(Ordering::Relaxed) { return None; }
+        if v.is_window || v.gone.load(Ordering::Relaxed) || v.fullscreen.load(Ordering::Relaxed) { return None; }
         let level = v.placement.lock().unwrap().as_ref()?.level;
         let rank = if v.popup.is_some() { 3 } else { match level { Level::Above => 1, Level::Overlay => 2, _ => return None } };
         Some((rank, v.id, v))
@@ -585,6 +585,25 @@ fn restack_panels(live: &[Arc<WindowState>]) {
         }
     }
     RESTACKING.store(false, Ordering::Relaxed);
+}
+
+fn panel_z(e: &WindowState, level: Level) -> HWND {
+    if e.fullscreen.load(Ordering::Relaxed) || matches!(level, Level::Background | Level::Below) {
+        HWND_BOTTOM
+    } else { HWND_TOPMOST }
+}
+
+unsafe fn fullscreen_appbar(e: &WindowState, open: bool) {
+    e.fullscreen.store(open, Ordering::Relaxed);
+    let level = e.placement.lock().unwrap().as_ref().map(|p| p.level);
+    if let Some(level) = level {
+        // The transparent drawing and its input proxy must yield together.
+        // Restacking and later placement keep this state until Shell clears it.
+        for hwnd in [e.hwnd(), e.input()] {
+            unsafe { let _ = SetWindowPos(hwnd, Some(panel_z(e, level)), 0, 0, 0, 0,
+                SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_NOOWNERZORDER); }
+        }
+    }
 }
 
 unsafe fn return_keyboard(e: &WindowState) {
@@ -702,6 +721,14 @@ unsafe extern "system" fn window_proc(
             }
         }
         return LRESULT(0);
+    }
+    let appbar = !e.is_window && e.popup.is_none() && !e.gone.load(Ordering::Relaxed)
+        && e.appbar.load(Ordering::Relaxed);
+    if appbar && (msg == WM_ACTIVATE || (msg == WM_WINDOWPOSCHANGED && hwnd == e.hwnd())) {
+        // Shell needs these notifications to order other autohide bars on the
+        // same edge. Keyboard activation may arrive through the input proxy.
+        let mut data = APPBARDATA { cbSize: size_of::<APPBARDATA>() as u32, hWnd: e.hwnd(), ..Default::default() };
+        unsafe { SHAppBarMessage(if msg == WM_ACTIVATE { ABM_ACTIVATE } else { ABM_WINDOWPOSCHANGED }, &mut data); }
     }
     match msg {
         WM_WINDOWPOSCHANGED if !e.is_window && !RESTACKING.load(Ordering::Relaxed) => {
@@ -905,7 +932,11 @@ unsafe extern "system" fn window_proc(
             unsafe { apply_input_region(e); }
             return LRESULT(0);
         }
-        WM_PLEAMAR_APPBAR if wparam.0 == 1 => {
+        WM_PLEAMAR_APPBAR if appbar && hwnd == e.hwnd() && wparam.0 == ABN_FULLSCREENAPP as usize => {
+            unsafe { fullscreen_appbar(e, lparam.0 != 0); }
+            return LRESULT(0);
+        }
+        WM_PLEAMAR_APPBAR if appbar && hwnd == e.hwnd() && wparam.0 == ABN_POSCHANGED as usize => {
             unsafe { reposition(e); }
             return LRESULT(0);
         }
@@ -1072,6 +1103,7 @@ fn create(
         is_window,
         placement: Mutex::new(placement),
         appbar: AtomicBool::new(false),
+        fullscreen: AtomicBool::new(false),
         gone: AtomicBool::new(false),
         surrogate: Mutex::new(None),
         monitor_name: monitor.name.clone(),

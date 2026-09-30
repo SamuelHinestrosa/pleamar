@@ -54,6 +54,24 @@ Short CPU observations are not an end-to-end FPS or latency benchmark. A previou
 long performance sample was invalidated because its panel state changed; the
 verifier now rejects such traces.
 
+## Remote CI executed, September 30, 2026
+
+Both repositories now have public validation branches under
+`SamuelHinestrosa`, prepared in isolated checkouts while preserving the original
+working files and indexes. No upstream pull request has been opened yet.
+
+| Exact source | Actual result |
+|---|---|
+| pleamar `304ab966af6299430a8ec860b92aff17743d79c8` | [Windows and Linux passed](https://github.com/SamuelHinestrosa/pleamar/actions/runs/36754047849): release with Luau, unit/integration tests, 225 language checks, isolated Luau and compiler allocation checks. Windows also passed packaging, Unicode CLI and service/watcher/callback/subprocess reload rehearsals. |
+| Marea `39ff02728e6201d20f8a1cb51655c787cb3edc51`, using the engine SHA above | [Windows and Linux passed](https://github.com/SamuelHinestrosa/marea-plm/actions/runs/36754231480): profile generation and twelve isolated logic suites. Windows also passed shortcut, packaging, file-lock and real no-Luau negative controls. |
+
+The subsequent AppBar full-screen correction has a reproducing negative test
+and passes 105 local unit tests, one integration and 225 language checks. It
+keeps drawing/input HWNDs below full-screen content and restores the scene's
+current layer; native hidden HWNDs verify this without taking over the desktop.
+An actual full-screen application and taskbar autohide remain unverified. Remote
+results above apply to their exact commits, before this additional correction.
+
 ## Not yet established
 
 - Current-profile graphical review and controlled sustained CPU/GPU/memory and
@@ -73,8 +91,8 @@ verifier now rejects such traces.
   source/native distribution has not been located. No substitute database is
   presented as that service.
 - Live Claude quota validation with an authenticated provider.
-- Linux execution and remote Windows/Linux CI. Both jobs are defined; results
-  must be recorded from actual runs before claiming they passed.
+- Linux desktop execution. Automated Windows/Linux checks passed on the exact
+  source snapshots listed above; they do not establish desktop parity.
 - Full final line review and focused upstream PRs. These validation branches
   exist to collect CI evidence and are not a ready-to-merge submission.
 
