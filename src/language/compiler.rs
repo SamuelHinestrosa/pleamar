@@ -5317,7 +5317,11 @@ impl<'a> Compiler<'a> {
             fact(self, format!("{name}.{k}.pool"), 0.0, false);
             fact(self, format!("{name}.{k}.among"), 0.0, false);
             fact(self, format!("{name}.{k}.rank"), -1.0, false);
-            for field in ["title", "app"] {
+            // Its item in its monitor's dock, and its turn among the ones put
+            // away there (−1: none).
+            fact(self, format!("{name}.{k}.dockat"), -1.0, false);
+            fact(self, format!("{name}.{k}.minat"), -1.0, false);
+            for field in ["title", "app", "icon"] {
                 let full = format!("{name}.{k}.{field}");
                 let id = self.e.live_text(interned(&full), "");
                 self.texts.insert(full, id);
@@ -5342,6 +5346,19 @@ impl<'a> Compiler<'a> {
             fact(self, format!("{name}.pool.{s}"), (s + 1) as f32, false);
             fact(self, format!("{name}.pools.{s}"), 1.0, false);
             fact(self, format!("{name}.used.{s}"), 0.0, false);
+            // Its dock: the programs pinned, then the others with windows on
+            // the workspace it shows; each one's icon, how many windows it has
+            // there, whether one has the keyboard, how many are put away.
+            fact(self, format!("{name}.docks.{s}"), 0.0, false);
+            fact(self, format!("{name}.mins.{s}"), 0.0, false);
+            for k in 0..DOCK_ITEMS {
+                let full = format!("{name}.dock.{s}.{k}.icon");
+                let id = self.e.live_text(interned(&full), "");
+                self.texts.insert(full, id);
+                for field in ["windows", "focused", "pinned", "away"] {
+                    fact(self, format!("{name}.dock.{s}.{k}.{field}"), 0.0, false);
+                }
+            }
         }
         fact(self, format!("{name}.focus"), -1.0, false);
         // What the compositor asks the scene to choose: 1 a monitor, 2 a window, 3 either.
@@ -5852,6 +5869,15 @@ impl<'a> Compiler<'a> {
                             let a = self.which_window(&mut c)?;
                             c.expect_word("with")?;
                             Effect::WindowSwap(a, self.which_window(&mut c)?)
+                        }
+                        // `dock 2 on 0`: that item of that monitor's dock.
+                        "dock" => {
+                            if self.e.nest.is_none() {
+                                return c.error("`dock` opens an item of the scene's windows' dock: declare them first, `windows win max 16`");
+                            }
+                            let k = self.expr(&mut c)?;
+                            let on = if c.word("on") { Some(self.expr(&mut c)?) } else { None };
+                            Effect::Dock(k, on)
                         }
                         "launch" => {
                             if self.e.nest.is_none() {

@@ -13,6 +13,8 @@ scene Workspaces {
     on key Alt+w { workspace 2 on 0 }
     on key Alt+m { send workspace win.shown.0 on 0 to 1 }
     on key Alt+n { send workspace 1 to 1 }
+    on key Alt+d { dock 0 on 0 }
+    let docked = win.docks.0 + win.dock.0.0.windows + win.dock.0.0.focused + win.dock.0.0.pinned + win.dock.0.0.away + win.mins.0 + win.0.dockat + win.0.minat
     let pools = win.pools.0 + win.used.0 + win.pool.0
     repeat i in 0..4 {
         let shown = win.$i.pool == win.pool.0 and win.$i.workspace == win.shown.0

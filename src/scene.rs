@@ -1530,6 +1530,10 @@ pub enum Effect {
     Window(WindowAction, Expr),
     /// A program started inside the scene's compositor: `launch "kitty"`.
     Launch(String),
+    /// `dock k on s`: that item of monitor `s`'s dock: its window (the next
+    /// one, if one of them has the keyboard; brought back, if put away), or
+    /// the program started.
+    Dock(Expr, Option<Expr>),
     /// A window to another monitor: `send win(win.focus) to 1`.
     WindowTo(Expr, Expr),
     /// Two windows change places, in the order and on their monitors:
@@ -1576,6 +1580,7 @@ impl Effect {
             Effect::WindowSwap(a, b) => Effect::WindowSwap(a.with_payload(v), b.with_payload(v)),
             Effect::Workspace(w, on) => Effect::Workspace(w.with_payload(v), on.as_ref().map(|e| e.with_payload(v))),
             Effect::WindowToWorkspace(w, to, on) => Effect::WindowToWorkspace(w.with_payload(v), to.with_payload(v), on.as_ref().map(|e| e.with_payload(v))),
+            Effect::Dock(k, on) => Effect::Dock(k.with_payload(v), on.as_ref().map(|e| e.with_payload(v))),
             Effect::WorkspaceTo(n, on, to) => Effect::WorkspaceTo(n.with_payload(v), on.as_ref().map(|e| e.with_payload(v)), to.with_payload(v)),
             Effect::Pick(Some((window, e))) => Effect::Pick(Some((*window, e.with_payload(v)))),
             other => other.clone(),
@@ -2005,6 +2010,18 @@ pub struct Nest {
     pub max: usize,
 }
 
+/// A program pinned to the dock: the names its windows go by (their app id
+/// or class, lowercase), its icon, and how it is started.
+#[derive(Clone, Debug, Default)]
+pub struct DockPin {
+    pub keys: Vec<String>,
+    pub icon: String,
+    pub exec: String,
+}
+
+/// How many items a monitor's dock has at most.
+pub const DOCK_ITEMS: usize = 12;
+
 /// What the compositor inside the scene tells the render.
 pub enum NestEvent {
     /// Where programs connect: `WAYLAND_DISPLAY`.
@@ -2028,6 +2045,10 @@ pub enum NestEvent {
     Reserved(usize, [f32; 4]),
     Title(usize, String),
     App(usize, String),
+    /// The icon of the program a window belongs to (from its `.desktop`).
+    Icon(usize, String),
+    /// The programs pinned to the shore (pleamar-wm's dock), in order.
+    Dock(Vec<DockPin>),
     /// A window is fullscreen now, or no longer: it asked, or the scene did.
     Fullscreen(usize, bool),
     /// A window is a dialog (it has a parent, or a size of its own it

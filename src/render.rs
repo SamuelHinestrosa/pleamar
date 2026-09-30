@@ -74,11 +74,32 @@ struct Desks {
     /// The window that last had the keyboard in each pool.
     last: std::collections::HashMap<u32, usize>,
     next: u32,
+    // ── the dock ──
+    /// Each slot's program (its app id, lowercase), its icon, whether it is
+    /// put away, and when it opened (the dock's order).
+    apps: Vec<String>,
+    icons: Vec<String>,
+    minimized: Vec<bool>,
+    born: Vec<u64>,
+    stamp: u64,
+    focus: Option<usize>,
+    /// The programs pinned, and each monitor's dock as last worked out.
+    pins: Vec<crate::scene::DockPin>,
+    items: [Vec<DockItem>; 4],
+}
+
+/// An item of a monitor's dock: a program pinned, or one with windows there.
+#[derive(Clone, Default)]
+struct DockItem {
+    key: String,
+    pin: Option<usize>,
+    icon: String,
+    exec: String,
 }
 
 impl Default for Desks {
     fn default() -> Self {
-        Desks { pool: Vec::new(), alive: Vec::new(), stack: [vec![1], vec![2], vec![3], vec![4]], shown: [1, 2, 3, 4], last: Default::default(), next: 5 }
+        Desks { pool: Vec::new(), alive: Vec::new(), stack: [vec![1], vec![2], vec![3], vec![4]], shown: [1, 2, 3, 4], last: Default::default(), next: 5, apps: Vec::new(), icons: Vec::new(), minimized: Vec::new(), born: Vec::new(), stamp: 0, focus: None, pins: Vec::new(), items: Default::default() }
     }
 }
 
@@ -87,7 +108,42 @@ impl Desks {
         if self.pool.len() < max {
             self.pool.resize(max, 0);
             self.alive.resize(max, false);
+            self.apps.resize(max, String::new());
+            self.icons.resize(max, String::new());
+            self.minimized.resize(max, false);
+            self.born.resize(max, 0);
         }
+    }
+
+    /// Whether that slot's window belongs to that dock item.
+    fn of_item(&self, slot: usize, item: &DockItem) -> bool {
+        let key = &self.apps[slot];
+        !key.is_empty() && match item.pin {
+            Some(p) => self.pins.get(p).is_some_and(|pin| pin.keys.iter().any(|k| k == key)),
+            None => item.key == *key,
+        }
+    }
+
+    /// The windows on the workspace a monitor shows, as they opened.
+    fn here(&self, screen: usize, screens: &[usize]) -> Vec<usize> {
+        let mut v: Vec<usize> = (0..self.pool.len()).filter(|k| self.alive(*k) && screens.get(*k).copied().unwrap_or(0).min(3) == screen && self.pool[*k] == self.shown[screen]).collect();
+        v.sort_by_key(|k| self.born[*k]);
+        v
+    }
+
+    /// A monitor's dock: the programs pinned, then the others with windows
+    /// on the workspace it shows, in the order they opened.
+    fn work_dock(&mut self, screen: usize, screens: &[usize]) {
+        let mut items: Vec<DockItem> = self.pins.iter().enumerate().map(|(k, p)| DockItem { key: p.keys.first().cloned().unwrap_or_default(), pin: Some(k), icon: p.icon.clone(), exec: p.exec.clone() }).collect();
+        for slot in self.here(screen, screens) {
+            if self.apps[slot].is_empty() || items.iter().any(|i| self.of_item(slot, i)) {
+                continue;
+            }
+            let icon = if self.icons[slot].is_empty() { self.apps[slot].clone() } else { self.icons[slot].clone() };
+            items.push(DockItem { key: self.apps[slot].clone(), pin: None, icon, exec: String::new() });
+        }
+        items.truncate(crate::scene::DOCK_ITEMS);
+        self.items[screen] = items;
     }
 
     fn pool_of(&self, slot: usize) -> u32 {
@@ -151,9 +207,12 @@ impl Desks {
 /// Each window's turn in the layout of its own monitor and workspace, how
 /// many share them, and the order of the ones shown. A workspace not shown
 /// is laid out all the same: its windows are in their places when it slides in.
-fn nest_places(scene: &Scene, facts: &mut [f32], to_logic: &Sender<Event>, n: &crate::scene::Nest, order: &[usize], screens: &[usize], desks: &mut Desks) {
+fn nest_places(scene: &Scene, facts: &mut [f32], texts: &mut [String], to_logic: &Sender<Event>, n: &crate::scene::Nest, order: &[usize], screens: &[usize], desks: &mut Desks) {
     desks.grow(n.max);
     desks.compact(screens);
+    for s in 0..4 {
+        desks.work_dock(s, screens);
+    }
     let desks = &*desks;
     let name = &n.name;
     let screen_of = |slot: usize| screens.get(slot).copied().unwrap_or(0);
@@ -180,6 +239,31 @@ fn nest_places(scene: &Scene, facts: &mut [f32], to_logic: &Sender<Event>, n: &c
         nest_fact(scene, facts, to_logic, &format!("{name}.used.{s}"), desks.used(s, screens) as f32);
     }
     nest_fact(scene, facts, to_logic, &format!("{name}.count"), visible.len() as f32);
+    // The docks.
+    for s in 0..4 {
+        let items = &desks.items[s];
+        let here = desks.here(s, screens);
+        nest_fact(scene, facts, to_logic, &format!("{name}.docks.{s}"), items.len() as f32);
+        for k in 0..crate::scene::DOCK_ITEMS {
+            let item = items.get(k);
+            let mine: Vec<usize> = item.map(|i| here.iter().copied().filter(|w| desks.of_item(*w, i)).collect()).unwrap_or_default();
+            nest_text(scene, texts, to_logic, &format!("{name}.dock.{s}.{k}.icon"), item.map_or(String::new(), |i| i.icon.clone()));
+            nest_fact(scene, facts, to_logic, &format!("{name}.dock.{s}.{k}.windows"), mine.len() as f32);
+            nest_fact(scene, facts, to_logic, &format!("{name}.dock.{s}.{k}.focused"), mine.iter().any(|w| desks.focus == Some(*w)) as u8 as f32);
+            nest_fact(scene, facts, to_logic, &format!("{name}.dock.{s}.{k}.pinned"), item.is_some_and(|i| i.pin.is_some()) as u8 as f32);
+            nest_fact(scene, facts, to_logic, &format!("{name}.dock.{s}.{k}.away"), mine.iter().filter(|w| desks.minimized[**w]).count() as f32);
+        }
+        let away: Vec<usize> = here.iter().copied().filter(|w| desks.minimized[*w]).collect();
+        nest_fact(scene, facts, to_logic, &format!("{name}.mins.{s}"), away.len() as f32);
+    }
+    for k in 0..n.max {
+        let s = screen_of(k).min(3);
+        let here = desks.shown_here(k, screens) && desks.alive(k);
+        let at = if here { desks.items[s].iter().position(|i| desks.of_item(k, i)).map_or(-1.0, |p| p as f32) } else { -1.0 };
+        nest_fact(scene, facts, to_logic, &format!("{name}.{k}.dockat"), at);
+        let minat = if here && desks.minimized[k] { desks.here(s, screens).iter().filter(|w| desks.minimized[**w]).position(|w| *w == k).map_or(-1.0, |p| p as f32) } else { -1.0 };
+        nest_fact(scene, facts, to_logic, &format!("{name}.{k}.minat"), minat);
+    }
 }
 
 /// A fact of the scene's windows, by name: set, and told to the logic.
@@ -927,6 +1011,11 @@ pub fn run(
                             desks.grow(n.max);
                             desks.pool[slot] = desks.shown[screen.min(3)];
                             desks.alive[slot] = true;
+                            desks.apps[slot] = app.to_lowercase();
+                            desks.icons[slot] = String::new();
+                            desks.minimized[slot] = false;
+                            desks.stamp += 1;
+                            desks.born[slot] = desks.stamp;
                             // What the slot showed before —a window closing, still fading— is no longer it.
                             if let Some(w) = nest_windows.get_mut(slot) {
                                 for p in w.pieces.drain(..) {
@@ -939,7 +1028,26 @@ pub fn run(
                             nest_text(&scene, &mut texts, &to_logic, &format!("{name}.{slot}.app"), app);
                         }
                         NestEvent::Title(slot, t) => nest_text(&scene, &mut texts, &to_logic, &format!("{name}.{slot}.title"), t),
-                        NestEvent::App(slot, t) => nest_text(&scene, &mut texts, &to_logic, &format!("{name}.{slot}.app"), t),
+                        NestEvent::App(slot, t) => {
+                            desks.grow(n.max);
+                            if slot < n.max {
+                                desks.apps[slot] = t.to_lowercase();
+                            }
+                            nest_text(&scene, &mut texts, &to_logic, &format!("{name}.{slot}.app"), t);
+                            nest_places(&scene, &mut facts, &mut texts, &to_logic, &n, &nest_order, &nest_screens, &mut desks);
+                        }
+                        NestEvent::Icon(slot, icon) => {
+                            desks.grow(n.max);
+                            if slot < n.max {
+                                desks.icons[slot] = icon.clone();
+                            }
+                            nest_text(&scene, &mut texts, &to_logic, &format!("{name}.{slot}.icon"), icon);
+                            nest_places(&scene, &mut facts, &mut texts, &to_logic, &n, &nest_order, &nest_screens, &mut desks);
+                        }
+                        NestEvent::Dock(pins) => {
+                            desks.pins = pins;
+                            nest_places(&scene, &mut facts, &mut texts, &to_logic, &n, &nest_order, &nest_screens, &mut desks);
+                        }
                         NestEvent::Fullscreen(slot, yes) => nest_fact(&scene, &mut facts, &to_logic, &format!("{name}.{slot}.fullscreen"), yes as u8 as f32),
                         NestEvent::Minimized(slot, yes) => {
                             // Brought back, it comes to the workspace its monitor shows:
@@ -950,10 +1058,15 @@ pub fn run(
                                 let here = desks.shown[nest_screens.get(slot).copied().unwrap_or(0).min(3)];
                                 if desks.pool[slot] != here {
                                     desks.pool[slot] = here;
-                                    nest_places(&scene, &mut facts, &to_logic, &n, &nest_order, &nest_screens, &mut desks);
+                                    nest_places(&scene, &mut facts, &mut texts, &to_logic, &n, &nest_order, &nest_screens, &mut desks);
                                 }
                             }
                             nest_fact(&scene, &mut facts, &to_logic, &format!("{name}.{slot}.minimized"), yes as u8 as f32);
+                            desks.grow(n.max);
+                            if slot < n.max {
+                                desks.minimized[slot] = yes;
+                            }
+                            nest_places(&scene, &mut facts, &mut texts, &to_logic, &n, &nest_order, &nest_screens, &mut desks);
                         }
                         NestEvent::Dialog(slot, yes) => nest_fact(&scene, &mut facts, &to_logic, &format!("{name}.{slot}.dialog"), yes as u8 as f32),
                         NestEvent::Frame { slot, geometry, pieces } => {
@@ -1048,7 +1161,7 @@ pub fn run(
                             desks.grow(n.max);
                             if slot < n.max {
                                 desks.alive[slot] = false;
-                                nest_places(&scene, &mut facts, &to_logic, &n, &nest_order, &nest_screens, &mut desks);
+                                nest_places(&scene, &mut facts, &mut texts, &to_logic, &n, &nest_order, &nest_screens, &mut desks);
                             }
                             // Its last image stays: the scene may want to see it leave.
                             nest_fact(&scene, &mut facts, &to_logic, &format!("{name}.{slot}.open"), 0.0);
@@ -1065,7 +1178,7 @@ pub fn run(
                             if slot < n.max {
                                 let screen = nest_screens.get(slot).copied().unwrap_or(0);
                                 desks.pool[slot] = desks.at(screen, ws.max(1), &nest_screens);
-                                nest_places(&scene, &mut facts, &to_logic, &n, &nest_order, &nest_screens, &mut desks);
+                                nest_places(&scene, &mut facts, &mut texts, &to_logic, &n, &nest_order, &nest_screens, &mut desks);
                                 // Sent where it is not seen (a rule: `workspace 3`) with the
                                 // keyboard: the keyboard stays where it is seen —the one that
                                 // last had it on that workspace, or the first there—.
@@ -1088,6 +1201,8 @@ pub fn run(
                             if let Some(k) = which {
                                 desks.last.insert(desks.pool_of(k), k);
                             }
+                            desks.focus = which;
+                            nest_places(&scene, &mut facts, &mut texts, &to_logic, &n, &nest_order, &nest_screens, &mut desks);
                             for k in 0..n.max {
                                 nest_fact(&scene, &mut facts, &to_logic, &format!("{name}.{k}.focused"), (which == Some(k)) as u8 as f32);
                             }
@@ -1128,7 +1243,7 @@ pub fn run(
                                 desks.pool[slot] = desks.shown[screen.min(3)];
                             }
                             nest_fact(&scene, &mut facts, &to_logic, &format!("{name}.{slot}.screen"), screen as f32);
-                            nest_places(&scene, &mut facts, &to_logic, &n, &nest_order, &nest_screens, &mut desks);
+                            nest_places(&scene, &mut facts, &mut texts, &to_logic, &n, &nest_order, &nest_screens, &mut desks);
                         }
                         NestEvent::Moved(slot, screen) => {
                             if nest_screens.len() < n.max {
@@ -1158,7 +1273,7 @@ pub fn run(
                                 }
                             }
                             nest_fact(&scene, &mut facts, &to_logic, &format!("{name}.{slot}.screen"), screen as f32);
-                            nest_places(&scene, &mut facts, &to_logic, &n, &nest_order, &nest_screens, &mut desks);
+                            nest_places(&scene, &mut facts, &mut texts, &to_logic, &n, &nest_order, &nest_screens, &mut desks);
                         }
                         NestEvent::Reveal(slot) => {
                             desks.grow(n.max);
@@ -1167,7 +1282,7 @@ pub fn run(
                                 let id = desks.pool[slot];
                                 if id != 0 && desks.shown[screen] != id {
                                     desks.shown[screen] = id;
-                                    nest_places(&scene, &mut facts, &to_logic, &n, &nest_order, &nest_screens, &mut desks);
+                                    nest_places(&scene, &mut facts, &mut texts, &to_logic, &n, &nest_order, &nest_screens, &mut desks);
                                 }
                             }
                         }
@@ -1176,7 +1291,7 @@ pub fn run(
                             if nest_screens.len() < n.max {
                                 nest_screens.resize(n.max, 0);
                             }
-                            nest_places(&scene, &mut facts, &to_logic, &n, &nest_order, &nest_screens, &mut desks);
+                            nest_places(&scene, &mut facts, &mut texts, &to_logic, &n, &nest_order, &nest_screens, &mut desks);
                         }
                     }
                 }
@@ -1912,7 +2027,7 @@ pub fn run(
                             let id = desks.at(screen, ws, &nest_screens);
                             if desks.shown[screen] != id {
                                 desks.shown[screen] = id;
-                                nest_places(&scene, &mut facts, &to_logic, &n, &nest_order, &nest_screens, &mut desks);
+                                nest_places(&scene, &mut facts, &mut texts, &to_logic, &n, &nest_order, &nest_screens, &mut desks);
                                 if let Some(send) = &nest {
                                     let here = desks.last.get(&id).copied().filter(|k| nest_order.contains(k) && desks.pool_of(*k) == id && nest_screens.get(*k) == Some(&screen));
                                     let first = || nest_order.iter().copied().find(|k| desks.pool_of(*k) == id && nest_screens.get(*k) == Some(&screen));
@@ -1950,7 +2065,35 @@ pub fn run(
                                             send(ToNest::Send(slot, target));
                                         }
                                     }
-                                    nest_places(&scene, &mut facts, &to_logic, &n, &nest_order, &nest_screens, &mut desks);
+                                    nest_places(&scene, &mut facts, &mut texts, &to_logic, &n, &nest_order, &nest_screens, &mut desks);
+                                }
+                            }
+                        }
+                    }
+                    // A dock's item: its window —the next one, if one of them has the
+                    // keyboard—, brought back if it was put away; or its program started.
+                    Effect::Dock(k, on) => {
+                        let c = Ctx { props: &props, facts: &facts };
+                        let k = k.eval(c).round();
+                        let screen = on.map_or(nest_on_screen.unwrap_or(0) as f32, |e| e.eval(c)).round().clamp(0.0, 3.0) as usize;
+                        if let (Some(n), Some(send), true) = (scene.nest.clone(), &nest, k >= 0.0) {
+                            desks.grow(n.max);
+                            if let Some(item) = desks.items[screen].get(k as usize).cloned() {
+                                let mine: Vec<usize> = desks.here(screen, &nest_screens).into_iter().filter(|w| desks.of_item(*w, &item)).collect();
+                                if mine.is_empty() {
+                                    if !item.exec.is_empty() {
+                                        send(ToNest::Launch(item.exec.clone()));
+                                    }
+                                } else {
+                                    let at = desks.focus.and_then(|f| mine.iter().position(|w| *w == f));
+                                    let slot = match at {
+                                        Some(p) => mine[(p + 1) % mine.len()],
+                                        None => mine.iter().copied().find(|w| !desks.minimized[*w]).unwrap_or(mine[0]),
+                                    };
+                                    if desks.minimized[slot] {
+                                        send(ToNest::Minimize(slot, false));
+                                    }
+                                    send(ToNest::Focus(slot));
                                 }
                             }
                         }
@@ -1985,7 +2128,7 @@ pub fn run(
                                         send(ToNest::Send(k, to));
                                     }
                                 }
-                                nest_places(&scene, &mut facts, &to_logic, &n, &nest_order, &nest_screens, &mut desks);
+                                nest_places(&scene, &mut facts, &mut texts, &to_logic, &n, &nest_order, &nest_screens, &mut desks);
                             }
                         }
                     }

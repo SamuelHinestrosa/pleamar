@@ -1071,6 +1071,10 @@ reloads on save while the programs in it keep running.
 | `win.on.$s` | how many are shown on monitor `s` (0 to 3) |
 | `win.shown.$s` · `win.pool.$s` | the workspace monitor `s` shows: its turn, and its identity |
 | `win.pools.$s` · `win.used.$s` | how many workspaces monitor `s` has (the one shown among them, even empty), and how many hold windows |
+| `win.$i.icon` | the icon of its program, from its `.desktop` (a generic one if nothing installed says it): `image i = from win.$i.icon, 64, 64` |
+| `win.docks.$s` · `win.dock.$s.$k.icon` | monitor `s`'s dock: how many items it has (the programs the compositor has pinned, then the others with windows on the workspace it shows, as they opened), and each one's icon |
+| `win.dock.$s.$k.windows` · `.focused` · `.pinned` · `.away` | that item's windows there, whether one of them has the keyboard, whether it is pinned, and how many of them are put away |
+| `win.$i.dockat` · `win.$i.minat` · `win.mins.$s` | its item in its monitor's dock, and its turn among the ones put away there (−1: none); how many are put away on monitor `s` |
 | `win.reserved.$s.top` · `.right` · `.bottom` · `.left` | what other programs' bars keep on monitor `s` at that edge, in pixels (layer-shell's exclusive zones): lay the windows out around it |
 | `win.order.$p` | which slot is at each place among the ones shown: `win.order.0` leads |
 | `win.socket` | where programs connect |
@@ -1099,6 +1103,7 @@ that holds), which are the scene's.
 | `fullscreen win.$i` · `fullscreen win(win.focus)` | to fullscreen, or back from it: the program is told (it hides its own bars) and `win.$i.fullscreen` says so |
 | `workspace 3` · `workspace n on 1` | that workspace shown on the monitor the pointer is on, or on that one —no further than the empty one past the last that holds windows—. The keyboard goes to the window that last had it there; with none there, nobody has it |
 | `send win(win.focus) to workspace 2` · `… to workspace 2 on 1` | that window to that workspace, on its monitor or on that one (the same limit) |
+| `dock 2 on 0` · `dock k` | that item of monitor `s`'s dock (the one the pointer is on, without `on`): its window —the next one, if one of them has the keyboard; brought back, if put away— or, with none there, its program started |
 | `send workspace 2 on 0 to 1` · `send workspace n to 1` | the whole workspace, with its windows, to that monitor —from the one the pointer is on, without `on`—: it goes to the end of that one's stack and is shown there; the monitor it left shows the one beside it |
 | `pick win.$i` · `pick win(x)` · `pick screen 1` · `pick none` | the answer to `win.picking`: that window, that monitor, or nothing (the program's request is turned down). The compositor stops asking: `win.picking` goes back to 0 |
 
@@ -1404,7 +1409,7 @@ properties.layout: at anchor gap padding align fill glass lens shine refraction 
 functions: min max abs floor ceil sin cos clamp smooth mix if vel sqrt pow fract mod sign round exp log tan atan2 length noise random pick
 text_functions: upper lower
 triggers: press release scroll drag hold enter leave hover away idle key submit focus blur drop carry change still
-effects: toggle emit impulse play focus blur close promote fullscreen minimize restore launch send swap workspace pick
+effects: toggle emit impulse play focus blur close promote fullscreen minimize restore launch send swap workspace pick dock
 curves: linear in_quad out_quad in_cubic out_cubic in_out_sine out_back bezier
 frame: hold emit
 classes: ambient reflex asked state
