@@ -96,6 +96,9 @@ impl Shelves {
     }
 
     fn request(&mut self, width: u32, height: u32) -> Option<AtlasSlot> {
+        if width == 0 || height == 0 || width > ATLAS_SIZE - 2 || height > ATLAS_SIZE - 2 {
+            return None;
+        }
         let (w, h) = (width + 1, height + 1); // one pixel of air so filtering does not bleed
         let row = self.rows.iter_mut().find(|(_, fh, fx)| *fh >= h && *fh <= h + h / 3 + 2 && fx + w <= ATLAS_SIZE);
         let (y, x) = match row {
@@ -130,6 +133,7 @@ struct Typesetter {
     pending_upload: Vec<(AtlasSlot, Vec<u8>)>,
     /// How many real pixels per logical pixel it is painted at: that of the finest sheet.
     scale: f32,
+    exhausted: bool,
 }
 
 impl Typesetter {
@@ -137,7 +141,7 @@ impl Typesetter {
         let t0 = std::time::Instant::now();
         let fonts = FontSystem::new();
         println!("text   · {} system fonts in {} ms", fonts.db().len(), t0.elapsed().as_millis());
-        Typesetter { fonts, swash: SwashCache::new(), shelves: Shelves::new(), glyphs: HashMap::new(), pending_upload: Vec::new(), scale: 1.0 }
+        Typesetter { fonts, swash: SwashCache::new(), shelves: Shelves::new(), glyphs: HashMap::new(), pending_upload: Vec::new(), scale: 1.0, exhausted: false }
     }
 
     /// When the scale changes, everything painted stops being valid.
@@ -146,6 +150,7 @@ impl Typesetter {
         self.shelves = Shelves::new();
         self.glyphs.clear();
         self.pending_upload.clear();
+        self.exhausted = false;
     }
 
     fn lay_out(&mut self, c: &LayoutKey) -> Layout {
@@ -186,9 +191,7 @@ impl Typesetter {
                 glyphs.push(PlacedGlyph { rect: [x / s, y / s, slot.width as f32 / s, slot.height as f32 / s], uv: slot.uv(), colored });
             }
         }
-        if full {
-            eprintln!("text   · the {ATLAS_SIZE}² atlas is full: some glyphs are not painted");
-        }
+        self.exhausted |= full;
         // Without a fixed width, the alignment is relative to whatever the text itself measures.
         if cursors.is_empty() {
             cursors.push((0, 0.0));
@@ -200,6 +203,7 @@ impl Typesetter {
         if let Some(g) = self.glyphs.get(&key) {
             return *g;
         }
+        let mut no_space = false;
         let painted = self.swash.get_image_uncached(&mut self.fonts, key).and_then(|img| {
             let (w, h) = (img.placement.width, img.placement.height);
             if w == 0 || h == 0 {
@@ -216,13 +220,37 @@ impl Typesetter {
             };
             let Some(slot) = self.shelves.request(w, h) else {
                 *full = true;
+                no_space = true;
                 return None;
             };
-            self.pending_upload.push((slot, rgba));
+            self.upload(slot, rgba);
             Some((slot, img.placement.left, img.placement.top, matches!(img.content, SwashContent::Color)))
         });
-        self.glyphs.insert(key, painted);
+        // A space has no ink; a letter waiting for atlas space does. Only the
+        // former can be cached as absent.
+        if !no_space {
+            self.glyphs.insert(key, painted);
+        }
         painted
+    }
+
+    fn reserve(&mut self, width: u32, height: u32) -> Option<AtlasSlot> {
+        let slot = self.shelves.request(width, height);
+        self.exhausted |= slot.is_none();
+        slot
+    }
+
+    fn upload(&mut self, slot: AtlasSlot, rgba: Vec<u8>) {
+        // Reused atlas pixels need fresh transparent gutters too; otherwise
+        // linear filtering picks up ink from the previous generation.
+        let padded = AtlasSlot { x: slot.x - 1, y: slot.y - 1, width: slot.width + 2, height: slot.height + 2 };
+        let stride = padded.width as usize * 4;
+        let mut pixels = vec![0; stride * padded.height as usize];
+        for (y, row) in rgba.chunks_exact(slot.width as usize * 4).enumerate() {
+            let start = (y + 1) * stride + 4;
+            pixels[start..start + row.len()].copy_from_slice(row);
+        }
+        self.pending_upload.push((padded, pixels));
     }
 
     /// A scene's images, at the logical size they ask for times the scale. An
@@ -237,7 +265,10 @@ impl Typesetter {
                     ImageSource::File(r) => Some(r.clone()),
                     ImageSource::Icon(name) => crate::platform::icon(name),
                     // It is requested once it is known what the text says: `live_image`.
-                    ImageSource::Live(_) => return None,
+                    ImageSource::Live(_) => {
+                        animations.push(None);
+                        return None;
+                    }
                 };
                 // A file that moves —a GIF, an animated PNG or WebP—: each frame to
                 // the atlas, with the moment it ends.
@@ -246,8 +277,8 @@ impl Typesetter {
                     let mut ends = Vec::new();
                     let mut t = 0.0;
                     for (rgba, delay) in frames {
-                        let Some(slot) = self.shelves.request(px.0, px.1) else { break };
-                        self.pending_upload.push((slot, rgba));
+                        let Some(slot) = self.reserve(px.0, px.1) else { break };
+                        self.upload(slot, rgba);
                         t += delay;
                         slots.push(slot);
                         ends.push(t);
@@ -258,8 +289,8 @@ impl Typesetter {
                 }
                 animations.push(None);
                 let slot = path.as_ref().and_then(|r| rasterize_image(r, px)).and_then(|rgba| {
-                    let slot = self.shelves.request(px.0, px.1)?;
-                    self.pending_upload.push((slot, rgba));
+                    let slot = self.reserve(px.0, px.1)?;
+                    self.upload(slot, rgba);
                     Some(slot)
                 });
                 if slot.is_none() {
@@ -275,8 +306,9 @@ impl Typesetter {
     /// never more than a quarter of the atlas —a wallpaper asked for at a
     /// monitor's size is shown a little softer rather than not at all—.
     fn live_px(&self, (w, h): (u32, u32)) -> (u32, u32) {
-        let (w, h) = ((w as f32) * self.scale, (h as f32) * self.scale);
-        let k = ((LIVE_BUDGET as f32) / (w * h)).sqrt().min(1.0);
+        let (w, h) = (((w as f32) * self.scale).max(1.0), ((h as f32) * self.scale).max(1.0));
+        let edge = (ATLAS_SIZE - 2) as f32;
+        let k = ((LIVE_BUDGET as f32) / (w * h)).sqrt().min(edge / w).min(edge / h).min(1.0);
         ((w * k).round().max(1.0) as u32, (h * k).round().max(1.0) as u32)
     }
 
@@ -288,14 +320,81 @@ impl Typesetter {
         let rgba = rasterize_image(&path?, px)?;
         let slot = match into {
             Some(s) if (s.width, s.height) == px => s,
-            _ => self.shelves.request(px.0, px.1)?,
+            _ => self.reserve(px.0, px.1)?,
         };
-        self.pending_upload.push((slot, rgba));
+        self.upload(slot, rgba);
         Some(slot)
+    }
+
+    fn rebuild(&mut self, working: &WorkingSet, images: &[(ImageSource, (u32, u32))]) -> Snapshot {
+        self.clear(self.scale);
+        // Text gets space before pictures. Old covers, search results and
+        // animated font sizes are not part of the new generation.
+        let layouts = working.layouts.iter().map(|key| (key.clone(), Arc::new(self.lay_out(key)))).collect();
+        let (images, animations) = self.load_images(images);
+        let live = working.live.iter().map(|(name, size)| {
+            let (base, version) = live_name(name);
+            let slot = self.load_live(base, *size, None);
+            ((base.to_owned(), *size), (slot, version.to_owned()))
+        }).collect();
+        Snapshot { layouts, images, animations, live }
+    }
+
+    fn work(&mut self, job: Job) -> Option<Parcel> {
+        self.exhausted = false;
+        let delivery = match job {
+            Job::Clear(scale) => {
+                self.clear(scale);
+                return None;
+            }
+            Job::Layout(key, generation) => {
+                let layout = Arc::new(self.lay_out(&key));
+                Delivery::Layout { key, layout, generation }
+            }
+            Job::Images(list, generation) => {
+                let (slots, animations) = self.load_images(&list);
+                Delivery::Images { slots, animations, generation }
+            }
+            Job::Live(name, size, generation) => {
+                let slot = self.load_live(&name, size, None);
+                Delivery::Live { name, size, slot, generation }
+            }
+            Job::Reload(name, size, into, generation) => {
+                let slot = self.load_live(&name, size, Some(into));
+                Delivery::Live { name, size, slot, generation }
+            }
+            Job::Rebuild(working, images, generation) => {
+                let snapshot = self.rebuild(&working, &images);
+                Delivery::Rebuilt { snapshot, working, generation }
+            }
+        };
+        Some(Parcel { delivery, pending_upload: std::mem::take(&mut self.pending_upload), exhausted: self.exhausted })
     }
 }
 
 // ── the workshop and its counter ────────────────────────────────
+
+type LiveKey = (String, (u32, u32));
+
+#[derive(Clone, Default, PartialEq, Eq)]
+pub struct WorkingSet {
+    layouts: HashSet<LayoutKey>,
+    live: HashSet<LiveKey>,
+}
+
+pub struct Snapshot {
+    layouts: HashMap<LayoutKey, Arc<Layout>>,
+    images: Vec<Option<AtlasSlot>>,
+    animations: Vec<Option<Animation>>,
+    live: HashMap<LiveKey, (Option<AtlasSlot>, String)>,
+}
+
+fn live_name(name: &str) -> (&str, &str) {
+    match name.rsplit_once('?') {
+        Some((base, version)) if !base.is_empty() && !version.is_empty() && version.bytes().all(|c| c.is_ascii_digit()) => (base, version),
+        _ => (name, ""),
+    }
+}
 
 enum Job {
     Layout(LayoutKey, u32),
@@ -305,6 +404,7 @@ enum Job {
     Reload(String, (u32, u32), AtlasSlot, u32),
     /// New atlas, at this scale. Everything from previous generations is thrown away.
     Clear(f32),
+    Rebuild(WorkingSet, Vec<(ImageSource, (u32, u32))>, u32),
 }
 
 /// What the workshop hands back, with whatever it painted along the way.
@@ -312,11 +412,13 @@ pub enum Delivery {
     Layout { key: LayoutKey, layout: Arc<Layout>, generation: u32 },
     Images { slots: Vec<Option<AtlasSlot>>, animations: Vec<Option<Animation>>, generation: u32 },
     Live { name: String, size: (u32, u32), slot: Option<AtlasSlot>, generation: u32 },
+    Rebuilt { snapshot: Snapshot, working: WorkingSet, generation: u32 },
 }
 
 pub struct Parcel {
     pub delivery: Delivery,
     pub pending_upload: Vec<(AtlasSlot, Vec<u8>)>,
+    pub exhausted: bool,
 }
 
 /// The render's side: it asks, does not wait, and meanwhile shows what it had.
@@ -343,6 +445,11 @@ pub struct Texts {
     pub pending_upload: Vec<(AtlasSlot, Vec<u8>)>,
     generation: u32,
     scale: f32,
+    working: WorkingSet,
+    exhausted: bool,
+    rebuilding: bool,
+    /// An oversized working set is reported once, not rebuilt every frame.
+    too_large: Option<WorkingSet>,
 }
 
 impl Texts {
@@ -355,37 +462,19 @@ impl Texts {
             .spawn(move || {
                 let mut t = Typesetter::new();
                 for job in jobs {
-                    let delivery = match job {
-                        Job::Clear(scale) => {
-                            t.clear(scale);
-                            continue;
-                        }
-                        Job::Layout(key, generation) => {
-                            let layout = Arc::new(t.lay_out(&key));
-                            Delivery::Layout { key, layout, generation }
-                        }
-                        Job::Images(list, generation) => {
-                            let (slots, animations) = t.load_images(&list);
-                            Delivery::Images { slots, animations, generation }
-                        }
-                        Job::Live(name, size, generation) => {
-                            let slot = t.load_live(&name, size, None);
-                            Delivery::Live { name, size, slot, generation }
-                        }
-                        Job::Reload(name, size, into, generation) => {
-                            let slot = t.load_live(&name, size, Some(into));
-                            Delivery::Live { name, size, slot, generation }
-                        }
-                    };
-                    let pending_upload = std::mem::take(&mut t.pending_upload);
+                    let Some(parcel) = t.work(job) else { continue };
                     // Through the usual channel, which also wakes the render up if it was asleep.
-                    if to_render.send(ToRender::Workshop(Box::new(Parcel { delivery, pending_upload }))).is_err() {
+                    if to_render.send(ToRender::Workshop(Box::new(parcel))).is_err() {
                         return;
                     }
                 }
             })
             .unwrap();
-        Texts { to_workshop, layouts: HashMap::new(), requested: HashSet::new(), last: HashMap::new(), images: Vec::new(), animations: Vec::new(), sources: Vec::new(), live: HashMap::new(), live_requested: HashSet::new(), live_version: HashMap::new(), last_live: HashMap::new(), pending_upload: Vec::new(), generation: 0, scale: 1.0 }
+        Self::new(to_workshop)
+    }
+
+    fn new(to_workshop: Sender<Job>) -> Self {
+        Texts { to_workshop, layouts: HashMap::new(), requested: HashSet::new(), last: HashMap::new(), images: Vec::new(), animations: Vec::new(), sources: Vec::new(), live: HashMap::new(), live_requested: HashSet::new(), live_version: HashMap::new(), last_live: HashMap::new(), pending_upload: Vec::new(), generation: 0, scale: 1.0, working: WorkingSet::default(), exhausted: false, rebuilding: false, too_large: None }
     }
 
     pub fn scale(&self) -> f32 {
@@ -408,6 +497,10 @@ impl Texts {
         self.live_version.clear();
         self.last_live.clear();
         self.pending_upload.clear();
+        self.working = WorkingSet::default();
+        self.exhausted = false;
+        self.rebuilding = false;
+        self.too_large = None;
         let _ = self.to_workshop.send(Job::Clear(scale));
         if !images.is_empty() {
             let _ = self.to_workshop.send(Job::Images(images.to_vec(), self.generation));
@@ -416,15 +509,24 @@ impl Texts {
 
     pub fn receive(&mut self, p: Parcel) {
         let generation = match &p.delivery {
-            Delivery::Layout { generation, .. } | Delivery::Images { generation, .. } | Delivery::Live { generation, .. } => *generation,
+            Delivery::Layout { generation, .. } | Delivery::Images { generation, .. } | Delivery::Live { generation, .. } | Delivery::Rebuilt { generation, .. } => *generation,
         };
         if generation != self.generation {
             return; // from an atlas that no longer exists
+        }
+        self.exhausted |= p.exhausted;
+        if matches!(&p.delivery, Delivery::Rebuilt { .. }) {
+            // Old UVs and new atlas pixels become visible together. Until
+            // this parcel arrived, the previous frame remained usable.
+            self.pending_upload.clear();
         }
         self.pending_upload.extend(p.pending_upload);
         match p.delivery {
             Delivery::Layout { key, layout, .. } => {
                 self.requested.remove(&key);
+                if p.exhausted {
+                    return; // keep the previous complete layout until the rebuild
+                }
                 if self.layouts.len() > 512 {
                     self.layouts.clear();
                 }
@@ -435,17 +537,53 @@ impl Texts {
                 self.live_requested.remove(&(name.clone(), size));
                 self.live.insert((name, size), slot);
             }
+            Delivery::Rebuilt { snapshot, working, .. } => {
+                self.layouts = snapshot.layouts;
+                self.images = snapshot.images;
+                self.animations = snapshot.animations;
+                self.live.clear();
+                self.live_version.clear();
+                for (key, (slot, version)) in snapshot.live {
+                    self.live.insert(key.clone(), slot);
+                    self.live_version.insert(key, version);
+                }
+                self.requested.clear();
+                self.live_requested.clear();
+                self.last.clear();
+                self.last_live.clear();
+                self.rebuilding = false;
+                self.exhausted = false;
+                self.too_large = p.exhausted.then_some(working);
+                if p.exhausted {
+                    eprintln!("text   · visible text and images exceed the {ATLAS_SIZE}² atlas; reduce their size or number");
+                }
+            }
+        }
+    }
+
+    pub fn begin_frame(&mut self) {
+        self.working.layouts.clear();
+        self.working.live.clear();
+    }
+
+    pub fn end_frame(&mut self) {
+        if self.exhausted && !self.rebuilding && self.too_large.as_ref() != Some(&self.working) {
+            self.generation += 1;
+            self.rebuilding = true;
+            self.exhausted = false;
+            let _ = self.to_workshop.send(Job::Rebuild(self.working.clone(), self.sources.clone(), self.generation));
         }
     }
 
     /// A text's layout, if it is ready; if not, it is ordered and the last one
     /// seen at that place is returned. `place` is the position in the draw list.
     pub fn layout(&mut self, place: usize, key: LayoutKey) -> Option<Arc<Layout>> {
+        self.working.layouts.insert(key.clone());
         if let Some(m) = self.layouts.get(&key) {
             self.last.insert(place, m.clone());
             return Some(m.clone());
         }
-        if self.requested.insert(key.clone()) {
+        if !self.rebuilding && self.requested.insert(key.clone()) {
             let _ = self.to_workshop.send(Job::Layout(key, self.generation));
         }
         self.last.get(&place).cloned()
@@ -477,13 +615,11 @@ impl Texts {
             return self.images.get(k).copied().flatten();
         };
         let name = texts.get(t.0 as usize).filter(|n| !n.is_empty())?;
-        let (base, version) = match name.rsplit_once('?') {
-            Some((b, v)) if !b.is_empty() && !v.is_empty() && v.bytes().all(|c| c.is_ascii_digit()) => (b, v),
-            _ => (name.as_str(), ""),
-        };
+        self.working.live.insert((name.clone(), *size));
+        let (base, version) = live_name(name);
         let key = (base.to_string(), *size);
         let known = self.live.get(&key).copied();
-        if known.is_some() && self.live_version.get(&key).map(String::as_str) != Some(version) {
+        if !self.rebuilding && known.is_some() && self.live_version.get(&key).map(String::as_str) != Some(version) {
             self.live_version.insert(key.clone(), version.to_string());
             let _ = self.to_workshop.send(match known {
                 Some(Some(slot)) => Job::Reload(key.0.clone(), key.1, slot, self.generation),
@@ -497,6 +633,9 @@ impl Texts {
             }
             Some(None) => None,
             None => {
+                if self.rebuilding {
+                    return self.last_live.get(&k).copied();
+                }
                 self.live_version.insert(key.clone(), version.to_string());
                 if self.live_requested.insert(key.clone()) {
                     let _ = self.to_workshop.send(Job::Live(key.0, key.1, self.generation));
@@ -598,4 +737,183 @@ fn rasterize_image(path: &std::path::Path, px: (u32, u32)) -> Option<Vec<u8>> {
         return Some(canvas.take()); // tiny-skia already premultiplies
     }
     Some(fit(image::load_from_memory(&data).ok()?.to_rgba8(), px))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn spanish() -> LayoutKey {
+        LayoutKey::new("Hoy · Nada todavía. Captura de pantalla copiada.", &Style::new(14.0, crate::scene::color(1.0, 1.0, 1.0)), None)
+    }
+
+    #[test]
+    fn glyphs_can_retry_after_atlas_space_is_reclaimed() {
+        let mut t = Typesetter::new();
+        let key = spanish();
+        let expected = t.lay_out(&key).glyphs.len();
+        assert!(expected > 30, "system font did not shape the Spanish fixture");
+        t.clear(1.0);
+        assert!(t.shelves.request(ATLAS_SIZE - 2, ATLAS_SIZE - 2).is_some());
+        assert!(t.lay_out(&key).glyphs.is_empty());
+        t.shelves = Shelves::new();
+        assert_eq!(t.lay_out(&key).glyphs.len(), expected, "atlas exhaustion must not cache letters as nonexistent");
+    }
+
+    #[test]
+    fn atlas_slots_leave_room_for_gutters() {
+        let mut shelves = Shelves::new();
+        for (w, h) in [(0, 1), (1, 0), (ATLAS_SIZE, 1), (1, ATLAS_SIZE), (u32::MAX, 1)] {
+            assert!(shelves.request(w, h).is_none());
+        }
+        let slot = shelves.request(ATLAS_SIZE - 2, ATLAS_SIZE - 2).unwrap();
+        assert_eq!((slot.x + slot.width + 1, slot.y + slot.height + 1), (ATLAS_SIZE, ATLAS_SIZE));
+        assert!(shelves.request(1, 1).is_none());
+    }
+
+    #[test]
+    fn panoramic_live_images_fit_both_atlas_dimensions() {
+        let t = Typesetter::new();
+        for size in [(10_000, 1), (1, 10_000), (0, 0), (3840, 2160)] {
+            let px = t.live_px(size);
+            assert!(px.0 > 0 && px.1 > 0 && px.0 <= ATLAS_SIZE - 2 && px.1 <= ATLAS_SIZE - 2);
+            assert!(Shelves::new().request(px.0, px.1).is_some());
+        }
+    }
+
+    #[test]
+    fn reused_pixels_include_transparent_gutters() {
+        let mut t = Typesetter::new();
+        let slot = t.reserve(2, 2).unwrap();
+        t.upload(slot, vec![255; 16]);
+        let (padded, rgba) = t.pending_upload.pop().unwrap();
+        assert_eq!((padded.x, padded.y, padded.width, padded.height), (0, 0, 4, 4));
+        for y in 0..4 {
+            for x in 0..4 {
+                let expected = if (1..3).contains(&x) && (1..3).contains(&y) { 255 } else { 0 };
+                assert_eq!(&rgba[(y * 4 + x) * 4..(y * 4 + x + 1) * 4], &[expected; 4]);
+            }
+        }
+    }
+
+    fn deliver(t: &mut Typesetter, texts: &mut Texts, jobs: &std::sync::mpsc::Receiver<Job>) {
+        for job in jobs.try_iter() {
+            if let Some(parcel) = t.work(job) {
+                texts.receive(parcel);
+            }
+        }
+    }
+
+    #[test]
+    fn pressure_rebuild_is_atomic_and_old_deliveries_cannot_overwrite_it() {
+        let (send, jobs) = channel();
+        let mut texts = Texts::new(send);
+        let mut t = Typesetter::new();
+        let old = LayoutKey { text: "Previous".into(), ..spanish() };
+        texts.layout(0, old.clone());
+        deliver(&mut t, &mut texts, &jobs);
+        let previous = texts.layout(0, old).unwrap();
+        texts.pending_upload.clear();
+        t.shelves.rows.clear();
+        t.shelves.next_y = ATLAS_SIZE;
+        texts.begin_frame();
+        texts.layout(0, spanish());
+        deliver(&mut t, &mut texts, &jobs);
+        texts.end_frame();
+        assert!(texts.rebuilding);
+        assert!(Arc::ptr_eq(&texts.layout(0, spanish()).unwrap(), &previous));
+        let stale = t.work(Job::Layout(spanish(), texts.generation - 1)).unwrap();
+        let rebuilt = t.work(jobs.recv().unwrap()).unwrap();
+        assert!(!rebuilt.exhausted);
+        texts.receive(rebuilt);
+        let complete = texts.layout(0, spanish()).unwrap();
+        assert!(complete.glyphs.len() > 30);
+        let uploads = texts.pending_upload.len();
+        texts.receive(stale);
+        assert_eq!(texts.pending_upload.len(), uploads);
+        assert!(Arc::ptr_eq(&texts.layout(0, spanish()).unwrap(), &complete));
+        assert!(!texts.rebuilding);
+    }
+
+    #[test]
+    fn changing_live_images_reclaims_history_and_keeps_spanish_complete() {
+        let dir = std::env::temp_dir().join(format!("pleamar-atlas-{}-imágenes", std::process::id()));
+        std::fs::create_dir(&dir).unwrap();
+        let (send, jobs) = channel();
+        let mut texts = Texts::new(send);
+        let mut t = Typesetter::new();
+        let expected = t.lay_out(&spanish()).glyphs.len();
+        t.clear(1.0);
+        texts.reset(1.0, &[(ImageSource::Live(crate::scene::TextId(0)), (640, 360))]);
+        deliver(&mut t, &mut texts, &jobs);
+        let initial = texts.generation;
+        for i in 0..48 {
+            let path = dir.join(format!("cover {i}.svg"));
+            std::fs::write(&path, r#"<svg xmlns="http://www.w3.org/2000/svg" width="64" height="36"><rect width="64" height="36" fill="red"/></svg>"#).unwrap();
+            let names = [path.to_str().unwrap().to_owned()];
+            for _ in 0..4 {
+                texts.begin_frame();
+                texts.layout(0, spanish());
+                texts.image(0, &names);
+                texts.end_frame();
+                // The real render consumes the previous frame's uploads
+                // before receiving any of the jobs queued by that frame.
+                texts.pending_upload.clear();
+                deliver(&mut t, &mut texts, &jobs);
+            }
+            assert!(!texts.rebuilding && !texts.exhausted, "cover {i} never recovered");
+            assert!(texts.image(0, &names).is_some(), "cover {i} was lost");
+            assert_eq!(texts.layout(0, spanish()).unwrap().glyphs.len(), expected);
+            assert!(texts.live.len() < 20, "old covers are still resident");
+            std::fs::remove_file(path).unwrap();
+        }
+        assert!(texts.generation >= initial + 3, "fixture did not exhaust the atlas repeatedly");
+        std::fs::remove_dir(dir).unwrap();
+    }
+
+    #[test]
+    fn scene_reset_discards_an_inflight_rebuild() {
+        let (send, jobs) = channel();
+        let mut texts = Texts::new(send);
+        let mut t = Typesetter::new();
+        texts.working.layouts.insert(spanish());
+        texts.exhausted = true;
+        texts.end_frame();
+        let old = t.work(jobs.recv().unwrap()).unwrap();
+        texts.reset(1.25, &[]);
+        texts.receive(old);
+        assert!(texts.layouts.is_empty() && texts.pending_upload.is_empty());
+        deliver(&mut t, &mut texts, &jobs);
+        assert_eq!(t.scale, 1.25);
+        assert!(!texts.rebuilding);
+    }
+
+    #[test]
+    fn oversized_working_set_does_not_rebuild_on_every_frame() {
+        let (send, jobs) = channel();
+        let mut texts = Texts::new(send);
+        let mut t = Typesetter::new();
+        let huge = LayoutKey { px: 4096.0f32.to_bits(), text: "W".into(), ..spanish() };
+        texts.begin_frame();
+        texts.layout(0, huge.clone());
+        deliver(&mut t, &mut texts, &jobs);
+        texts.end_frame();
+        deliver(&mut t, &mut texts, &jobs);
+        assert!(texts.too_large.is_some());
+        for _ in 0..60 {
+            texts.begin_frame();
+            texts.layout(0, huge.clone());
+            texts.end_frame();
+        }
+        assert!(jobs.try_recv().is_err());
+    }
+
+    #[test]
+    fn live_images_keep_animation_indices_aligned() {
+        let mut t = Typesetter::new();
+        let sources = [(ImageSource::Live(crate::scene::TextId(0)), (16, 16)), (ImageSource::Live(crate::scene::TextId(1)), (16, 16))];
+        let (images, animations) = t.load_images(&sources);
+        assert_eq!(images.len(), sources.len());
+        assert_eq!(animations.len(), sources.len());
+    }
 }

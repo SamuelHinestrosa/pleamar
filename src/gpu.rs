@@ -695,6 +695,7 @@ impl DrawList {
     }
 
     pub fn compose(&mut self, instrs: &[Instr], c: Ctx, texts: &[String], tip: &mut Texts, field: Option<FieldView>, size: (f32, f32), hud: bool) {
+        tip.begin_frame();
         self.measurements.clear();
         self.fields.clear();
         self.size = size;
@@ -1409,6 +1410,7 @@ impl DrawList {
         if self.elements.is_empty() {
             self.elements.resize(PER_ELEMENT, 0.0);
         }
+        tip.end_frame();
     }
 }
 

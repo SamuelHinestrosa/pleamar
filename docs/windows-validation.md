@@ -20,15 +20,15 @@ repeated on the local Windows host.
 
 Windows 11 x64, MSVC, Rust 1.98.1; RTX 5070, two monitors at 125% scaling.
 The default-Luau release currently installed for local testing has SHA-256
-`7c141910f898ef3ee54cad62c8f464d8f4ebe7a428908c31f50d91f26dec31be`.
+`b312eb8a498bd99ac9e5aa57c50022258a553488904e50fd8a44cf35cf0e0182`.
 Configuration, logs and detailed historical measurements remain local and are
 not included in this source-validation branch.
 
 | Command/check | Observed result |
 |---|---|
 | `cargo build --release --locked --bin pleamar --example luau-test` | Passed natively with default Luau; six existing warnings |
-| `cargo test --locked` | 103 unit tests and one integration passed; 24 opt-in helpers ignored |
-| `cargo test --locked --lib platform::windows::input_tests -- --nocapture` | Eleven hidden-window tests passed with the final helper; GPU/display helper ignored |
+| `cargo test --locked` | 114 unit tests and one integration passed; 24 opt-in helpers ignored |
+| `cargo test --locked --lib platform::windows::input_tests -- --nocapture` | Thirteen hidden-window tests passed with the final helper; GPU/display helper ignored |
 | `python scripts/run-tests.py --binary target/release/pleamar.exe` | 225 checks passed, including 31 documentation scenes |
 | `python scripts/windows-smoke.py --binary target/release/pleamar.exe` | Native CLI, Unicode PowerShell autostart, absent-output Luau/IPC, timed and requested shutdown passed; GUI mode not run in this continuation |
 | Marea `python windows/test-logic.py --binary ../pleamar/target/release/pleamar.exe --luau-runner ../pleamar/target/release/examples/luau-test.exe` | Generated profile and twelve isolated logic suites passed |
@@ -102,3 +102,26 @@ unavailable and retains its native brightness, output and input controls.
 
 AI assistance: this implementation and its validation tools were developed with
 Codex. Remaining review and validation gates are stated above.
+
+
+## Atlas exhaustion correction
+
+Calendar/toast text lost letters when the shared atlas filled up. Failed
+allocations are no longer cached as absent glyphs. The workshop reclaims obsolete
+text/live images and delivers replacement layouts and pixels together. Gutters
+are cleared on reuse; live sources preserve animation indices. The 2048-square
+working-set limit remains explicit. Nine new regressions pass, including 48
+successive SVG covers, stale deliveries, scale reset and over-capacity behavior.
+The complete local default-Luau run passes 114 unit tests and one integration,
+225 language checks and Marea's twelve isolated logic suites. Visual/performance
+confirmation of this correction remains pending.
+
+AppBar follow-ups c360e897 / 480f0f7f passed Windows/Linux CI runs
+[36755954817](https://github.com/SamuelHinestrosa/pleamar/actions/runs/36755954817)
+and [36755989696](https://github.com/SamuelHinestrosa/marea-plm/actions/runs/36755989696).
+These results precede the atlas correction.
+
+New upstream pleamar 3faab499 (0.2.4) and Marea d8bf00ee were fetched; their
+integration is still pending. This branch remains based on the versions stated
+at the top. The actual Deriva worker is still missing, without evidence that
+Windows itself is incompatible with it.
