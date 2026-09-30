@@ -85,11 +85,16 @@ impl Probe {
         let mut out = String::new();
         let n = self.frames.len();
         let period = if n == 0 { 16.7 } else { median(self.frames.iter().map(|f| f.period).collect()) };
-        let late: Vec<&Frame> = self.frames.iter().filter(|f| f.ms > f.period * 1.5).collect();
-        let dropped = self.frames.iter().filter(|f| f.ms > f.period * 2.5).count();
         let mut ms: Vec<f32> = self.frames.iter().map(|f| f.ms).collect();
         ms.sort_by(f32::total_cmp);
         let at = |q: f64| if ms.is_empty() { 0.0 } else { ms[((ms.len() - 1) as f64 * q).round() as usize] };
+        // Going steadily slower than the screen is not stuttering: something
+        // paces it (the scene's `rate:`, or the compositor's frame notices).
+        // Then late is late against that pace, not the screen's.
+        let steady = n >= 30 && at(0.5) > period * 1.4 && at(0.95) < at(0.5) * 1.2;
+        let pace = |f: &Frame| if steady { at(0.5) } else { f.period };
+        let late: Vec<&Frame> = self.frames.iter().filter(|f| f.ms > pace(f) * 1.5).collect();
+        let dropped = self.frames.iter().filter(|f| f.ms > pace(f) * 2.5).count();
         let late_pct = if n == 0 { 0.0 } else { late.len() as f64 * 100.0 / n as f64 };
         let animating: f64 = self.frames.iter().map(|f| f.ms as f64).sum::<f64>() / 1000.0;
 
@@ -116,7 +121,9 @@ impl Probe {
 
         let verdict = if n < 30 {
             "barely animated while measuring: nothing to judge (move windows, open things, while it measures)".to_owned()
-        } else if late_pct < 1.0 && at(0.99) < period * 1.6 {
+        } else if steady && late_pct < 1.0 {
+            format!("steady at {:.0} fps, below the screen's {:.0} Hz: something paces it slower (the scene's `rate:`, or the compositor's frame notices)", 1000.0 / at(0.5).max(0.1), 1000.0 / period)
+        } else if late_pct < 1.0 && at(0.99) < pace(&self.frames[0]) * 1.6 {
             format!("smooth · {:.0} fps against {:.0} Hz", 1000.0 / at(0.5).max(0.1), 1000.0 / period)
         } else if late_pct < 5.0 {
             format!("some stutter · {late_pct:.1}% of the frames late, the worst {:.0} ms · {cause}", at(1.0))
@@ -141,7 +148,8 @@ impl Probe {
         line(&mut out, "Measured", format!("{seconds:.0} s · animating {:.0}% of it · {n} frames", (animating / seconds * 100.0).min(100.0)));
         if n > 0 {
             line(&mut out, "Frame time", format!("median {:.1} · p95 {:.1} · p99 {:.1} · worst {:.1} ms (the screen gives {period:.1})", at(0.5), at(0.95), at(0.99), at(1.0)));
-            line(&mut out, "Late frames", format!("{} ({late_pct:.1}%) over 1.5 periods · {dropped} over 2.5 (a frame or more lost)", late.len()));
+            let against = if steady { format!("its own pace ({:.1} ms)", at(0.5)) } else { "the screen's".into() };
+            line(&mut out, "Late frames", format!("{} ({late_pct:.1}%) over 1.5 periods of {against} · {dropped} over 2.5 (a frame or more lost)", late.len()));
             let blocked = self.frames.iter().filter(|f| f.blocked).count();
             if blocked > 0 {
                 line(&mut out, "With its logic busy", format!("{blocked} frames"));
