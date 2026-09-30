@@ -82,6 +82,28 @@ struct Shared {
     deadline: Option<Instant>,
 }
 
+impl Shared {
+    /// What a new logic starts from: what the scene is, and none of what the
+    /// old one left running (its handlers, timers, processes and watchers).
+    fn fresh(&self) -> Shared {
+        Shared {
+            next: self.next,
+            facts: self.facts.clone(),
+            texts: self.texts.clone(),
+            permissions: self.permissions.clone(),
+            models: self.models.clone(),
+            types: self.types.clone(),
+            signals: self.signals.clone(),
+            translations: self.translations.clone(),
+            services: self.services.clone(),
+            subscribed: self.subscribed.clone(),
+            plugin: self.plugin.clone(),
+            unapproved: self.unapproved,
+            ..Default::default()
+        }
+    }
+}
+
 /// Spreads a list of records over the texts and facts the scene has for it
 /// —`rows.3.label`—, and the lists inside, the same way. Only what changes travels.
 ///
@@ -540,15 +562,21 @@ impl LuauScript {
     }
 
     /// A fresh Luau state, with the frontier in place, and the file executed.
+    ///
+    /// All or nothing: the new one is set up on a state of its own, and only
+    /// if it runs does it take the old one's place —and the old one stops—. If
+    /// it fails halfway, what it had started (its timers, what it listens to,
+    /// its processes) goes with it and the old one goes on as it was. Before,
+    /// the old one was stopped first, and a failed reload left timers pointing
+    /// at a Lua already gone: the next one to fire brought the thread down.
     fn load_script(&mut self) {
-        // Whatever the old logic left running is stopped along with it.
-        self.release();
         // Said before loading: if the script trips over a permission it does not have, let it be known why.
         if let (Some(p), true) = (&self.prefix, self.c.lock().unwrap().unapproved) {
             println!("logic  · plugin '{p}' · ⚠ NOT APPROVED: runs unable to touch the system. To see what it asks for and decide: pleamar --approve {}", self.scene);
         }
         // A scene may have no logic of its own and yet have plugins that do.
         if self.prefix.is_none() && !std::path::Path::new(&self.logic).is_file() {
+            self.release();
             return;
         }
         let source = match std::fs::read_to_string(&self.logic) {
@@ -556,12 +584,19 @@ impl LuauScript {
             Err(e) => return eprintln!("logic  · {}: {e}", self.logic),
         };
         let t0 = Instant::now();
+        let old = self.c.clone();
+        let fresh = old.lock().unwrap().fresh();
+        self.c = Arc::new(Mutex::new(fresh));
         match self.prepare().and_then(|lua| {
             self.c.lock().unwrap().deadline = Some(Instant::now() + PATIENCE);
             lua.load(&source).set_name(format!("@{}", self.logic)).exec()?;
             Ok(lua)
         }) {
             Ok(lua) => {
+                // The old one stops now, and this one takes its place.
+                let new = std::mem::replace(&mut self.c, old);
+                self.release();
+                self.c = new;
                 self.lua = Some(lua);
                 let c = self.c.lock().unwrap();
                 println!("logic  · {} running in {:.1} ms · {} handlers, {} timers", self.logic, t0.elapsed().as_secs_f32() * 1000.0, c.handlers.values().map(Vec::len).sum::<usize>(), c.timers.len());
@@ -570,7 +605,12 @@ impl LuauScript {
                     None => println!("logic  · permissions · {}", describe(&c.permissions)),
                 }
             }
-            Err(e) => eprintln!("logic  · the previous one stays as it was:\n{e}"),
+            Err(e) => {
+                // What the failed one started goes with it; the old one, as it was.
+                self.release();
+                self.c = old;
+                eprintln!("logic  · the previous one stays as it was:\n{e}");
+            }
         }
         self.c.lock().unwrap().deadline = None;
     }
