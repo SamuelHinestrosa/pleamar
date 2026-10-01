@@ -1,0 +1,11 @@
+// expect: error «there is no fact called 'missing'»
+// The late rule fails after the compiler has expanded both page bodies.
+scene InvalidPages {
+    surface { size: 400, 300 }
+    pages settings {
+        header: 20, 24
+        page home "Home" { box { from: 20, 60; size: 100, 40; color: #ffffff } }
+        page look "Look" { text "Appearance" { at: 20, 60; size: 18; color: #ffffff } }
+    }
+    on key a { missing = 1 }
+}
