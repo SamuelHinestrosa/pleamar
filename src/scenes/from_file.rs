@@ -78,6 +78,12 @@ fn logic_path_for(path: &str) -> String {
 /// `PLEAMAR_NO_RELAUNCH=1` turns it off, for whoever does not want updating the
 /// package to restart their bar.
 fn watch_binary() {
+    // Windows locks a running executable. Stop it before replacing it; scene
+    // and Luau reload remain available and do not replace the executable.
+    #[cfg(target_os = "windows")]
+    return;
+    #[cfg(not(target_os = "windows"))]
+    {
     if std::env::var_os("PLEAMAR_NO_RELAUNCH").is_some() || super::STAY_ON_UPDATE.load(std::sync::atomic::Ordering::Relaxed) {
         return;
     }
@@ -115,6 +121,7 @@ fn watch_binary() {
             std::process::exit(0);
         }
     });
+    }
 }
 
 pub fn watch(path: String, to_render: Sender<ToRender>, to_logic: Sender<Event>) {

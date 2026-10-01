@@ -343,9 +343,26 @@ impl Rng {
     }
 }
 
+/// Frame cadence starts after the first presentation. GPU initialization is
+/// reported separately as time to first frame; it is not a missed frame.
+#[derive(Default)]
+struct FrameClock(Option<Instant>);
+impl FrameClock {
+    fn start(&mut self, now: Instant) { self.0 = Some(now); }
+    fn wake(&mut self, now: Instant) { if self.0.is_some() { self.0 = Some(now); } }
+    fn sample(&mut self, now: Instant) -> Option<f32> {
+        self.0.as_mut().map(|previous| now.duration_since(std::mem::replace(previous, now)).as_secs_f32() * 1000.0)
+    }
+}
+
+// Continuous desktop animations may run for days without becoming idle.
+// Keep exact percentiles in bounded reporting windows, not a lifetime log.
+const CYCLE_FRAMES: usize = 3600;
+
 #[derive(Default)]
 struct Cycle {
     dts: Vec<f32>,
+    total_ms: f64,
     max_blocked: f32,
     frames_blocked: u32,
     /// What goes into READING the scene —evaluating its expressions and noting down what
@@ -357,6 +374,17 @@ struct Cycle {
 }
 
 impl Cycle {
+    fn frame(&mut self, ms: f32, blocked: bool, period_ms: Option<f32>) {
+        self.dts.push(ms);
+        self.total_ms += ms as f64;
+        if let Some(period) = period_ms { self.watch(period); }
+        if blocked {
+            self.frames_blocked += 1;
+            self.max_blocked = self.max_blocked.max(ms);
+        }
+        if self.dts.len() >= CYCLE_FRAMES { self.close(); }
+    }
+
     /// A scene that does not deliver the frames the screen asks for does not show in the
     /// log —they are isolated slow frames, one after another— and from outside it looks
     /// like the runtime has become slow. It is said ONCE, with the breakdown, as
@@ -365,7 +393,7 @@ impl Cycle {
         if self.slow_reported || self.dts.len() < 240 {
             return;
         }
-        let mean = self.dts.iter().sum::<f32>() / self.dts.len() as f32;
+        let mean = (self.total_ms / self.dts.len() as f64) as f32;
         if mean <= period_ms * 1.35 {
             return;
         }
@@ -378,13 +406,15 @@ impl Cycle {
 
     fn close(&mut self) {
         if self.dts.len() < 8 {
-            self.dts.clear();
+            let reported = self.slow_reported;
+            *self = Cycle::default();
+            self.slow_reported = reported;
             return;
         }
         let mut o = self.dts.clone();
         o.sort_by(|a, b| a.total_cmp(b));
         let reading = self.compose_ms / o.len() as f32;
-        let mean = o.iter().sum::<f32>() / o.len() as f32;
+        let mean = self.total_ms / o.len() as f64;
         let p99 = o[((o.len() as f32 * 0.99) as usize).min(o.len() - 1)];
         println!(
             "cycle  · {:>4} frames · mean {:>5.2} ms · p99 {:>6.2} ms · max {:>6.2} ms · reading the scene {:.2} ms · with the logic blocked: {} frames, max {:.2} ms",
@@ -413,6 +443,7 @@ pub fn run(
     let mut changed: Vec<[f32; 4]> = Vec::new();
     let mut sheet_counts = (0u32, 0u32, 0u32);
     let no_lens = std::env::var_os("PLEAMAR_NO_LENS").is_some();
+    let debug_input = std::env::var_os("PLEAMAR_DEBUG_INPUT").is_some();
     // The compositor's notice that it wants another frame: from which sheet it is
     // expected, whether it has already arrived, how many times in a row it did not arrive, and what arrived
     // from the rest of the world while waiting (it is handled on the next round).
@@ -497,6 +528,7 @@ pub fn run(
     let mut history = [0f32; 120];
     let mut cycle = Cycle::default();
     let mut last = Instant::now();
+    let mut frame_clock = FrameClock::default();
     let mut resting = false;
     let mut next_appointment: Option<Instant> = None;
     let mut period_ms = 16.7f32;
@@ -645,6 +677,7 @@ pub fn run(
             }
             resting = false;
             last = Instant::now() - Duration::from_secs_f32(period_ms / 1000.0);
+            frame_clock.wake(last);
         }
         incoming.extend(rx.try_iter());
         if let (Some(g), Some(send)) = (&gpu, &nest) {
@@ -738,6 +771,7 @@ pub fn run(
                         fresh.gestures.len(), fresh.rules.len(), fresh.zones.len()
                     );
                     scene = fresh;
+                    update_screen_count(&scene, &mut facts, &sheets);
                     z_memo = None;
                     window_instrs = None;
                     draw.hidden.clear();
@@ -770,11 +804,14 @@ pub fn run(
                     }
                 }
                 ToRender::Sheet(n) => {
+                    // The CPU may already have composed the scene while no GPU
+                    // surface existed. Its cached list has never been uploaded.
+                    compose_memo = None;
                     let g = gpu.get_or_insert_with(|| {
-                        Gpu::new(&instance, match &n.target {
+                        Gpu::with_shaders(&instance, match &n.target {
                             crate::gpu::Target::Surface(s) => Some(s),
                             crate::gpu::Target::Frames(_) => None,
-                        })
+                        }, &scene.shaders)
                     });
                     g.set_shaders(&scene.shaders);
                     // A scene that asks for "the full width" measures whatever its monitor measures, and it
@@ -841,22 +878,24 @@ pub fn run(
                         println!("render · surface {} on {} · {}×{} · scale {} · {:.0} Hz{which}", n.id, n.name, n.size.0, n.size.1, n.scale, n.mhz as f32 / 1000.0);
                     }
                     sheets.push(g.sheet(*n, size));
-                    // How many monitors are showing something right now.
-                    if let Some(i) = scene.facts.iter().position(|h| h.0 == "screens.count") {
-                        let how_many = sheets.iter().filter(|l| l.view.popup.is_none()).map(|l| l.view.surface).collect::<std::collections::HashSet<_>>().len();
-                        facts[i] = how_many as f32;
-                    }
+                    update_screen_count(&scene, &mut facts, &sheets);
                     assign_pace(g, &mut sheets, size, op.no_vsync);
                     region = vec![[i32::MIN; 4]];
                 }
                 ToRender::SheetGone(id) => {
                     sheets.retain(|l| l.id != id);
+                    update_screen_count(&scene, &mut facts, &sheets);
                     println!("render · surface {id} gone; {} left", sheets.len());
                     if let Some(g) = &gpu {
                         assign_pace(g, &mut sheets, size, op.no_vsync);
                     }
                 }
-                ToRender::Workshop(p) => letters.receive(*p),
+                ToRender::Workshop(p) => {
+                    letters.receive(*p);
+                    // A finished layout can add glyphs without changing any
+                    // facts, and can reuse atlas pixels (no pending upload).
+                    compose_memo = None;
+                }
                 // A window someone stretches: the sheet changes, and with it what the
                 // scene reads in `screen.width` and `screen.height`.
                 // A capture of what is behind a glass: the background is unmixed, and if
@@ -939,6 +978,7 @@ pub fn run(
                         // not to try again until the scene releases it itself.
                         for &k in &locks {
                             sheets.retain(|l| !(l.view.surface == k && l.view.popup.is_none()));
+                            update_screen_count(&scene, &mut facts, &sheets);
                             crate::platform::lock_screen(k, None);
                         }
                         if let Some(g) = &gpu {
@@ -1548,6 +1588,7 @@ pub fn run(
         let now = Instant::now();
         let dt = (now - last).as_secs_f32();
         last = now;
+        let frame_ms = frame_clock.sample(now);
         let t_total = (now - start).as_secs_f32();
         let mut effects: Vec<Effect> = Vec::new();
         let mut keyboard_changed = false;
@@ -1664,6 +1705,10 @@ pub fn run(
             _ => None,
         };
         last_pointer = pointer;
+        if debug_input && (!buttons.is_empty() || dragged.is_some()) {
+            eprintln!("input · pointer={pointer:?} buttons={buttons:?} drag={:?} moved={}",
+                drag.map(|(k, origin, _)| (scene.zones[k].id, origin)), dragged.is_some());
+        }
         // The wheel is not only for the topmost zone: it works for any zone it has
         // underneath, because a whole pill wants the wheel even if there is a button inside.
         if wheel != 0.0 {
@@ -2619,6 +2664,7 @@ pub fn run(
             } else if !wants && was {
                 locks.retain(|x| *x != k);
                 sheets.retain(|l| !(l.view.surface == k && l.view.popup.is_none()));
+                update_screen_count(&scene, &mut facts, &sheets);
                 crate::platform::lock_screen(k, None);
                 if let Some(g) = &gpu {
                     assign_pace(g, &mut sheets, size, op.no_vsync);
@@ -3317,14 +3363,14 @@ pub fn run(
                 }
             }
             // The one that sets the pace asks the compositor to notify when it wants another.
-            let asks = l.drives_pace && g.uses_mailbox() && !op.no_vsync && !op.naive;
+            let asks = l.drives_pace && g.uses_mailbox() && !op.no_vsync && !op.naive && l.has_frame_callbacks();
             // The others ask too, and while their last frame has not been
             // shown they skip the round instead of painting: on a slower
             // monitor, painting again waited until the compositor let go of a
             // buffer, and that held the whole render to that monitor's pace —a
             // scene on a 165 Hz monitor and a 60 Hz one went at 60 on both—.
             // Not beyond a while: what is not shown is never answered.
-            let others = !l.drives_pace && g.uses_mailbox() && !op.no_vsync && !op.naive;
+            let others = !l.drives_pace && g.uses_mailbox() && !op.no_vsync && !op.naive && l.has_frame_callbacks();
             if others && l.open && in_flight.iter().any(|f| f.0 == l.id && f.1.elapsed() < Duration::from_millis(100)) {
                 if !owed.contains(&l.id) {
                     owed.push(l.id);
@@ -3447,6 +3493,9 @@ pub fn run(
             std::thread::sleep(Duration::from_millis(8));
         } else if painted > 0 && first_frame {
             first_frame = false;
+            frame_clock.start(Instant::now());
+            cycle = Cycle::default();
+            crate::FIRST_FRAME.store(true, std::sync::atomic::Ordering::Release);
             println!("render · first frame {} ms after starting", op.start_time.elapsed().as_millis());
         }
 
@@ -3539,7 +3588,7 @@ pub fn run(
                 prof_frames = 0;
             }
         }
-        let ms = dt * 1000.0;
+        let ms = frame_ms.unwrap_or(0.0);
         // A permanent telltale: any frame that goes over two periods, with its time.
         if ms > period_ms * 2.4 && !first_frame && cycle.dts.len() > 1 && !op.no_vsync && !op.naive {
             if profiling {
@@ -3567,8 +3616,7 @@ pub fn run(
         sec_paced = 0.0;
         history.copy_within(1.., 0);
         history[119] = if blocked { -ms } else { ms };
-        cycle.dts.push(ms);
-        if !op.no_vsync && !op.naive && !blocked {
+        let watched_period = if !op.no_vsync && !op.naive && !blocked {
             // The LEARNT period is no good here: a scene that is always
             // late teaches it that the screen gives 28 ms and then it is never
             // late. It is compared with the monitor's real refresh.
@@ -3576,12 +3624,9 @@ pub fn run(
             if scene.surface().max_fps > 0 {
                 real = real.max(1000.0 / scene.surface().max_fps as f32);
             }
-            cycle.watch(real);
-        }
-        if blocked {
-            cycle.frames_blocked += 1;
-            cycle.max_blocked = cycle.max_blocked.max(ms);
-        }
+            Some(real)
+        } else { None };
+        if frame_ms.is_some() { cycle.frame(ms, blocked, watched_period); }
         // The screen's period, learnt from the first good frames.
         if frames_for_period < 40 && ms > 3.0 && ms < 40.0 {
             frames_for_period += 1;
@@ -3611,6 +3656,18 @@ pub fn run(
             // Still now: if something overflowed, this is what stays watching.
             draw.report_pending();
         }
+    }
+}
+
+fn update_screen_count(scene: &Scene, facts: &mut [f32], sheets: &[Sheet]) {
+    if let Some(i) = scene.facts.iter().position(|h| h.0 == "screens.count") {
+        // Several panels can share an output; popups add no monitor. Recompute
+        // after removal too, including the transition to no visible outputs.
+        facts[i] = sheets.iter().filter(|l| l.view.popup.is_none())
+            // Keep the previous surface-based fallback for hosts that do not
+            // provide output names, instead of merging all unnamed outputs.
+            .map(|l| if l.name.is_empty() { (None, l.view.surface) } else { (Some(l.name.as_str()), 0) })
+            .collect::<std::collections::HashSet<_>>().len() as f32;
     }
 }
 
@@ -3753,7 +3810,7 @@ impl Editing {
                 if name == "x" && self.delete_selection(t) { KeyOutcome::Changed } else { KeyOutcome::Moved }
             }
             "v" if m.ctrl => {
-                let Some(pasted) = crate::platform::clipboard_read() else { return KeyOutcome::Moved };
+                let Some(pasted) = crate::platform::clipboard_for_paste(typed) else { return KeyOutcome::Moved };
                 // A field is single-line: whatever comes with line breaks, without them.
                 let pasted: String = pasted.chars().filter(|c| !c.is_control()).collect();
                 self.delete_selection(t);
@@ -3876,6 +3933,16 @@ impl Playback {
 /// The CPU this thread has used, in milliseconds (the wall clock also counts
 /// what it spends waiting).
 fn thread_cpu_ms() -> f64 {
+    #[cfg(target_os = "windows")]
+    {
+        use windows::Win32::Foundation::FILETIME;
+        use windows::Win32::System::Threading::{GetCurrentThread, GetThreadTimes};
+        let (mut created, mut exited, mut kernel, mut user) = (FILETIME::default(), FILETIME::default(), FILETIME::default(), FILETIME::default());
+        if unsafe { GetThreadTimes(GetCurrentThread(), &mut created, &mut exited, &mut kernel, &mut user) }.is_ok() {
+            let ticks = |t: FILETIME| ((t.dwHighDateTime as u64) << 32) | t.dwLowDateTime as u64;
+            return (ticks(kernel) + ticks(user)) as f64 / 10_000.0;
+        }
+    }
     #[cfg(target_os = "linux")]
     {
         let mut t = libc::timespec { tv_sec: 0, tv_nsec: 0 };
@@ -3953,4 +4020,79 @@ struct ComposeMemo {
     texts: Vec<String>,
     window_tex: Vec<Option<crate::gpu::WindowTex>>,
     props: Vec<f32>,
+}
+
+#[cfg(test)]
+mod cadence_tests {
+    use super::*;
+
+    #[test]
+    fn initialization_and_sleep_are_not_frame_delays() {
+        let now = Instant::now();
+        let mut clock = FrameClock::default();
+        assert_eq!(clock.sample(now + Duration::from_secs(3)), None);
+        clock.start(now + Duration::from_secs(5));
+        assert_eq!(clock.sample(now + Duration::from_millis(5016)), Some(16.0));
+        // Keep a real late frame: this must not merely clamp away all delays.
+        assert_eq!(clock.sample(now + Duration::from_millis(5116)), Some(100.0));
+        clock.wake(now + Duration::from_millis(59984));
+        assert_eq!(clock.sample(now + Duration::from_secs(60)), Some(16.0));
+    }
+
+    #[test]
+    fn sustained_slow_frames_still_trigger_the_warning() {
+        let mut cycle = Cycle { dts: vec![16.67; 240], total_ms: 16.67 * 240.0, ..Default::default() };
+        cycle.watch(16.67);
+        assert!(!cycle.slow_reported);
+        cycle.dts = vec![30.0; 240];
+        cycle.total_ms = 30.0 * 240.0;
+        cycle.watch(16.67);
+        assert!(cycle.slow_reported);
+    }
+
+    #[test]
+    fn continuous_animation_statistics_have_bounded_storage() {
+        let mut cycle = Cycle::default();
+        for _ in 0..CYCLE_FRAMES * 4 + 17 {
+            cycle.compose_ms += 0.25;
+            cycle.frame(16.0, false, Some(16.0));
+            assert!(cycle.dts.len() < CYCLE_FRAMES);
+        }
+        assert_eq!(cycle.dts.len(), 17);
+        assert_eq!(cycle.total_ms, 272.0);
+        assert_eq!(cycle.compose_ms, 4.25);
+        assert!(!cycle.slow_reported);
+        cycle.frame(200.0, true, None);
+        assert_eq!(cycle.max_blocked, 200.0);
+        assert_eq!(cycle.frames_blocked, 1);
+        assert_eq!(cycle.total_ms, 472.0);
+    }
+
+    #[test]
+    fn reporting_windows_keep_the_one_time_warning_but_clear_short_cycles() {
+        let mut cycle = Cycle::default();
+        for _ in 0..CYCLE_FRAMES { cycle.frame(30.0, false, Some(16.0)); }
+        assert!(cycle.slow_reported);
+        assert!(cycle.dts.is_empty());
+        cycle.compose_ms = 9.0;
+        cycle.frame(90.0, true, None);
+        cycle.close();
+        assert!(cycle.slow_reported);
+        assert_eq!((cycle.total_ms, cycle.compose_ms, cycle.max_blocked, cycle.frames_blocked), (0.0, 0.0, 0.0, 0));
+    }
+}
+
+#[cfg(all(test, target_os = "windows"))]
+mod input_tests {
+    use super::*;
+    #[test]
+    fn paste_uses_the_input_events_clipboard_snapshot() {
+        let mut editing = Editing { field: 0, cursor: 3, anchor: 0 };
+        let mut value = "old".to_owned();
+        let result = editing.handle_key(&mut value, "v", Some("España ñ\n世界 🚀"), Mods { ctrl: true, ..Mods::default() });
+        assert!(matches!(result, KeyOutcome::Changed));
+        assert_eq!(value, "España ñ世界 🚀");
+        assert_eq!(editing.cursor, value.len());
+        assert_eq!(editing.anchor, value.len());
+    }
 }
