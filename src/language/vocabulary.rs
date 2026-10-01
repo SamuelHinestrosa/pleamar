@@ -129,6 +129,7 @@ pub const SERVICES: &[(&str, &[&str])] = &[
     ("bluetooth", &["present", "powered", "discovering", "devices"]),
     ("media", &["playing", "title", "artist", "album", "length", "position", "rate", "art", "player"]),
     ("window", &["title", "class", "monitor", "list"]),
+    ("thumbnails", &["list", "capturing"]),
     ("workspaces", &["active", "list"]),
     ("apps", &["list"]),
     ("tray", &["list"]),

@@ -536,7 +536,7 @@ pub fn run(
     let mut regions_again = false;
     let mut nest_changed: Vec<usize> = Vec::new();
     // The windows someone is sharing: each is read back after it draws.
-    let mut nest_watch: Vec<(usize, std::sync::mpsc::Sender<crate::scene::WindowPicture>)> = Vec::new();
+    let mut nest_watch: Vec<(usize, u64, std::sync::mpsc::Sender<crate::scene::WindowPicture>)> = Vec::new();
     let mut nest_watch_due: Vec<usize> = Vec::new();
     let mut nest_cursor = Cursor::Normal;
     // Which layers of the windows' texture are taken, and whether the
@@ -1099,10 +1099,10 @@ pub fn run(
                         send(ToNest::HostFocus(yes));
                     }
                 }
-                ToRender::WatchWindow(slot, to) => {
-                    nest_watch.retain(|(s, _)| *s != slot);
+                ToRender::WatchWindow(slot, who, to) => {
+                    nest_watch.retain(|(s, w, _)| !(*s == slot && *w == who));
                     if let Some(to) = to {
-                        nest_watch.push((slot, to));
+                        nest_watch.push((slot, who, to));
                         nest_watch_due.push(slot);
                     }
                 }
@@ -1273,7 +1273,7 @@ pub fn run(
                                 }
                                 w.geometry = geometry;
                                 nest_changed.push(slot);
-                                if nest_watch.iter().any(|(s, _)| *s == slot) {
+                                if nest_watch.iter().any(|(s, _, _)| *s == slot) {
                                     nest_watch_due.push(slot);
                                 }
                             }
@@ -3451,10 +3451,9 @@ pub fn run(
                     let size = (((g_box[2] as f32) * s).round() as u32, ((g_box[3] as f32) * s).round() as u32);
                     let pieces: Vec<(u32, (i32, i32), (u32, u32), bool)> = w.pieces.iter().map(|p| (p.layer, (((p.at.0 - g_box[0]) as f32 * s).round() as i32, ((p.at.1 - g_box[1]) as f32 * s).round() as i32), p.px, p.opaque)).collect();
                     if let Some(pixels) = g.read_window(&pieces, size) {
-                        let gone = nest_watch.iter().find(|(k, _)| *k == slot).is_some_and(|(_, to)| to.send(crate::scene::WindowPicture { size, pixels }).is_err());
-                        if gone {
-                            nest_watch.retain(|(k, _)| *k != slot);
-                        }
+                        // Each one watching it gets it; whoever stopped listening, out.
+                        let pixels = std::sync::Arc::new(pixels);
+                        nest_watch.retain(|(k, _, to)| *k != slot || to.send(crate::scene::WindowPicture { size, pixels: pixels.clone() }).is_ok());
                     }
                 }
             }

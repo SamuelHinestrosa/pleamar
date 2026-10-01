@@ -15,6 +15,7 @@ whole scene and compiles: `./run-tests.sh` checks them.
 - [A popup](#a-popup)
 - [Reacting to a number changing](#reacting-to-a-number-changing)
 - [How far into the song](#how-far-into-the-song)
+- [Every window, with its picture](#every-window-with-its-picture)
 
 ## A list of thousands
 
@@ -451,4 +452,39 @@ Paused, `elapsed` is just the position the pause reported. A scene that names
 `time` never rests, so this one paints every frame while it is open, paused or
 not. With reduced motion `time` stops, and the bar moves only when the player
 reports.
+
+## Every window, with its picture
+
+An overview, a switcher: each window of the desktop —the scene's own or any
+program's— with a small picture of it, live. The `thumbnails` service lists
+them; nothing is copied until the logic says which ones (`thumbnails.want`),
+and then only when they change. A picture the compositor stopped copying
+stays as it was, dimmed here by `stale`.
+
+```plm
+language 0.2
+scene Overview {
+    surface { size: 1000, 220; anchor: bottom }
+    permissions { services: "thumbnails", "thumbnails.*" }
+    model shots max 6 { id: text; title: text; app: text; picture: image 300, 180; stale: bool }
+    service thumbnails { list: shots }
+
+    box { from: 0, 0; size: 1000, 220; color: #10151a }
+    row { at: 20, 10; gap: 20
+        for s in shots {
+            column { gap: 4
+                image s.picture { size: 300, 180; opacity: if(s.stale, 50%, 100%) }
+                text "{s.title}" { size: 11; width: 300; lines: 1; color: #e6e6e6 }
+            }
+        }
+    }
+}
+```
+
+And in its logic, which ones (all of them, here; an overview with pages
+would say only the page shown):
+
+```luau
+sys.call("thumbnails.want", "all")
+```
 

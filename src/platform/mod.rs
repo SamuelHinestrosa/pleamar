@@ -126,6 +126,7 @@ fn start_service(from: &str, name: &str, notify: Box<dyn Fn(SysValue) + Send>) -
         "notifications" => return notifications::service(notify),
         "notification_history" => return notifications::history(notify),
         "tray" => return tray::service(notify),
+        "thumbnails" => return thumbnails::service(notify),
         _ => {}
     }
     // `PLEAMAR_GENERIC=1` skips the Hyprland path: it's how to test here what
@@ -187,6 +188,10 @@ pub fn command(from: &str, name: &str, args: &[SysValue]) -> Result<(), String> 
     #[cfg(target_os = "linux")]
     if name.starts_with("media.") {
         return mpris::command(name, args);
+    }
+    #[cfg(target_os = "linux")]
+    if name.starts_with("thumbnails.") {
+        return thumbnails::command(name, args);
     }
     #[cfg(target_os = "linux")]
     if hyprland::is_present() && std::env::var_os("PLEAMAR_GENERIC").is_none() {
@@ -677,6 +682,8 @@ mod notifications;
 mod tray;
 #[cfg(target_os = "linux")]
 mod compositor;
+#[cfg(target_os = "linux")]
+mod thumbnails;
 mod files;
 
 /// JSON to what the logic sees, and back: `json.decode` and `json.encode`.

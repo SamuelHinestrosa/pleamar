@@ -2002,9 +2002,10 @@ pub enum ToRender {
     Dropped(String, String),
     /// What the compositor inside the scene has to say.
     Nest(NestEvent),
-    /// Someone wants a window's picture every time it draws (sharing it):
-    /// its slot, and where to send it. `None` stops.
-    WatchWindow(usize, Option<std::sync::mpsc::Sender<WindowPicture>>),
+    /// Someone wants a window's picture every time it draws (sharing it,
+    /// a thumbnail of it): its slot, who asks (a number of theirs: several
+    /// may watch the same window), and where to send it. `None` stops theirs.
+    WatchWindow(usize, u64, Option<std::sync::mpsc::Sender<WindowPicture>>),
     /// What was on screen has been lost —back from another TTY—: everything is painted again.
     Repaint,
     Quit,
@@ -2108,7 +2109,8 @@ pub enum NestEvent {
 /// the shadow its program may draw around it), in pixels, BGRA premultiplied.
 pub struct WindowPicture {
     pub size: (u32, u32),
-    pub pixels: Vec<u8>,
+    /// Shared by all who watch it: read once from the card, not once each.
+    pub pixels: std::sync::Arc<Vec<u8>>,
 }
 
 /// What the scene chose, when the compositor asked it to (`pick`).

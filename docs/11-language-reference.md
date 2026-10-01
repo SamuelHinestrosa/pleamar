@@ -1422,7 +1422,7 @@ fact_types: number bool
 model: list
 path: move line curve close
 documented: translations surface permissions model service spring prop pose fact event text image figure particles shader measure let zone body ellipse box arc line path input clip group popup component children repeat for row grid windows window pages column space between layer on every blink wave spin follow look gesture posture import scene library language
-services: clock clock.seconds audio battery brightness network bluetooth media window workspaces apps tray notifications notification_history
+services: clock clock.seconds audio battery brightness network bluetooth media window thumbnails workspaces apps tray notifications notification_history
 services.clock: hour minute second day month year weekday time date
 services.clock.seconds: hour minute second day month year weekday time date
 services.audio: volume muted input input_muted outputs inputs
@@ -1432,6 +1432,7 @@ services.network: online kind name strength wifi networks
 services.bluetooth: present powered discovering devices
 services.media: playing title artist album length position rate art player
 services.window: title class monitor list
+services.thumbnails: list capturing
 services.workspaces: active list
 services.apps: list
 services.tray: list
