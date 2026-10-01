@@ -14,6 +14,7 @@ whole scene and compiles: `./run-tests.sh` checks them.
 - [One bar per monitor](#one-bar-per-monitor)
 - [A popup](#a-popup)
 - [Reacting to a number changing](#reacting-to-a-number-changing)
+- [How far into the song](#how-far-into-the-song)
 
 ## A list of thousands
 
@@ -416,3 +417,38 @@ scene Watch {
 
 `impulse` pushes a spring instead of setting it: it leaves on its own and comes
 back with its own bounce.
+
+## How far into the song
+
+`media.position` is where the player said it was, the last time it said
+anything: on a new song, a pause, a seek, a change of `rate`. In between,
+nobody asks it again. The scene carries it on with its own clock while the song
+plays, and keeps the moment it heard it, in `time`, to know how far to carry it:
+
+```plm
+language 0.1
+scene Progress {
+    surface { size: 240, 60 }
+    permissions { services: "media" }
+    service media as song { playing: bool; position: number; rate: number; length: number }
+
+    fact heard: number = 0                      // `time` when the position last came in
+    on change song.position { heard = time }
+    let elapsed = min(song.position + if(song.playing, (time - heard) * song.rate, 0), song.length)
+
+    prop done = 0 ~120ms                        // the jumps of a seek, eased
+    follow done = elapsed / max(song.length, 1)
+
+    box { from: 0, 0; size: 240, 60; color: #151616 }
+    box { from: 20, 38; size: 200, 4; corner: 2; color: #f5f7f5; opacity: 14% }
+    box { from: 20, 38; size: 200 * done, 4; corner: 2; color: #9ed6bd }
+    text "{elapsed, time}" { at: 20, 22; anchor: left center; size: 12; color: #f5f7f5 }
+    text "{song.length, time}" { at: 220, 22; anchor: right center; size: 12; color: #f5f7f5; opacity: 50% }
+}
+```
+
+Paused, `elapsed` is just the position the pause reported. A scene that names
+`time` never rests, so this one paints every frame while it is open, paused or
+not. With reduced motion `time` stops, and the bar moves only when the player
+reports.
+
