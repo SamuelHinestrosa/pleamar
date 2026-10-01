@@ -216,6 +216,8 @@ struct Param {
 
 struct Compiler<'a> {
     e: Scene,
+    /// Synthesized syntax must survive the deferred passes, but not the load.
+    generated: &'a typed_arena::Arena<Node>,
     /// Stacks that scroll: their zone, their property, how far, how much per notch and with which spring.
     scrolls: Vec<(String, PropId, Expr, Expr, Spring, FactId)>,
     /// Of the stacks that scroll, which ones are rows: they are dragged sideways.
@@ -336,6 +338,7 @@ pub struct Symbol {
 }
 
 pub fn compile<'a>(tree: &'a [Entry], files: &'a [String], dirs: &'a [std::path::PathBuf], strict_files: &'a [usize], libraries: &'a [Library]) -> (Result<Scene, Vec<CompileError>>, Vec<Symbol>) {
+    let generated = typed_arena::Arena::new();
     let scene = match tree {
         [Entry::Node(n)] if matches!(n.head.first().map(|f| &f.kind), Some(TokenKind::Id(p)) if p == "scene") => n,
         [Entry::Node(n)] if matches!(n.head.first().map(|f| &f.kind), Some(TokenKind::Id(p)) if p == "library") => {
@@ -345,6 +348,7 @@ pub fn compile<'a>(tree: &'a [Entry], files: &'a [String], dirs: &'a [std::path:
     };
     let mut o = Compiler {
         e: Scene::default(),
+        generated: &generated,
         translations: Vec::new(), untranslated: Default::default(),
         props: HashMap::new(), facts: HashMap::new(), signals: HashMap::new(), texts: HashMap::new(), images: HashMap::new(), figures: HashMap::new(), shaders: HashMap::new(), models: HashMap::new(),
         measurements: HashMap::new(), gestures: HashMap::new(), zones: HashMap::new(), lets: HashMap::new(), let_lines: HashMap::new(), colors: HashMap::new(),
@@ -4900,15 +4904,17 @@ impl<'a> Compiler<'a> {
 
     /// Source written by the compiler itself, read as if it were the scene's:
     /// its tokens carry the place of whatever it stands for, so an error in it
-    /// points there. It lives as long as the scene being read, like the rest.
+    /// points there. The compile owns it until all deferred passes finish.
     fn expand(&self, source: &str, line: usize, col: usize) -> R<Vec<&'a Node>> {
         let mut tokens = crate::language::tokens::tokenize(source)?;
         for t in &mut tokens {
             t.line = line;
             t.col = col;
         }
-        let entries: &'a [Entry] = Box::leak(crate::language::tree::parse(&tokens)?.into_boxed_slice());
-        Ok(entries.iter().filter_map(|e| if let Entry::Node(x) = e { Some(x) } else { None }).collect())
+        let entries = crate::language::tree::parse(&tokens)?;
+        Ok(entries.into_iter().filter_map(|e| if let Entry::Node(x) = e {
+            Some(&*self.generated.alloc(x))
+        } else { None }).collect())
     }
 
     /// `pages settings { header: 20, 45; page menu "Settings" { … } page look "Her look" { … } }`:
@@ -4935,7 +4941,7 @@ impl<'a> Compiler<'a> {
             // The page's own content goes inside its group, as it was written.
             let mut group = nodes[2].clone();
             group.body.get_or_insert_with(Vec::new).extend(page.body.clone().unwrap_or_default());
-            let group: &'a Node = Box::leak(Box::new(group));
+            let group = self.generated.alloc(group);
             self.statement(group, &mut no_clips)?;
         }
         if let Some((value, line, col)) = header {
@@ -4956,7 +4962,7 @@ impl<'a> Compiler<'a> {
                     Token { kind: TokenKind::Sym("="), line, col },
                 ];
                 head.extend(part.iter().cloned());
-                let node: &'a Node = Box::leak(Box::new(Node { head, body: None, line, col }));
+                let node = self.generated.alloc(Node { head, body: None, line, col });
                 let mut no_clips = 0;
                 self.statement(node, &mut no_clips)?;
             }
@@ -5240,9 +5246,7 @@ impl<'a> Compiler<'a> {
             }
             *body = kept;
         }
-        // (The fields are read as the tree lives: the reduced copy lives as long. A
-        // few entries per service, once per load.)
-        let plain: &'a Node = Box::leak(Box::new(plain));
+        let plain = self.generated.alloc(plain);
         // Only lists (`service tray { list: icons }`): no fields of its own.
         let fields = if plain.body.as_ref().is_some_and(|b| b.is_empty()) && !models.is_empty() { Vec::new() } else { self.fields_of(plain, 1)? };
         for k in &fields {
