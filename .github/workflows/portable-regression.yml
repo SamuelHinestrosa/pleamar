@@ -1,0 +1,15 @@
+name: Portable regression checks
+on:
+  push:
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  linux:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - run: sudo apt-get update && sudo apt-get install -y libwayland-dev libxkbcommon-dev libfontconfig1-dev libpam0g-dev pkg-config fonts-dejavu-core
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo test --locked
+      - run: sh run-tests.sh
