@@ -695,6 +695,7 @@ impl DrawList {
     }
 
     pub fn compose(&mut self, instrs: &[Instr], c: Ctx, texts: &[String], tip: &mut Texts, field: Option<FieldView>, size: (f32, f32), hud: bool) {
+        tip.begin_frame();
         self.measurements.clear();
         self.fields.clear();
         self.size = size;
@@ -1416,6 +1417,7 @@ impl DrawList {
         if self.elements.is_empty() {
             self.elements.resize(PER_ELEMENT, 0.0);
         }
+        tip.end_frame();
     }
 }
 
@@ -2875,4 +2877,3 @@ thread_local! {
     /// How long this thread's waits for the card usually take, in ms.
     static WAIT_USUALLY: std::cell::Cell<f64> = const { std::cell::Cell::new(0.0) };
 }
-
