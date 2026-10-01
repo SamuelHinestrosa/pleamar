@@ -118,6 +118,8 @@ def main():
         report['passed'] = True
     except Exception as error:
         report['failure'] = str(error)
+        # Keep the last native state available even when CI stops at this step.
+        if log.exists(): print(log.read_text(encoding='utf-8', errors='replace'), flush=True)
         raise
     finally:
         if process is not None and process.poll() is None:

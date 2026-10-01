@@ -74,3 +74,14 @@ jobs:
         run: cargo build --locked --example window-fixture
       - name: Additional core diagnostic without Luau
         run: cargo check --locked --no-default-features
+      - name: Preserve Windows reload diagnostics
+        if: always() && runner.os == 'Windows'
+        uses: actions/upload-artifact@v4
+        with:
+          name: native-reload-diagnostics
+          path: |
+            ${{ runner.temp }}/service reload ñ
+            ${{ runner.temp }}/watch reload ñ
+            ${{ runner.temp }}/callback isolation ñ
+            ${{ runner.temp }}/run lifetime ñ
+          if-no-files-found: ignore

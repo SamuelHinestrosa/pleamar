@@ -23,12 +23,12 @@ does not operate the desktop, inject input or claim current graphical success.
 | Command/check | Result |
 |---|---|
 | `cargo build --release --locked --bin pleamar --example luau-test` | Passed natively, default Luau; six warnings |
-| `cargo test --locked` | 118 unit tests and one integration passed; 24 opt-in helpers ignored |
+| `cargo test --locked` | 119 unit tests and one integration passed; 24 opt-in helpers ignored |
 | `python scripts/run-tests.py --binary target/release/pleamar.exe` | 225 checks passed, including 31 documentation scenes |
 | `python scripts/windows-smoke.py --binary target/release/pleamar.exe` | CLI, Unicode PowerShell autostart, absent-output Luau/IPC, report discovery/CPU/memory/redaction, timed and requested shutdown passed; no GUI switch |
 | Marea `python windows/test-logic.py --binary ../pleamar/target/release/pleamar.exe --luau-runner ../pleamar/target/release/examples/luau-test.exe` | Generated profile and thirteen isolated logic suites passed; 19 translation notices and an existing loose-clip note remain |
 | Marea `cargo test --locked --manifest-path deriva/Cargo.toml` | 87 tests passed using real bundled SQLite |
-| Marea `cargo build --release --locked --manifest-path deriva/Cargo.toml` | Native worker built; two unused-item warnings and an MSVC LIBCMT linker warning remain |
+| Marea `cargo build --release --locked --manifest-path deriva/Cargo.toml` | Native worker built; two unused-item warnings remain. Disabling unused C++ tokenizer training removed the mixed-CRT linker warning |
 | Marea `python windows/test-deriva-native.py --worker deriva/target/release/deriva-worker.exe` | Real persistence, Unicode paths, 24 concurrent writers, duplicates, FTS, blob bytes, integrity, backup, export/import passed on isolated libraries |
 | Marea `python windows/test-deriva-runtime.py --binary ../pleamar/target/release/pleamar.exe --worker deriva/target/release/deriva-worker.exe` | Actual default-Luau adapter launched the worker and saved, listed and searched real SQLite data; absent output, no graphical claim |
 
@@ -39,6 +39,17 @@ native watcher. A regression test now verifies future events after restoration.
 An older test was updated to distinguish failed initial load from upstream's
 new retain-previous-VM contract; the hidden AppBar test now checks preservation
 of actual z-order rather than assuming a retired window accepts placement.
+
+The first Windows CI run on this integration exposed a saved-scene reload race:
+logic could replay a quiet service's cached snapshot before the renderer knew
+the newly added field. The watcher now queues the scene definition before
+notifying logic. A deterministic synchronous-replay regression test passes;
+temporarily restoring the old order makes that test fail. The native saved-file
+test retains its original deadlines, and CI preserves reload logs on failure.
+
+Live Open-Meteo geocoding and forecast requests also passed through the Windows
+inbox `curl.exe`, using a fixed public example city and checking the response
+contract. This does not validate the calendar layout or user interaction.
 
 The text-atlas fix reproduces exhaustion and verifies glyph recovery, live-image
 churn, stale-generation rejection and oversized-working-set throttling. It
@@ -81,7 +92,7 @@ CI does not validate an interactive Windows or Linux desktop.
   protected tray icons and complete cross-application drag/drop.
 - Deriva interactive drop/open and semantic inference with real optional model
   weights. Its Unix socket server is explicitly unavailable; Marea uses the CLI.
-- Live weather provider requests and the latest weather/calendar layout.
+- The latest weather/calendar layout and interaction.
 - Live authenticated Claude quotas; cache/error paths are covered.
 - Linux desktop execution; automated checks do not establish desktop parity.
 
