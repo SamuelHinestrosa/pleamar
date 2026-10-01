@@ -83,6 +83,8 @@ struct Desks {
     execs: Vec<String>,
     dialog: Vec<bool>,
     minimized: Vec<bool>,
+    /// Floating over the layout (`float`): out of its count, not of the order.
+    floating: Vec<bool>,
     born: Vec<u64>,
     stamp: u64,
     focus: Option<usize>,
@@ -103,7 +105,7 @@ struct DockItem {
 
 impl Default for Desks {
     fn default() -> Self {
-        Desks { pool: Vec::new(), alive: Vec::new(), stack: [vec![1], vec![2], vec![3], vec![4]], shown: [1, 2, 3, 4], last: Default::default(), next: 5, apps: Vec::new(), icons: Vec::new(), names: Vec::new(), execs: Vec::new(), dialog: Vec::new(), minimized: Vec::new(), born: Vec::new(), stamp: 0, focus: None, pins: Vec::new(), items: Default::default() }
+        Desks { pool: Vec::new(), alive: Vec::new(), stack: [vec![1], vec![2], vec![3], vec![4]], shown: [1, 2, 3, 4], last: Default::default(), next: 5, apps: Vec::new(), icons: Vec::new(), names: Vec::new(), execs: Vec::new(), dialog: Vec::new(), minimized: Vec::new(), floating: Vec::new(), born: Vec::new(), stamp: 0, focus: None, pins: Vec::new(), items: Default::default() }
     }
 }
 
@@ -118,6 +120,7 @@ impl Desks {
             self.execs.resize(max, String::new());
             self.dialog.resize(max, false);
             self.minimized.resize(max, false);
+            self.floating.resize(max, false);
             self.born.resize(max, 0);
         }
     }
@@ -240,11 +243,15 @@ fn nest_places(scene: &Scene, facts: &mut [f32], texts: &mut [String], to_logic:
     let together = |a: usize, b: usize| screen_of(a) == screen_of(b) && desks.pool_of(a) == desks.pool_of(b);
     let shown = |slot: usize| desks.shown_here(slot, screens);
     let visible: Vec<usize> = order.iter().copied().filter(|k| shown(*k)).collect();
+    // A floating window keeps its turn for the keyboard (`order`, `rank`,
+    // `count`), but the layout is shared out among the others: as a dialog.
+    let floats = |k: usize| desks.floating.get(k).copied().unwrap_or(false);
+    let tiled: Vec<usize> = order.iter().copied().filter(|k| !floats(*k)).collect();
     for k in 0..n.max {
-        let listed = order.contains(&k);
-        let place = if listed { order.iter().take_while(|s| **s != k).filter(|s| together(**s, k)).count() as f32 } else { -1.0 };
+        let listed = tiled.contains(&k);
+        let place = if listed { tiled.iter().take_while(|s| **s != k).filter(|s| together(**s, k)).count() as f32 } else { -1.0 };
         nest_fact(scene, facts, to_logic, &format!("{name}.{k}.place"), place);
-        nest_fact(scene, facts, to_logic, &format!("{name}.{k}.among"), if listed { order.iter().filter(|s| together(**s, k)).count() as f32 } else { 0.0 });
+        nest_fact(scene, facts, to_logic, &format!("{name}.{k}.among"), if listed { tiled.iter().filter(|s| together(**s, k)).count() as f32 } else { 0.0 });
         nest_fact(scene, facts, to_logic, &format!("{name}.{k}.rank"), visible.iter().position(|s| *s == k).map_or(-1.0, |p| p as f32));
         nest_fact(scene, facts, to_logic, &format!("{name}.{k}.workspace"), desks.index(screen_of(k), desks.pool_of(k)) as f32);
         nest_fact(scene, facts, to_logic, &format!("{name}.{k}.pool"), desks.pool_of(k) as f32);
@@ -253,7 +260,7 @@ fn nest_places(scene: &Scene, facts: &mut [f32], texts: &mut [String], to_logic:
         nest_fact(scene, facts, to_logic, &format!("{name}.order.{p}"), visible.get(p).map_or(-1.0, |s| *s as f32));
     }
     for s in 0..4 {
-        nest_fact(scene, facts, to_logic, &format!("{name}.on.{s}"), visible.iter().filter(|k| screen_of(**k) == s).count() as f32);
+        nest_fact(scene, facts, to_logic, &format!("{name}.on.{s}"), visible.iter().filter(|k| screen_of(**k) == s && !floats(**k)).count() as f32);
         nest_fact(scene, facts, to_logic, &format!("{name}.shown.{s}"), desks.index(s, desks.shown[s]) as f32);
         nest_fact(scene, facts, to_logic, &format!("{name}.pool.{s}"), desks.shown[s] as f32);
         nest_fact(scene, facts, to_logic, &format!("{name}.pools.{s}"), desks.stack[s].len() as f32);
@@ -1120,6 +1127,7 @@ pub fn run(
                             desks.execs[slot] = String::new();
                             desks.dialog[slot] = false;
                             desks.minimized[slot] = false;
+                            desks.floating[slot] = false;
                             desks.stamp += 1;
                             desks.born[slot] = desks.stamp;
                             // What the slot showed before —a window closing, still fading— is no longer it.
@@ -1173,6 +1181,14 @@ pub fn run(
                             desks.grow(n.max);
                             if slot < n.max {
                                 desks.minimized[slot] = yes;
+                            }
+                            nest_places(&scene, &mut facts, &mut texts, &to_logic, &n, &nest_order, &nest_screens, &mut desks);
+                        }
+                        NestEvent::Floating(slot, yes) => {
+                            nest_fact(&scene, &mut facts, &to_logic, &format!("{name}.{slot}.floating"), yes as u8 as f32);
+                            desks.grow(n.max);
+                            if slot < n.max {
+                                desks.floating[slot] = yes;
                             }
                             nest_places(&scene, &mut facts, &mut texts, &to_logic, &n, &nest_order, &nest_screens, &mut desks);
                         }
@@ -1287,6 +1303,10 @@ pub fn run(
                             nest_fact(&scene, &mut facts, &to_logic, &format!("{name}.{slot}.fullscreen"), 0.0);
                             nest_fact(&scene, &mut facts, &to_logic, &format!("{name}.{slot}.dialog"), 0.0);
                             nest_fact(&scene, &mut facts, &to_logic, &format!("{name}.{slot}.minimized"), 0.0);
+                            nest_fact(&scene, &mut facts, &to_logic, &format!("{name}.{slot}.floating"), 0.0);
+                            if slot < desks.floating.len() {
+                                desks.floating[slot] = false;
+                            }
                             if nest_grab == Some(slot) {
                                 nest_grab = None;
                             }
@@ -2125,6 +2145,8 @@ pub fn run(
                                 WindowAction::Fullscreen => ToNest::Fullscreen(slot),
                                 WindowAction::Minimize => ToNest::Minimize(slot, true),
                                 WindowAction::Restore => ToNest::Minimize(slot, false),
+                                WindowAction::Float => ToNest::Float(slot, true),
+                                WindowAction::Tile => ToNest::Float(slot, false),
                             });
                         }
                     }

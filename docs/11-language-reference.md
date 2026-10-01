@@ -1060,6 +1060,7 @@ reloads on save while the programs in it keep running.
 | `win.$i.place` | its turn in the layout of its monitor: 0 leads, −1 if there is none. `promote` changes it |
 | `win.$i.screen` | the monitor it is on: which copy of a `screens: each` scene lays it out |
 | `win.$i.minimized` | it is put away: its minimize button, the scene (`minimize`), or whoever lists the windows (a dock, Marea). It is left out of the layout's order, as a dialog is; `restore` brings it back |
+| `win.$i.floating` | it floats over the layout (`float`): `.place` is −1 and `.among` and `win.on.$s` do not count it, so the others close up as if it were a dialog; it keeps its turn in `win.order`, `.rank` and `win.count` (the keyboard still reaches it). The compositor keeps it: a reload of the scene does not lose it. `tile` puts it back; it ends when the window closes |
 | `win.$i.dialog` | it is a dialog: it belongs to another window, or has a size of its own it cannot leave (a message, a file chooser). It is left out of the layout's order (`place` −1, not counted in `win.on`): float it over the rest, at its own size (`ask: 0, 0`) |
 | `win.$i.fullscreen` | it is fullscreen: it asked (a video, a game, F11) or the scene did. Where it goes is still the scene's: draw it over the whole monitor, and ask it for that size |
 | `win.$i.workspace` | the workspace it is on, by its turn in its monitor's stack (from 1): the one its monitor showed when it opened, or the one it was sent to. It changes when one above it dries up |
@@ -1101,6 +1102,7 @@ that holds), which are the scene's.
 | `send win.$i to 1` · `send win(win.focus) to 0` | to that monitor |
 | `swap win.$i with win.$j` · `swap win(a) with win(b)` | they change places: their turn in the layout, and their monitors |
 | `minimize win.$i` · `restore win.$i` | put away, and back: the program and whoever lists the windows are told |
+| `float win.$i` · `tile win.$i` | one window over the layout, and back into it (`win.$i.floating`); its monitor stays tiled |
 | `fullscreen win.$i` · `fullscreen win(win.focus)` | to fullscreen, or back from it: the program is told (it hides its own bars) and `win.$i.fullscreen` says so |
 | `workspace 3` · `workspace n on 1` | that workspace shown on the monitor the pointer is on, or on that one —no further than the empty one past the last that holds windows—. The keyboard goes to the window that last had it there; with none there, nobody has it |
 | `send win(win.focus) to workspace 2` · `… to workspace 2 on 1` | that window to that workspace, on its monitor or on that one (the same limit) |
@@ -1411,7 +1413,7 @@ properties.layout: at anchor gap padding align fill glass lens shine refraction 
 functions: min max abs floor ceil sin cos clamp smooth mix if vel sqrt pow fract mod sign round exp log tan atan2 length noise random pick
 text_functions: upper lower
 triggers: press release scroll drag hold enter leave hover away idle key submit focus blur drop carry change still
-effects: toggle emit impulse play focus blur close promote fullscreen minimize restore launch send swap workspace pick dock
+effects: toggle emit impulse play focus blur close promote fullscreen minimize restore float tile launch send swap workspace pick dock
 curves: linear in_quad out_quad in_cubic out_cubic in_out_sine out_back bezier
 frame: hold emit
 classes: ambient reflex asked state
