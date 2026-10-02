@@ -5087,6 +5087,9 @@ impl<'a> Compiler<'a> {
         for (child, scopes) in children {
             let mark = self.rules.len();
             let extra = scopes.len() + 1;
+            // A model reserves its capacity at compile time, but only its live
+            // rows may paint or receive input.
+            let presence = scopes.iter().filter_map(|s| s.visible.clone()).reduce(|a, b| a * b);
             self.scopes.extend(scopes);
             // How many columns it takes: a number known when reading the scene,
             // which inside a `repeat` may depend on it (`span: if(t == 4, 2, 1)`).
@@ -5115,6 +5118,9 @@ impl<'a> Compiler<'a> {
             let instr = self.e.instrs.len();
             let slot = Transform::at((0.0.into(), 0.0.into())).translate(x, Expr::K(0.0));
             self.e.paint(Instr::Transform(Some(slot.clone())));
+            if let Some(v) = &presence {
+                self.e.paint(Instr::Opacity(Some(v.clone())));
+            }
             self.under.push(slot);
             let from = self.candidates.len();
             self.in_slot = true;
@@ -5123,6 +5129,12 @@ impl<'a> Compiler<'a> {
             let r = self.statement(child, &mut no_clips);
             self.in_slot = false;
             self.under.pop();
+            if let Some(v) = &presence {
+                self.e.paint(Instr::Opacity(None));
+                for c in &mut self.candidates[from..] {
+                    c.visible = Some(match c.visible.take() { Some(old) => old * v.clone(), None => v.clone() });
+                }
+            }
             self.e.paint(Instr::Transform(None));
             for _ in 0..extra {
                 self.close_scope(mark);

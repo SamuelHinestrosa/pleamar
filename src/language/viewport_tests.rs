@@ -78,3 +78,38 @@ fn rotated_viewports_test_in_their_own_coordinate_space() {
     assert!(child.contains(c, 180.0, 125.0));
     assert!(!child.contains(c, 180.0, 175.0), "rotated hidden content caught input");
 }
+
+#[test]
+fn grid_model_slots_are_hidden_and_inactive_past_the_actual_count() {
+    let scene = compile(r#"
+        model cards max 4 { title: text }
+        component Card(d: record) {
+            size: 80, 40
+            box face { from: 0, 0; size: 80, 40; active: true }
+        }
+        grid { at: 20, 30; columns: 2; gap: 10; width: 170; row: 40
+            for d in cards { Card(d) }
+        }
+    "#);
+    let (props, mut facts) = values(&scene);
+    let count = scene.facts.iter().position(|(name, _)| *name == "cards.count").unwrap();
+    for length in [0, 1, 4, 1, 0] {
+        facts[count] = length as f32;
+        let c = Ctx { props: &props, facts: &facts };
+        assert_eq!(scene.zones.iter().filter(|z| z.active.eval(c) > 0.5).count(), length,
+            "empty grid cells must not intercept clicks");
+        let mut alpha = vec![1.0];
+        let mut visible = 0;
+        for instruction in &scene.instrs {
+            match instruction {
+                crate::scene::Instr::Opacity(Some(value)) => alpha.push(alpha.last().unwrap() * value.eval(c)),
+                crate::scene::Instr::Opacity(None) => { alpha.pop(); },
+                crate::scene::Instr::Fill { alpha: own, .. }
+                | crate::scene::Instr::Solid { alpha: own, .. }
+                    if *alpha.last().unwrap() * own.eval(c) > 0.0 => visible += 1,
+                _ => (),
+            }
+        }
+        assert_eq!(visible, length, "the grid painted unused model slots");
+    }
+}
