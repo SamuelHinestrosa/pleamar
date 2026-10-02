@@ -47,7 +47,7 @@ pub const TEXT_FUNCTIONS: &[&str] = &["upper", "lower"];
 /// What can go after `on`. Any other word is the name of an event.
 pub const TRIGGERS: &[&str] = &["press", "release", "scroll", "drag", "hold", "enter", "leave", "hover", "away", "idle", "key", "submit", "focus", "blur", "drop", "carry", "change", "still"];
 /// The effects with a word of their own. Also: `prop: value ~spring` and `fact = expr`.
-pub const EFFECTS: &[&str] = &["toggle", "emit", "impulse", "play", "focus", "blur", "close", "promote", "fullscreen", "minimize", "restore", "launch", "send", "swap", "workspace", "pick", "dock"];
+pub const EFFECTS: &[&str] = &["toggle", "emit", "impulse", "play", "focus", "blur", "close", "promote", "fullscreen", "minimize", "restore", "float", "tile", "launch", "send", "swap", "workspace", "pick", "dock"];
 pub const CURVES: &[&str] = &["linear", "in_quad", "out_quad", "in_cubic", "out_cubic", "in_out_sine", "out_back", "bezier"];
 /// What a keyframe can carry besides a curve.
 pub const KEYFRAME_OPTIONS: &[&str] = &["hold", "emit"];
@@ -93,7 +93,7 @@ pub const HELP: &[(&str, &str)] = &[
     ("for", "`for r in rows { … }` · `for r in rows from first { … }` — once per record of a model."),
     ("row", "`row { gap: 8; align: center }` — children side by side, with gap, padding, fill and scroll (`view:`)."),
     ("grid", "`grid { columns: 2; gap: 12; width: 456; row: 106 }` — children in cells, left to right and down; `span: 2` takes two. Inside each, `cell.w` and `cell.h` are its cell."),
-    ("windows", "`windows win max 6` — a compositor inside the scene: programs started with `launch \"kitty\"` open in it. Per slot: `win.$i.open`, `.title`, `.app`, `.width`, `.height`, `.focused`, `.place` (its turn in the layout of its monitor, −1 if closed), `.screen`, `.fullscreen`, `.dialog`, `.minimized`, `.workspace`, `.among` (how many share its monitor and workspace), `.rank` (its turn among the ones shown, −1 if hidden); and `win.count`, `win.on.$screen`, `win.shown.$screen` (the workspace each monitor shows), `win.focus`, `win.socket`."),
+    ("windows", "`windows win max 6` — a compositor inside the scene: programs started with `launch \"kitty\"` open in it. Per slot: `win.$i.open`, `.title`, `.app`, `.width`, `.height`, `.focused`, `.place` (its turn in the layout of its monitor, −1 if closed), `.screen`, `.fullscreen`, `.dialog`, `.minimized`, `.floating` (`float win.$i`: over the layout, out of `.place`, `.among` and `on.$s`), `.workspace`, `.among` (how many share its monitor and workspace), `.rank` (its turn among the ones shown, −1 if hidden); and `win.count`, `win.on.$screen`, `win.shown.$screen` (the workspace each monitor shows), `win.focus`, `win.socket`."),
     ("window", "`window win.$i { at: x, y; size: w, h }` — that slot's window, drawn there and answering the mouse and the keyboard. `ask: w, h` is the size it is told to have (by default `size`): let `size` travel on a spring and `ask` be where it goes. It is also a zone: `on press win.$i`, `win.$i.hover`."),
     ("pages", "`pages settings { header: 20, 45; page menu \"Settings\" { … } page look \"Her look\" { … } }` — one page at a time, sliding in; `settings` is a fact with the pages' names (`settings = look`), and with `header:` comes the ← and the title, and Esc goes back."),
     ("column", "`column { gap: 8 }` — children one under the other. Same properties as `row`."),
@@ -127,8 +127,9 @@ pub const SERVICES: &[(&str, &[&str])] = &[
     ("brightness", &["present", "level"]),
     ("network", &["online", "kind", "name", "strength", "wifi", "networks"]),
     ("bluetooth", &["present", "powered", "discovering", "devices"]),
-    ("media", &["playing", "title", "artist", "album", "player"]),
+    ("media", &["playing", "title", "artist", "album", "length", "position", "rate", "art", "player"]),
     ("window", &["title", "class", "monitor", "list"]),
+    ("thumbnails", &["list", "capturing"]),
     ("workspaces", &["active", "list"]),
     ("apps", &["list"]),
     ("tray", &["list"]),

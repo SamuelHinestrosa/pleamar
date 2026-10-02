@@ -2912,4 +2912,3 @@ thread_local! {
     /// How long this thread's waits for the card usually take, in ms.
     static WAIT_USUALLY: std::cell::Cell<f64> = const { std::cell::Cell::new(0.0) };
 }
-

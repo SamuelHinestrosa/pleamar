@@ -5325,6 +5325,7 @@ impl<'a> Compiler<'a> {
             fact(self, format!("{name}.{k}.fullscreen"), 0.0, true);
             fact(self, format!("{name}.{k}.dialog"), 0.0, true);
             fact(self, format!("{name}.{k}.minimized"), 0.0, true);
+            fact(self, format!("{name}.{k}.floating"), 0.0, true);
             // Workspaces: which one it is on (they start at 1), how many share
             // its monitor and workspace (what its layout is shared out
             // among), and its turn among the windows shown.
@@ -5849,6 +5850,8 @@ impl<'a> Compiler<'a> {
                         "fullscreen" => Effect::Window(WindowAction::Fullscreen, self.which_window(&mut c)?),
                         "minimize" => Effect::Window(WindowAction::Minimize, self.which_window(&mut c)?),
                         "restore" => Effect::Window(WindowAction::Restore, self.which_window(&mut c)?),
+                        "float" => Effect::Window(WindowAction::Float, self.which_window(&mut c)?),
+                        "tile" => Effect::Window(WindowAction::Tile, self.which_window(&mut c)?),
                         // `send win(win.focus) to 1`: to that monitor's copy of the scene;
                         // `send win(win.focus) to workspace 2`: to that workspace.
                         "send" => {

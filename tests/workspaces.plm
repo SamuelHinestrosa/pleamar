@@ -18,6 +18,10 @@ scene Workspaces {
     on key Alt+p { dock 1 on 0 pin }
     on key Alt+u { dock 1 on 0 unpin }
     on key Alt+c { dock 1 on 0 close }
+    // One window over the tiles, and back: out of `place` and `among`, still in the order.
+    on key Alt+f while win.focus >= 0 { float win(win.focus) }
+    on key Alt+t while win.focus >= 0 { tile win(win.focus) }
+    let floats = win.0.floating + win.on.0
     zone box pad { at: 390, 290; size: 20, 20 }
     let unread = win.dock.0.0.badge + win.0.dockturn
     let docked = win.docks.0 + win.dock.0.0.windows + win.dock.0.0.focused + win.dock.0.0.pinned + win.dock.0.0.away + win.mins.0 + win.0.dockat + win.0.minat

@@ -1593,6 +1593,10 @@ pub enum WindowAction {
     /// It is put away (minimized), or brought back.
     Minimize,
     Restore,
+    /// It floats over the layout (the others close up without it), or goes
+    /// back into it: one window, not its whole monitor.
+    Float,
+    Tile,
 }
 
 impl Effect {
@@ -2026,9 +2030,10 @@ pub enum ToRender {
     Dropped(String, String),
     /// What the compositor inside the scene has to say.
     Nest(NestEvent),
-    /// Someone wants a window's picture every time it draws (sharing it):
-    /// its slot, and where to send it. `None` stops.
-    WatchWindow(usize, Option<std::sync::mpsc::Sender<WindowPicture>>),
+    /// Someone wants a window's picture every time it draws (sharing it,
+    /// a thumbnail of it): its slot, who asks (a number of theirs: several
+    /// may watch the same window), and where to send it. `None` stops theirs.
+    WatchWindow(usize, u64, Option<std::sync::mpsc::Sender<WindowPicture>>),
     /// What was on screen has been lost —back from another TTY—: everything is painted again.
     Repaint,
     Quit,
@@ -2103,6 +2108,9 @@ pub enum NestEvent {
     /// A window is put away now (minimized), or back: it asked, the scene
     /// did, or whoever lists the windows (Marea) did.
     Minimized(usize, bool),
+    /// A window floats now, or is back in the layout (`float`, `tile`). The
+    /// compositor keeps it, so it outlives a reload of the scene.
+    Floating(usize, bool),
     /// What a window shows now: its pieces —its surface, its subsurfaces, its
     /// menus— in the order they are drawn, placed from the corner of its main
     /// surface, and where the window itself is in that surface (a program may
@@ -2129,7 +2137,8 @@ pub enum NestEvent {
 /// the shadow its program may draw around it), in pixels, BGRA premultiplied.
 pub struct WindowPicture {
     pub size: (u32, u32),
-    pub pixels: Vec<u8>,
+    /// Shared by all who watch it: read once from the card, not once each.
+    pub pixels: std::sync::Arc<Vec<u8>>,
 }
 
 /// What the scene chose, when the compositor asked it to (`pick`).
@@ -2214,6 +2223,8 @@ pub enum ToNest {
     Fullscreen(usize),
     /// That window put away (true), or brought back (false).
     Minimize(usize, bool),
+    /// That window floating over the layout (true), or back in it (false).
+    Float(usize, bool),
     /// That window, to that monitor.
     Send(usize, usize),
     /// Those two windows change places.

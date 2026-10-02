@@ -1,8 +1,12 @@
 //! What is playing, through MPRIS: the D-Bus agreement that players and browsers
 //! follow on Linux. On Windows it will be SMTC; on macOS, MediaRemote.
 //!
-//! `{ playing, title, artist, album, player }`. If there are several, the one
+//! `{ playing, title, artist, album, length, position, rate, art, player }`. If there are several, the one
 //! that is playing is reported; if none is playing, the first. With no players, `player = ""`.
+//!
+//! MPRIS does not signal `Position` as it moves, so it is read whenever something
+//! else is reported, and on `Seeked`. Between reports the scene carries it on with
+//! its own clock, at `rate`, while `playing`: nothing here polls.
 
 use super::SysValue;
 use std::collections::HashMap;
@@ -43,10 +47,22 @@ fn text(v: &OwnedValue) -> String {
     <Vec<String>>::try_from(v.clone()).map(|l| l.join(", ")).unwrap_or_default()
 }
 
+/// `mpris:length` is in microseconds, and the spec says `x`, but some players send `t`.
+fn seconds(v: &OwnedValue) -> f64 {
+    let us = i64::try_from(v).ok().or_else(|| u64::try_from(v).ok().map(|n| n as i64)).unwrap_or(0);
+    us.max(0) as f64 / 1e6
+}
+
+/// `Position` is not in the metadata: it is a property of its own, and the one that
+/// never says it changed. A player that does not know it answers with an error: 0.
+fn position(p: &Proxy) -> f64 {
+    p.get_property::<OwnedValue>("Position").map(|v| seconds(&v)).unwrap_or(0.0)
+}
+
 fn now(c: &Connection) -> SysValue {
     let field = |k: &str, v: SysValue| (k.to_owned(), v);
     let Some((name, p, playing)) = active_player(c) else {
-        return SysValue::Map(vec![field("playing", SysValue::Bool(false)), field("title", SysValue::Text(String::new())), field("artist", SysValue::Text(String::new())), field("album", SysValue::Text(String::new())), field("player", SysValue::Text(String::new()))]);
+        return SysValue::Map(vec![field("playing", SysValue::Bool(false)), field("title", SysValue::Text(String::new())), field("artist", SysValue::Text(String::new())), field("album", SysValue::Text(String::new())), field("length", SysValue::Num(0.0)), field("position", SysValue::Num(0.0)), field("rate", SysValue::Num(1.0)), field("art", SysValue::Text(String::new())), field("player", SysValue::Text(String::new()))]);
     };
     let metadata: HashMap<String, OwnedValue> = p.get_property("Metadata").unwrap_or_default();
     let from_metadata = |k: &str| SysValue::Text(metadata.get(k).map(text).unwrap_or_default());
@@ -55,6 +71,11 @@ fn now(c: &Connection) -> SysValue {
         field("title", from_metadata("xesam:title")),
         field("artist", from_metadata("xesam:artist")),
         field("album", from_metadata("xesam:album")),
+        field("length", SysValue::Num(metadata.get("mpris:length").map(seconds).unwrap_or(0.0))),
+        field("position", SysValue::Num(position(&p))),
+        // The spec's default; a player that cannot change it may leave it out.
+        field("rate", SysValue::Num(p.get_property::<f64>("Rate").unwrap_or(1.0))),
+        field("art", from_metadata("mpris:artUrl")),
         field("player", SysValue::Text(name.trim_start_matches(PREFIX).split('.').next().unwrap_or_default().to_owned())),
     ])
 }
@@ -69,9 +90,12 @@ pub fn service(dispatch: Box<dyn Fn(SysValue) + Send>) -> bool {
             if fingerprint != last { last = fingerprint; dispatch(v) }
         };
         report(&c);
-        // Two things matter: a player changing something, and one appearing or going away.
+        // Three things matter: a player changing something, one jumping to another
+        // point of the song (`Seeked`, the only time the position says it moved),
+        // and one appearing or going away.
         let rules = [
             MatchRule::builder().msg_type(zbus::message::Type::Signal).interface("org.freedesktop.DBus.Properties").and_then(|b| b.member("PropertiesChanged")).and_then(|b| b.path(PATH)).map(|b| b.build()),
+            MatchRule::builder().msg_type(zbus::message::Type::Signal).interface(PLAYER).and_then(|b| b.member("Seeked")).and_then(|b| b.path(PATH)).map(|b| b.build()),
             MatchRule::builder().msg_type(zbus::message::Type::Signal).interface("org.freedesktop.DBus").and_then(|b| b.member("NameOwnerChanged")).and_then(|b| b.arg0ns(PREFIX.trim_end_matches('.'))).map(|b| b.build()),
         ];
         let (tx, rx) = std::sync::mpsc::channel::<()>();
