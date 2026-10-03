@@ -146,3 +146,29 @@ The retained sequence and jump tables take 156,416 bytes for this scene, release
 when replaced. Native comparisons use the one-output benchmark above, with
 `--seconds 15 --repeats 2`, and compare against preview.6 with the same generated
 scene, animation rate and concurrent desktop workload.
+
+On this machine, the previous structural preparation took 48.7 microseconds per
+composition. Reusing it removes that preparation on unchanged structure; the
+benchmark's constant-time access is not a useful application speed ratio.
+
+The native comparison against preview.6 completed with the same fixture hash,
+no runtime errors, no desktop input and only DISPLAY2 surfaces. Mean process CPU
+over two 15-second samples per state, as a percentage of one CPU core:
+
+| Panel | Preview.6 | Follow-up |
+|---|---:|---:|
+| Closed | 13.49% | 11.98% |
+| Open | 22.92% | 19.80% |
+
+Mean update intervals stayed at 16.67–16.69 ms. Final resident/private memory was
+284.01/371.28 MiB before and 274.66/329.41 MiB after. These are observed endpoints,
+not a demonstrated long-term RAM saving; gameplay, driver caches and allocator
+variation remain uncontrolled. No animation rate or effect was reduced.
+
+The final default-Luau MSVC release passed 130 library tests (27 opt-in tests
+ignored), 227 scene/documentation checks and 15 Marea logic suites. The native
+input/reload test passed after fixing its startup polling: the pipe can be ready
+before DX12 answers a renderer request. An earlier test setup also mistakenly
+loaded the existing negative nested-effects example as a valid scene; that test
+input was replaced with the valid group-modes example. Neither failed attempt is
+counted as a passing run. This follow-up adds no physical-input/screenshot claim.

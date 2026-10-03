@@ -50,7 +50,12 @@ def main():
         deadline = time.monotonic() + 9
         while time.monotonic() < deadline and process.poll() is None:
             try:
-                count = int(ask('get clicks'))
+                reply = ask('get clicks')
+                # The pipe can be ready while DX12 is still creating the first surface.
+                if reply == '? the render does not answer':
+                    time.sleep(.05)
+                    continue
+                count = int(reply)
                 assert count <= value, f'An old or inactive region accepted a click: {count} > {value}'
                 if count == value: return
             except subprocess.SubprocessError:
