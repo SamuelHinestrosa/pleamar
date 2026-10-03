@@ -739,6 +739,15 @@ pub fn run(
                     // hot reload, the scene carries on where it was.
                     let hot = !scene.props.is_empty();
                     facts = fresh.facts.iter().map(|(n, initial)| scene.facts.iter().position(|h| h.0 == *n).map_or(*initial, |k| facts[k])).collect();
+                    // A reload can introduce/reorder measured properties while
+                    // the native windows keep their size and send no resize.
+                    for sheet in sheets.iter().filter(|s| s.view.popup.is_none()) {
+                        if let Some(old) = scene.surfaces.get(sheet.view.surface) {
+                            if let Some(surface) = fresh.surfaces.iter().find(|s| s.name == old.name && s.instance == old.instance) {
+                                publish_surface_size(surface, &mut props, sheet.view.size);
+                            }
+                        }
+                    }
                     inside = vec![false; fresh.zones.len()];
                     follows = Follows::default();
                     warning = None;
@@ -827,10 +836,8 @@ pub fn run(
                     let is_window = scene.surface().window.is_some();
                     let its_own = n.view.surface == 0 && n.view.popup.is_none();
                     // A named surface publishes what it measures (see `SheetSize`).
-                    if let Some((w, h)) = scene.surfaces.get(n.view.surface).and_then(|s| s.size_props).filter(|_| n.view.popup.is_none()) {
-                        for (p, v) in [(w, n.size.0 as f32), (h, n.size.1 as f32)] {
-                            props[p.0 as usize] = Animated { x: v, v: 0.0, target: v, spring: props[p.0 as usize].spring };
-                        }
+                    if let Some(surface) = scene.surfaces.get(n.view.surface).filter(|_| n.view.popup.is_none()) {
+                        publish_surface_size(surface, &mut props, (n.size.0 as f32, n.size.1 as f32));
                     }
                     if (scene.surface().width == 0 || is_window) && its_own {
                         size.0 = n.size.0 as f32;
@@ -925,10 +932,8 @@ pub fn run(
                 ToRender::SheetSize(id, new_size) => {
                     if let (Some(g), Some(l)) = (&gpu, sheets.iter_mut().find(|l| l.id == id)) {
                         // A named surface publishes what it measures.
-                        if let Some((w, h)) = scene.surfaces.get(l.view.surface).and_then(|s| s.size_props) {
-                            for (p, v) in [(w, new_size.0), (h, new_size.1)] {
-                                props[p.0 as usize] = Animated { x: v, v: 0.0, target: v, spring: props[p.0 as usize].spring };
-                            }
+                        if let Some(surface) = scene.surfaces.get(l.view.surface).filter(|_| l.view.popup.is_none()) {
+                            publish_surface_size(surface, &mut props, new_size);
                         }
                         if l.view.size != new_size {
                             l.view.size = new_size;
@@ -3676,6 +3681,15 @@ pub fn run(
             }
             // Still now: if something overflowed, this is what stays watching.
             draw.report_pending();
+        }
+    }
+}
+
+fn publish_surface_size(surface: &Surface, props: &mut [Animated], size: (f32, f32)) {
+    if let Some((w, h)) = surface.size_props {
+        for (p, value) in [(w, size.0), (h, size.1)] {
+            let measured = &mut props[p.0 as usize];
+            *measured = Animated { x: value, v: 0.0, target: value, spring: measured.spring };
         }
     }
 }

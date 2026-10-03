@@ -132,11 +132,19 @@ fn catalog(current: &str) -> Vec<String> {
     paths
 }
 
+fn aspect(width: u32, height: u32) -> (u32, u32) {
+    let (mut a, mut b) = (width, height);
+    while b != 0 { (a, b) = (b, a % b); }
+    (width / a, height / a)
+}
+
 fn preview(path: &Path, width: u32, height: u32) -> Result<String, String> {
     if !path.is_absolute() || !path.is_file() { return Err("wallpaper must be an existing absolute image path".into()); }
     let meta = std::fs::metadata(path).map_err(|e| e.to_string())?;
     let mut hash = std::hash::DefaultHasher::new();
-    (path, width, height, meta.len(), meta.modified().ok()).hash(&mut hash);
+    // Equal-aspect monitors use the same 1280x720 texture. Avoid decoding the
+    // original twice just because one monitor has more pixels or another DPI.
+    (path, aspect(width, height), meta.len(), meta.modified().ok()).hash(&mut hash);
     let cache = PathBuf::from(std::env::var_os("LOCALAPPDATA").ok_or("LOCALAPPDATA is not set")?).join("pleamar/wallpaper-cache");
     std::fs::create_dir_all(&cache).map_err(|e| e.to_string())?;
     let target = cache.join(format!("{:016x}.jpg", hash.finish()));
@@ -209,6 +217,13 @@ pub fn command(name: &str, args: &[SysValue]) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn preview_cache_depends_on_aspect_not_resolution_or_dpi() {
+        assert_eq!(aspect(2560, 1440), aspect(1920, 1080));
+        assert_eq!(aspect(2048, 1152), aspect(1536, 864));
+        assert_ne!(aspect(2048, 1152), aspect(864, 1536));
+        assert_eq!(aspect(1, 16384), (1, 16384));
+    }
     #[test]
     fn invalid_requests_do_not_change_the_desktop() {
         for n in [f64::NAN, f64::INFINITY, 0.0, -1.0, 16_385.0] {

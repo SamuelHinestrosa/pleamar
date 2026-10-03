@@ -509,7 +509,7 @@ pub fn compile<'a>(tree: &'a [Entry], files: &'a [String], dirs: &'a [std::path:
         for (k, instance) in copies {
             let per_copy = matches!(o.e.surfaces[k].screens, Screens::Number(_));
             if per_copy {
-                o.scopes.push(o.screen_scope(instance));
+                o.scopes.push(o.surface_scope(&o.e.surfaces[k].name, instance));
             }
             let mut c = Cur::new(tokens, l, col);
             match o.expr(&mut c) {
@@ -3502,7 +3502,7 @@ impl<'a> Compiler<'a> {
                 // With `screens: each`, each copy has its own: its properties, its zones
                 // and its rules. `$screen` is its number, and `screen.name` that of its monitor.
                 if per_screen {
-                    self.scopes.push(self.screen_scope(instance));
+                    self.scopes.push(self.surface_scope(&name, instance));
                 } else if lock {
                     let mut env = Scope::default();
                     for part in ["width", "height"] {
@@ -3715,7 +3715,17 @@ impl<'a> Compiler<'a> {
             let base = self.e.surfaces[which].clone();
             for k in 1..limit {
                 self.next_origin += 10000.0;
-                let copy = Surface { instance: k, origin: (0.0, self.next_origin), screens: Screens::Number(k), ..base.clone() };
+                // Each native surface reports its own logical dimensions.
+                // Sharing the first copy's properties lets the last monitor
+                // resize every copy's drawing, even when their windows differ.
+                let size_props = base.size_props.map(|_| {
+                    let prefix = format!("{name}#screen{k}");
+                    let (w, h) = self.e.measured(interned(&prefix));
+                    self.props.insert(format!("{prefix}.width"), w);
+                    self.props.insert(format!("{prefix}.height"), h);
+                    (w, h)
+                });
+                let copy = Surface { instance: k, origin: (0.0, self.next_origin), screens: Screens::Number(k), size_props, ..base.clone() };
                 // The main one's copies go together at the start: the first one is still the main one.
                 if base.name.is_empty() {
                     self.e.surfaces.insert(k, copy);
@@ -3759,6 +3769,17 @@ impl<'a> Compiler<'a> {
     }
 
     /// Inside a `screens: each` surface: what holds for that copy.
+    fn surface_scope(&self, name: &str, k: usize) -> Scope {
+        let mut env = self.screen_scope(k);
+        if !name.is_empty() && k > 0 {
+            for part in ["width", "height"] {
+                env.alias.insert(format!("{name}.{part}"), format!("{name}#screen{k}.{part}"));
+            }
+        }
+        env
+    }
+
+    /// Inside a `screens: each` surface: what holds for that monitor.
     fn screen_scope(&self, k: usize) -> Scope {
         let mut env = Scope { suffix: format!("#screen{k}"), ..Default::default() };
         // `$screen` in a name is its number, like `$i` in a `repeat`.
