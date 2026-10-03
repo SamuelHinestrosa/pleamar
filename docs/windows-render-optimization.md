@@ -97,3 +97,52 @@ Update intervals and process CPU are recorded separately. Concurrent gameplay
 and driver/allocator caches make these short samples unsuitable for a general
 RAM-saving or game-FPS claim. No working-set trimming or lower animation rate
 is used.
+
+## Composition preparation follow-up
+
+The renderer now prepares instruction order and hidden-group jumps once, then
+keeps them until a new scene, a changed z order or a changed diagnostic banner.
+The previous path copied the z arrangement, allocated a sequence and walked all
+instructions to find group endings on every composition. Marea's generated
+desktop contains 9,776 instructions, including many hidden controls.
+
+The prepared traversal preserves the previous treatment of particle emitters:
+their clocks are visited even inside hidden groups. Visibility, opacity, effects
+and transforms are still evaluated each frame. Clip/transform/opacity stacks,
+the closed-surface mask and gradient stops reuse storage; a scene reload drops
+that scratch storage. The public `DrawList::compose` entry point still builds its
+own traversal, so callers outside the runtime do not acquire a new invalidation
+obligation.
+
+GPU uploads also compare each of the four drawing buffers against the existing
+previous-frame snapshot. Only changed buffers are queued. This adds no second
+copy of drawing data; comparison uses float bits, including signed zero and
+NaN. Newly allocated buffers and invalidated snapshots always get a full upload.
+The public `Gpu::upload` entry point retains its unconditional behavior.
+
+Reviewing invalidation also exposed two diagnostic-banner omissions: a banner
+could reuse the previous draw list, and z ordering could leave the appended
+banner outside the draw sequence. Banner changes now invalidate composition,
+and the banner follows the ordered scene. This does not reorder scene controls.
+
+Regression tests compare the new traversal with the previous algorithm for
+groups, effects, emitters and changing z order; compare drawing buffers and
+hidden regions across visibility changes; and cover diagnostic append and a
+same-length structural edit. The native `windows-zone-cache.py` fixture also
+changes z order and reloads a group with a different structure on its selected
+output. Its input is renderer-scripted, not physical desktop input.
+Buffer-upload tests cover independent changes, size changes, signed zero, NaN
+and invalidation.
+
+The isolated preparation benchmark can be repeated without opening a window:
+
+```powershell
+$env:PLEAMAR_COMPOSE_BENCH_SCENE = (Resolve-Path ../marea-plm/marea-desktop.plm).Path
+cargo test --release --locked --lib scene_preparation_benchmark -- --ignored --nocapture
+```
+
+This measures preparation that is avoided, not a whole-application speed ratio.
+The retained sequence and jump tables take 156,416 bytes for this scene, released
+when replaced. Native comparisons use the one-output benchmark above, with
+`--seconds 15 --repeats 2`, and compare against preview.6 with the same generated
+scene, animation rate and concurrent desktop workload.

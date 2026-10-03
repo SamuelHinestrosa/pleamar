@@ -446,6 +446,7 @@ pub fn run(
     let mut gpu: Option<Gpu> = None;
     let mut sheets: Vec<Sheet> = Vec::new();
     let mut draw = DrawList::default();
+    let mut composition = None;
     let mut zone_geometry: Vec<zones::Geometry> = Vec::new();
     let mut previous = crate::gpu::PreviousFrame::default();
     // What the last list was made from (see `same_scene`).
@@ -712,6 +713,8 @@ pub fn run(
                 // once, on arrival: while it lasts, the good scene is painted with the
                 // banner on top.
                 ToRender::ReloadError(what) => {
+                    composition = None;
+                    compose_memo = None;
                     // `size: full` does not tell its width until the compositor
                     // configures it: then it is the screen's, which is `screen.width`.
                     let width = match scene.surface().width {
@@ -728,6 +731,7 @@ pub fn run(
                 ToRender::Scene(fresh) => {
                     // Constant geometry can change while every fact and property stays equal.
                     compose_memo = None;
+                    composition = None;
                     crate::platform::release_memory();
                     crate::platform::CURSOR_WANTED.store(fresh.wants_cursor, std::sync::atomic::Ordering::Relaxed);
                     // The properties with the same name survive the change.
@@ -796,6 +800,7 @@ pub fn run(
                     update_screen_count(&scene, &mut facts, &sheets);
                     z_memo = None;
                     window_instrs = None;
+                    draw.reset_composition();
                     draw.hidden.clear();
                     if let Some(n) = &scene.nest {
                         if nest.is_none() {
@@ -1653,8 +1658,9 @@ pub fn run(
             let zs: Vec<f32> = scene.zblocks.iter().map(|b| b.z.eval(c)).collect();
             if z_memo.as_ref().is_none_or(|(before, _)| *before != zs) {
                 z_memo = Some((zs, scene.z_arrange(c)));
+                composition = None;
             }
-            z_memo.as_ref().and_then(|(_, a)| a.clone())
+            z_memo.as_ref().and_then(|(_, a)| a.as_ref())
         };
         let hovered = match &arrangement {
             Some(a) => inside.iter().enumerate().filter(|(_, d)| **d).max_by_key(|(k, _)| (a.zone_rank[*k], *k)).map(|(k, _)| k),
@@ -2783,9 +2789,9 @@ pub fn run(
         let to_paint: &[Instr] = if warning.is_some() { &with_warning } else { &scene.instrs };
         draw.set_attached_edges(scene.surface().anchor.attached_edges());
         let reading = Instant::now();
-        let skip: Vec<std::ops::Range<usize>> = asleep.iter().map(|t| t.instrs.clone()).collect();
-        draw.skip = skip;
-        draw.order = arrangement.map(|a| a.order);
+        draw.skip.clear();
+        draw.skip.extend(asleep.iter().map(|t| t.instrs.clone()));
+        let composition = composition.get_or_insert_with(|| crate::gpu::composition::Composition::new(to_paint, arrangement.map(|a| a.order.as_slice())));
         draw.clock = t_total;
         draw.reduced_motion = op.reduced_motion;
         if draw.signal_times.len() != scene.signals.len() {
@@ -2952,7 +2958,7 @@ pub fn run(
                 m.size == size && m.view == view && m.views == draw.views && m.facts == facts && m.texts == texts && m.window_tex == draw.window_tex && m.props.len() == props.len() && m.props.iter().zip(&props).all(|(a, b)| *a == b.x)
             });
         if !same_scene {
-            draw.compose(to_paint, c, &texts, &mut letters, view, size, op.hud);
+            draw.compose_prepared(to_paint, composition, c, &texts, &mut letters, view, size, op.hud);
             let memo = compose_memo.get_or_insert_with(ComposeMemo::default);
             memo.size = size;
             memo.view = view;
@@ -2985,7 +2991,7 @@ pub fn run(
         }
         g.upload_atlas(&mut letters.pending_upload);
         if !same_scene {
-            g.upload(&draw);
+            g.upload_changed(&draw, &previous);
         }
         // What has changed, and where. The frame graph always changes.
         // The light of a click changes the glass without changing the list: everything is painted.

@@ -28,7 +28,11 @@ def main():
     fact offset = 0
     fact enabled = true
     box { from: 0, 0; size: 400, 280; color: #142224 }
-    box button { from: 40 + offset, 50; size: 80, 40; color: #80dcc2; active: enabled }
+    group {
+        z: offset
+        opacity: if(enabled, 1, 0)
+        box button { from: 40 + offset, 50; size: 80, 40; color: #80dcc2; active: enabled }
+    }
     text "Geometry cache validation" { at: 20, 15; size: 18; color: #ffffff }
     on press button { clicks = clicks + 1 }
 }
@@ -69,8 +73,8 @@ def main():
             time.sleep(2.7)
             assert int(ask('get clicks')) == 2, 'Inactive zone accepted input'
             ask('fact enabled true')
-            # Same zone count/dependencies; only the constant vertical position changes.
-            scene.write_text(source.replace('40 + offset, 50', '40 + offset, 150'), encoding='utf-8')
+            # Same zone count/dependencies, but new constant position and group structure.
+            scene.write_text(source.replace('40 + offset, 50', '40 + offset, 150').replace('z: offset', 'z: offset; blur: 0'), encoding='utf-8')
             time.sleep(2.8)
             assert int(ask('get clicks')) == 2, 'The old position survived hot reload'
             wait_clicks(3)
