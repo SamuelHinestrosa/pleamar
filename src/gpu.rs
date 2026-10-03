@@ -2012,6 +2012,7 @@ impl Gpu {
         let px = ((size.0 * l.scale).round().max(1.0) as u32, (size.1 * l.scale).round().max(1.0) as u32);
         self.configure_surface(l, px);
         l.painted = None;
+        l.cleared = false;
         if px != l.px {
             l.px = px;
             // A canvas of another size is no longer valid: another is made when needed.
@@ -2048,6 +2049,11 @@ impl Gpu {
     fn configure_surface(&self, l: &Sheet, px: (u32, u32)) {
         let _ = &self.adapter;
         let Target::Surface(surface) = &l.target else { return };
+        // DirectComposition retains every swapchain buffer even while hidden.
+        // Keep a transparent pixel until reopening; logical/window dimensions
+        // remain in l.px and are restored before any visible frame is drawn.
+        #[cfg(target_os = "windows")]
+        let px = if l.open { px } else { (1, 1) };
         surface.configure(
             &self.device,
             &wgpu::SurfaceConfiguration {
@@ -2463,9 +2469,15 @@ impl Gpu {
         // that does not touch the view, the layer is not read.
         let v = l.view.bounds();
         let needed = d.offscreen_groups.iter().filter(|(t, _)| d.touches_view(t, v)).map(|(_, c)| *c as u32 + 1).max().unwrap_or(0);
-        self.ensure_layers(l, needed);
+        if l.open {
+            self.ensure_layers(l, needed);
+        } else if l.layers > 0 {
+            // A closed sheet is cleared once, then skipped by the renderer.
+            // It cannot reach the idle-frame threshold to free these textures.
+            self.release_layers(l);
+        }
         // The lens, if it shows glass and the screen lets a canvas be copied onto it.
-        if !l.wants_lens || !self.can_copy {
+        if !l.open || !l.wants_lens || !self.can_copy {
             l.lens = None;
         } else if l.lens.is_none() {
             l.lens = Some(crate::lens::Lens::new(&self.device, self.format, l.px));

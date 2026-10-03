@@ -72,6 +72,25 @@ mod fixture {
             _ => DefWindowProcW(hwnd, message, wp, lp),
         }
     } }
+    struct SilentAudio(windows::Win32::Media::Audio::IAudioClient);
+    impl Drop for SilentAudio { fn drop(&mut self) { unsafe { let _ = self.0.Stop(); } } }
+    unsafe fn silent_audio() -> windows::core::Result<SilentAudio> { unsafe {
+        use windows::Win32::{Media::Audio::*, System::Com::{CoCreateInstance, CoTaskMemFree, CLSCTX_ALL}};
+        let e: IMMDeviceEnumerator = CoCreateInstance(&MMDeviceEnumerator, None, CLSCTX_ALL)?;
+        let device = e.GetDefaultAudioEndpoint(eRender, eConsole)?;
+        let client: IAudioClient = device.Activate(CLSCTX_ALL, None)?;
+        let format = client.GetMixFormat()?;
+        let initialized = client.Initialize(AUDCLNT_SHAREMODE_SHARED, 0, 1_000_000, 0, format, None);
+        CoTaskMemFree(Some(format as _));
+        initialized?;
+        let render: IAudioRenderClient = client.GetService()?;
+        let size = client.GetBufferSize()?;
+        render.GetBuffer(size)?;
+        render.ReleaseBuffer(size, AUDCLNT_BUFFERFLAGS_SILENT.0 as u32)?;
+        client.Start()?;
+        println!("fixture: silent audio session ready");
+        Ok(SilentAudio(client))
+    } }
     pub fn run() -> Result<(), Box<dyn std::error::Error>> { unsafe {
         RoInitialize(RO_INIT_MULTITHREADED)?;
         struct Apartment;
@@ -102,6 +121,16 @@ mod fixture {
         if RegisterClassW(&wc) == 0 { return Err(windows::core::Error::from_thread().into()); }
         let hwnd = CreateWindowExW(WS_EX_APPWINDOW, class, w!("Pleamar media fixture"), WS_OVERLAPPEDWINDOW,
             40, 300, 580, 220, None, None, Some(instance.into()), None)?;
+        // Explicit window identity also exercises custom classic application IDs.
+        {
+            use windows::Win32::{UI::Shell::PropertiesSystem::{SHGetPropertyStoreForWindow, IPropertyStore}, System::Com::StructuredStorage::PROPVARIANT};
+            let store: IPropertyStore = SHGetPropertyStoreForWindow(hwnd)?;
+            let value = PROPVARIANT::from(app_id.as_str());
+            let key = PROPERTYKEY { fmtid: windows::core::GUID::from_u128(0x9f4c2855_9f79_4b39_a8d0_e1d42de1d5f3), pid: 5 };
+            store.SetValue(&key, &value)?;
+            store.Commit()?;
+        }
+        let _audio = if args.iter().any(|arg| arg == "--audio") { Some(silent_audio()?) } else { None };
         let interop: ISystemMediaTransportControlsInterop = windows::core::factory::<Controls, _>()?;
         let controls: Controls = interop.GetForWindow(hwnd)?;
         controls.SetIsEnabled(true)?;

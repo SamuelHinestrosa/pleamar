@@ -1,5 +1,7 @@
 //! System media sessions and network status, without helper executables.
 use super::SysValue;
+#[path = "windows_media_volume.rs"]
+mod volume;
 use windows::Media::Control::{GlobalSystemMediaTransportControlsSessionManager as Manager, GlobalSystemMediaTransportControlsSession as Session, GlobalSystemMediaTransportControlsSessionPlaybackStatus as Status};
 use windows::Networking::Connectivity::{NetworkInformation, NetworkConnectivityLevel};
 use windows::core::Result;
@@ -80,7 +82,12 @@ pub fn media() -> Result<SysValue> {
     };
     let properties = complete!(session.TryGetMediaPropertiesAsync())?;
     let controls = Controls::read(&session)?;
+    let player = session.SourceAppUserModelId()?.to_string();
+    let level = volume::read(&player);
     Ok(SysValue::Map(vec![
+        ("can_volume".into(), SysValue::Bool(level.is_ok())),
+        ("volume".into(), SysValue::Num(level.as_ref().copied().unwrap_or(0.0))),
+        ("volume_error".into(), SysValue::Text(level.err().unwrap_or_default())),
         ("available".into(), SysValue::Bool(true)), ("error".into(), SysValue::Text(String::new())),
         ("player".into(), SysValue::Text(session.SourceAppUserModelId()?.to_string())),
         ("title".into(), SysValue::Text(properties.Title()?.to_string())),
@@ -93,6 +100,15 @@ pub fn media() -> Result<SysValue> {
 }
 
 pub fn command(name: &str, args: &[SysValue]) -> std::result::Result<(), String> {
+    if name == "media.volume" {
+        let [SysValue::Text(player), SysValue::Num(value)] = args else { return Err("media.volume takes a player identifier and level".into()); };
+        if player.is_empty() || !value.is_finite() || !(0.0..=1.0).contains(value) { return Err("invalid media player or volume".into()); }
+        let current = session().map_err(|e| e.to_string())?.ok_or("no Windows media session is active")?;
+        if current.SourceAppUserModelId().map_err(|e| e.to_string())?.to_string() != *player {
+            return Err("the active media player changed; refresh before changing volume".into());
+        }
+        return volume::set(player, *value);
+    }
     if !matches!(name, "media.toggle" | "media.play" | "media.pause" | "media.next" | "media.previous") {
         return Err(format!("unsupported media command: {name}"));
     }
@@ -140,6 +156,31 @@ mod tests {
         assert!(command("media.pause_typo", &[]).is_err());
         assert!(command("media.toggle", &[SysValue::Num(1.0)]).is_err());
         assert!(command("media.next", &[SysValue::Text(String::new())]).is_err());
+    }
+
+    #[test]
+    #[ignore = "requires media-fixture --audio and PLEAMAR_MEDIA_FIXTURE_PLAYER"]
+    fn native_media_fixture_volume() {
+        use windows::Win32::{Media::Audio::{IMMDeviceEnumerator, MMDeviceEnumerator, eRender, eConsole, Endpoints::IAudioEndpointVolume}, System::Com::{CoCreateInstance, CLSCTX_ALL}};
+        let _apartment = super::super::windows_system::Apartment::new().unwrap();
+        let player = std::env::var("PLEAMAR_MEDIA_FIXTURE_PLAYER").unwrap();
+        assert!(player.starts_with("org.pleamar.validation.media."));
+        let endpoint: IAudioEndpointVolume = unsafe {
+            let e: IMMDeviceEnumerator = CoCreateInstance(&MMDeviceEnumerator, None, CLSCTX_ALL).unwrap();
+            e.GetDefaultAudioEndpoint(eRender, eConsole).unwrap().Activate(CLSCTX_ALL, None).unwrap()
+        };
+        let master = unsafe { endpoint.GetMasterVolumeLevelScalar().unwrap() };
+        let initial = volume::read(&player).unwrap();
+        struct Restore(String, f64);
+        impl Drop for Restore { fn drop(&mut self) { let _ = volume::set(&self.0, self.1); } }
+        let _restore = Restore(player.clone(), initial);
+        for value in [0.2, 0.7, 0.0, 1.0] {
+            command("media.volume", &[SysValue::Text(player.clone()), SysValue::Num(value)]).unwrap();
+            assert!((volume::read(&player).unwrap() - value).abs() < 0.001);
+            assert_eq!(unsafe { endpoint.GetMasterVolumeLevelScalar().unwrap() }, master, "the master output volume changed");
+        }
+        assert!(command("media.volume", &[SysValue::Text(format!("{player}-gone")), SysValue::Num(0.5)]).is_err());
+        println!("PASS: real Core Audio player volume 20/70/0/100%, unchanged endpoint master, stale-player rejection and restoration");
     }
 
     #[test]

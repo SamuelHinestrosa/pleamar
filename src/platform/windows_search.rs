@@ -1,5 +1,7 @@
 //! Bounded filename search without a shell, an indexer or file-content reads.
 use super::SysValue;
+#[path = "windows_search_match.rs"]
+mod matcher;
 use std::collections::VecDeque;
 use std::path::Path;
 use std::time::{Duration, Instant};
@@ -18,9 +20,9 @@ pub fn query(args: &[SysValue]) -> Result<SysValue, String> {
 }
 
 fn search(root: &Path, query: &str, limit: usize, budget: usize, timeout: Duration) -> Result<SysValue, String> {
-    let needle = query.to_lowercase();
     let mut folders = VecDeque::from([(root.to_owned(), 0)]);
     let mut found = Vec::new();
+    let mut matches = 0;
     let mut visited = 0;
     let start = Instant::now();
     let mut truncated = false;
@@ -31,7 +33,7 @@ fn search(root: &Path, query: &str, limit: usize, budget: usize, timeout: Durati
             Err(_) => continue,
         };
         for entry in entries.flatten() {
-            if visited >= budget || start.elapsed() >= timeout || found.len() >= limit {
+            if visited >= budget || start.elapsed() >= timeout {
                 truncated = true;
                 break 'walk;
             }
@@ -43,19 +45,28 @@ fn search(root: &Path, query: &str, limit: usize, budget: usize, timeout: Durati
             if meta.file_attributes() & 0x400 != 0 { continue; }
             let directory = meta.is_dir();
             let path = entry.path();
-            if name.to_lowercase().contains(&needle) {
-                found.push(SysValue::Map(vec![
-                    ("name".into(), SysValue::Text(name)),
+            if let Some(score) = matcher::score(&name, query) {
+                matches += 1;
+                found.push((score, matcher::fold(&name), SysValue::Map(vec![
+                    ("name".into(), SysValue::Text(name.clone())),
                     ("path".into(), SysValue::Text(path.to_string_lossy().replace('\\', "/"))),
                     ("directory".into(), SysValue::Bool(directory)),
-                ]));
+                    ("score".into(), SysValue::Num(score as f64)),
+                ])));
+                found.sort_by(|a, b| b.0.cmp(&a.0).then_with(|| a.1.cmp(&b.1)));
+                found.truncate(limit);
             }
-            if directory && depth < 3 { folders.push_back((path, depth + 1)); }
+            if directory && depth < 7 {
+                // Search common personal folders before large development trees.
+                if depth == 0 && matches!(name.to_lowercase().as_str(), "desktop" | "documents" | "downloads" | "pictures" | "music" | "videos" | "onedrive") {
+                    folders.push_front((path, depth + 1));
+                } else { folders.push_back((path, depth + 1)); }
+            }
         }
     }
     Ok(SysValue::Map(vec![
-        ("items".into(), SysValue::List(found)),
-        ("truncated".into(), SysValue::Bool(truncated)),
+        ("items".into(), SysValue::List(found.into_iter().map(|(_, _, item)| item).collect())),
+        ("truncated".into(), SysValue::Bool(truncated || matches > limit)),
     ]))
 }
 

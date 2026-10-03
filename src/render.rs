@@ -3208,7 +3208,8 @@ pub fn run(
         let mut open_changed = false;
         for l in &mut sheets {
             let is_open = l.view.popup.is_some() || open(l.view.surface);
-            open_changed |= is_open != l.open;
+            let changed = is_open != l.open;
+            open_changed |= changed;
             if is_open {
                 l.cleared = false;
             } else if l.lens.is_some() {
@@ -3217,6 +3218,12 @@ pub fn run(
                 l.lens = None;
             }
             l.open = is_open;
+            #[cfg(target_os = "windows")]
+            if changed {
+                // Release closed full-screen swapchains and restore their
+                // physical extent before presenting an opened surface.
+                g.reconfigure(l, size);
+            }
         }
         if open_changed {
             assign_pace(g, &mut sheets, size, op.no_vsync);

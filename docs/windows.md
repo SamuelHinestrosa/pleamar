@@ -534,3 +534,26 @@ System process rankings, temperatures, core clocks and system GPU load are
 explicitly unavailable in the Windows report. No Unix `date`, `/proc` or socket
 server is needed. Windows and Unix path-valued environment entries are redacted.
 Absence of frames or hardware counters is not a successful rendering benchmark.
+
+## Per-player volume and bounded filename matching
+
+`media.state` additionally returns `can_volume`, `volume` (0–1) and
+`volume_error`. `media.volume(player, level)` resolves the current SMTC player
+again and changes only matching Core Audio output sessions. Packaged process
+identities, explicit window AppUserModelIDs and exact executable identities are
+supported. Unknown identities fail; the endpoint master volume is never used
+as a fallback. Multiple identifiable output sessions of one application are
+changed together, with best-effort rollback if a setter fails. Exclusive audio
+or a player without an identifiable Core Audio session may be unavailable.
+This is application volume, not an individual browser tab or media track.
+
+The owned `media-fixture --audio` creates a silent Core Audio stream for
+`native_media_fixture_volume` (opt-in, with `PLEAMAR_MEDIA_FIXTURE_PLAYER`). It
+checks 20%, 70%, 0%, 100%, stale-player rejection, restoration and unchanged
+endpoint master volume. It does not record or play any user audio.
+
+`search.files` ranks filename tokens, accent variants and small typing mistakes
+with fixed traversal/time/result budgets. It reads names/metadata only and
+reports `truncated` rather than claiming exhaustive indexing.
+
+See [desktop controls validation](windows-desktop-controls.md).
