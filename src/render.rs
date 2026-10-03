@@ -9,6 +9,8 @@ use std::sync::mpsc::{Receiver, RecvTimeoutError, Sender};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+mod zones;
+
 pub struct Options {
     pub hud: bool,
     pub naive: bool,
@@ -444,6 +446,7 @@ pub fn run(
     let mut gpu: Option<Gpu> = None;
     let mut sheets: Vec<Sheet> = Vec::new();
     let mut draw = DrawList::default();
+    let mut zone_geometry: Vec<zones::Geometry> = Vec::new();
     let mut previous = crate::gpu::PreviousFrame::default();
     // What the last list was made from (see `same_scene`).
     let mut compose_memo: Option<ComposeMemo> = None;
@@ -723,6 +726,8 @@ pub fn run(
                     }
                 }
                 ToRender::Scene(fresh) => {
+                    // Constant geometry can change while every fact and property stays equal.
+                    compose_memo = None;
                     crate::platform::release_memory();
                     crate::platform::CURSOR_WANTED.store(fresh.wants_cursor, std::sync::atomic::Ordering::Relaxed);
                     // The properties with the same name survive the change.
@@ -749,6 +754,7 @@ pub fn run(
                         }
                     }
                     inside = vec![false; fresh.zones.len()];
+                    zone_geometry = fresh.zones.iter().map(zones::Geometry::new).collect();
                     follows = Follows::default();
                     warning = None;
                     with_warning.clear();
@@ -1631,7 +1637,7 @@ pub fn run(
         {
             let c = Ctx { props: &props, facts: &facts };
             for (k, (z, was_inside)) in scene.zones.iter().zip(inside.iter_mut()).enumerate() {
-                let is_inside = !draw.hidden.get(z.at).copied().unwrap_or(false) && !absent.iter().any(|r| r.contains(&z.at)) && z.active.is_true(c) && pointer.is_some_and(|(x, y)| z.contains(c, x, y));
+                let is_inside = !draw.hidden.get(z.at).copied().unwrap_or(false) && !absent.iter().any(|r| r.contains(&z.at)) && z.active.is_true(c) && pointer.is_some_and(|(x, y)| zone_geometry[k].contains(z, c, x, y));
                 if is_inside != *was_inside {
                     *was_inside = is_inside;
                     edges.push((is_inside, k));
@@ -2947,7 +2953,17 @@ pub fn run(
             });
         if !same_scene {
             draw.compose(to_paint, c, &texts, &mut letters, view, size, op.hud);
-            compose_memo = Some(ComposeMemo { size, view, views: draw.views.clone(), facts: facts.clone(), texts: texts.clone(), window_tex: draw.window_tex.clone(), props: props.iter().map(|a| a.x).collect() });
+            let memo = compose_memo.get_or_insert_with(ComposeMemo::default);
+            memo.size = size;
+            memo.view = view;
+            memo.views.clone_from(&draw.views);
+            memo.facts.clone_from(&facts);
+            // An animation usually moves properties while all the labels stay
+            // the same. Keep their allocations instead of cloning every frame.
+            if memo.texts != texts { memo.texts.clone_from(&texts); }
+            memo.window_tex.clone_from(&draw.window_tex);
+            memo.props.clear();
+            memo.props.extend(props.iter().map(|a| a.x));
         }
         // Particles carry themselves: while one is alive, the scene does not rest.
         alive |= draw.particles_alive;
@@ -3041,9 +3057,10 @@ pub fn run(
         let boxes: Vec<[i32; 4]> = scene
             .zones
             .iter()
-            .filter(|z| !draw.hidden.get(z.at).copied().unwrap_or(false) && !absent.iter().any(|r| r.contains(&z.at)))
-            .filter(|z| z.active.is_true(c))
-            .filter_map(|z| z.bounds(c))
+            .enumerate()
+            .filter(|(_, z)| !draw.hidden.get(z.at).copied().unwrap_or(false) && !absent.iter().any(|r| r.contains(&z.at)))
+            .filter(|(_, z)| z.active.is_true(c))
+            .filter_map(|(k, z)| zone_geometry[k].bounds(z, c))
             .filter(|b| !closed.iter().any(|v| b[0] < v[2] && b[2] > v[0] && b[1] < v[3] && b[3] > v[1]))
             .map(|b| [(b[0] - 3.0).floor() as i32, (b[1] - 3.0).floor() as i32, (b[2] + 3.0).ceil() as i32, (b[3] + 3.0).ceil() as i32])
             .collect();
@@ -4052,6 +4069,7 @@ impl Follows {
 }
 
 /// What a draw list was made from: while all of it holds, the list holds.
+#[derive(Default)]
 struct ComposeMemo {
     size: (f32, f32),
     view: Option<crate::gpu::FieldView>,
