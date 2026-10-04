@@ -603,7 +603,10 @@ impl State {
                 continue;
             }
             let layer = self.layers.create_layer_surface(qh, wl, level, Some("pleamar"), Some(output));
-            layer.set_anchor(anchor_edges(p.anchor, p.width == 0, p.height == 0));
+            let reserves = p.exclusive_zone > 0 || p.reserve_while.is_some();
+            let stretch = Stretch { width: p.width == 0, height: p.height == 0, monitor: if reserves { info.logical_size } else { None } };
+            let (edges, size) = placement(p.anchor, stretch, (p.width, height));
+            layer.set_anchor(edges);
             // The second one on the same monitor, below the first: it's for trying things out.
             let m = p.margin;
             let margin = [m[0] + k as i32 * (height as i32 + 12), m[1], m[2], m[3]];
@@ -611,10 +614,10 @@ impl State {
             // Noted down, in case the scene decides to move it to another edge while running.
             if p.anchor_from.is_some() || p.level_while.is_some() || p.reserve_while.is_some() {
                 if let Some(c) = MOVABLE_LAYERS.get() {
-                    c.placed.lock().unwrap().push((which, layer.clone(), margin, (p.width == 0, p.height == 0)));
+                    c.placed.lock().unwrap().push((which, layer.clone(), margin, stretch));
                 }
             }
-            layer.set_size(p.width, height);
+            layer.set_size(size.0, size.1);
             // With a condition, none until the render says it holds.
             layer.set_exclusive_zone(if p.reserve_while.is_some() { 0 } else { p.exclusive_zone });
             // If the keyboard depends on something (`exclusive while open`), it's born without it.
@@ -629,7 +632,7 @@ impl State {
             let surface = self.wgpu_surface_for(layer.wl_surface());
             let output_name = self.outputs.info(output).and_then(|i| i.name).unwrap_or_default();
             let backdrop = Some(BackdropTarget::new(id, Some((output.clone(), output_name)), BackdropKind::Layer));
-            let layer_placement = Some((anchor_edges(p.anchor, p.width == 0, p.height == 0), margin));
+            let layer_placement = Some((edges, margin));
             self.placed.push(Placed { id, which, role: Role::Layer(layer), output: output.clone(), viewport, _fractional_scale: fractional_scale, scale: 1.0, size: (0, 0), pending: Some((surface, name.clone(), mhz)), layer_placement, backdrop });
             }
         }
@@ -821,13 +824,41 @@ fn anchor_edges(anchor: SurfaceAnchor, full_width: bool, full_height: bool) -> A
         | if full_height { Anchor::TOP | Anchor::BOTTOM } else { Anchor::empty() }
 }
 
+/// How a surface stretches: the whole width, the whole height of its monitor,
+/// and —for one that is both and keeps a reserve— the monitor's logical size.
+#[derive(Clone, Copy)]
+struct Stretch {
+    width: bool,
+    height: bool,
+    monitor: Option<(i32, i32)>,
+}
+
+/// The edges it sticks to, and the size to ask for. A surface as big as the
+/// monitor that keeps a reserve (`size: full, full; anchor: left; reserve: 68`)
+/// cannot stick to all four edges, where layer-shell ignores any reserve: it
+/// sticks to its own edge and the two across it, and asks for the monitor's
+/// size along the fourth.
+fn placement(anchor: SurfaceAnchor, s: Stretch, asked: (u32, u32)) -> (Anchor, (u32, u32)) {
+    if let (true, true, Some((w, h))) = (s.width, s.height, s.monitor) {
+        let (w, h) = (w.max(0) as u32, h.max(0) as u32);
+        match anchor {
+            SurfaceAnchor::Left => return (Anchor::LEFT | Anchor::TOP | Anchor::BOTTOM, (w, 0)),
+            SurfaceAnchor::Right => return (Anchor::RIGHT | Anchor::TOP | Anchor::BOTTOM, (w, 0)),
+            SurfaceAnchor::Top => return (Anchor::TOP | Anchor::LEFT | Anchor::RIGHT, (0, h)),
+            SurfaceAnchor::Bottom => return (Anchor::BOTTOM | Anchor::LEFT | Anchor::RIGHT, (0, h)),
+            _ => {}
+        }
+    }
+    (anchor_edges(anchor, s.width, s.height), asked)
+}
+
 /// The layers that can change edge, to reach them without going through the
 /// Wayland thread. `set_anchor` and `set_margin` are requests and work while
 /// running: there's no need to create the surface again, which is what left
 /// Marea unable to choose a corner while recording.
 struct MovableLayers {
     connection: Connection,
-    placed: Mutex<Vec<(usize, LayerSurface, [i32; 4], (bool, bool))>>,
+    placed: Mutex<Vec<(usize, LayerSurface, [i32; 4], Stretch)>>,
 }
 static MOVABLE_LAYERS: std::sync::OnceLock<MovableLayers> = std::sync::OnceLock::new();
 
@@ -873,11 +904,16 @@ pub fn rezone(which: usize, zone: i32) {
 pub fn reanchor(which: usize, anchor: SurfaceAnchor) {
     let Some(c) = MOVABLE_LAYERS.get() else { return };
     let mut any = false;
-    for (k, layer, margin, zero_width) in c.placed.lock().unwrap().iter() {
+    for (k, layer, margin, stretch) in c.placed.lock().unwrap().iter() {
         if *k != which {
             continue;
         }
-        layer.set_anchor(anchor_edges(anchor, zero_width.0, zero_width.1));
+        let (edges, size) = placement(anchor, *stretch, (0, 0));
+        layer.set_anchor(edges);
+        // As big as the monitor: from one edge to another, the size along the fourth changes too.
+        if stretch.width && stretch.height {
+            layer.set_size(size.0, size.1);
+        }
         layer.set_margin(margin[0], margin[1], margin[2], margin[3]);
         layer.commit();
         any = true;
