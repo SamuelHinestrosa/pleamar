@@ -1355,7 +1355,16 @@ pub fn run(
                             nest_fact(&scene, &mut facts, &to_logic, &format!("{name}.focus"), which.map_or(-1.0, |k| k as f32));
                         }
                         NestEvent::Cursor(kind) => nest_cursor = kind,
-                        NestEvent::Dragging(yes) => nest_dragging = yes,
+                        // A program's drag takes the button over: the compositor
+                        // drops it when it is let go, and that release never
+                        // comes this way. Kept held, the window the drag began
+                        // on kept the pointer for good —no other window got it,
+                        // a terminal could not select any more—.
+                        NestEvent::Dragging(yes) => {
+                            nest_dragging = yes;
+                            nest_buttons.clear();
+                            nest_grab = None;
+                        }
                         NestEvent::Pick(what) => nest_fact(&scene, &mut facts, &to_logic, &format!("{name}.picking"), what as f32),
                         // A buffer a window is still showing is kept until it shows
                         // another: a program that resizes destroys the old one before
