@@ -1,6 +1,6 @@
-# Native integration of pleamar 0.2.13
+# Native integration of pleamar 0.2.14
 
-The Windows branch incorporates upstream `13ed40cc30489bc06d7b884d1362399b90c28f17`
+The Windows branch incorporates upstream `b69d686f73bb40fe4e94296afeef196ed034bbbf`
 without discarding the previous port's process ownership, surface geometry,
 text-atlas, hidden-window and cross-monitor volume-timer corrections.
 
@@ -49,3 +49,9 @@ No Linux desktop session, sustained performance benchmark, mixed-DPI hotplug,
 physical Wi-Fi or Bluetooth pairing was performed for this integration. The
 limitations in `windows-validation.md` and the focused Windows capability docs
 still apply. Developed with Codex; this remains a reviewable preview.
+
+The final upstream refresh includes 0.2.14 and its scene-authoring skill updates.
+The separate desktop-control skill is installed only on Linux: it requires
+pleamar-wm's independent Wayland seat. Windows skill discovery now falls back
+to USERPROFILE. Isolated CLI tests cover installation, refresh, preserving
+a user-owned skill and the absence of the unsupported desktop skill on Windows.

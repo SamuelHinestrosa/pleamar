@@ -97,6 +97,10 @@ pleamar scene: layouts, window decorations, animations, what happens on drag.
   ~/.config/pleamar/wm/session.plm`) and change that; pleamar-wm uses theirs
   when it exists.
 - `pleamar-wm config` shows how it understood `session.conf`.
+- **Using the windows themselves** —clicking and typing in a browser, an
+  editor— is the other skill, `pleamar-desktop`: pleamar-wm gives an agent a
+  pointer and a keyboard of its own (`agent on` in `session.conf`,
+  `pleamar-wm agent …`).
 
 ## The shape of a scene
 

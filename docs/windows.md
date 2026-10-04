@@ -168,7 +168,7 @@ is reported as an error rather than being mistaken for an unplugged monitor.
 | Custom lock surfaces / authentication | Rejected/unavailable; a drawn scene is never presented as a secure Windows lock screen |
 | Other applications embedded with `windows` | Requires the separate Linux compositor project; outside this port |
 | Unix `kill(id, "int"/"term")` | Explicit error; `kill(id)` terminates the child instead |
-| Binary replacement and automatic agent-skill discovery | Stop the binary before replacing it; agent skill discovery still follows the existing HOME-based behavior |
+| Binary replacement and automatic agent-skill discovery | Stop the binary before replacing it; agent skill discovery uses HOME, with USERPROFILE as the Windows fallback |
 
 ## Validation
 
@@ -572,3 +572,12 @@ with fixed traversal/time/result budgets. It reads names/metadata only and
 reports `truncated` rather than claiming exhaustive indexing.
 
 See [desktop controls validation](windows-desktop-controls.md).
+
+### Upstream 0.2.14 desktop-agent skill
+
+`pleamar --install-skill` installs the scene-authoring skill for detected agents
+on Windows, including accounts with only `USERPROFILE` set. It preserves skills
+written by someone else. The separate `pleamar-desktop` skill and `--agent`
+installer option require pleamar-wm and an independent Wayland seat. They are
+Linux-only; the Windows package does not install or advertise that desktop-control
+capability. No Windows equivalent or additional pleamar-wm port is claimed.

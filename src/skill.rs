@@ -9,6 +9,10 @@
 
 const SKILL: &str = include_str!("../skill/SKILL.md");
 const MEASURING: &str = include_str!("../skill/measuring.md");
+/// And a second one, for using the desktop: pleamar-wm's agent hands
+/// (`pleamar-wm agent …`). Apart, so an agent asked to do something in a
+/// browser finds it, and one asked to write a scene finds the other.
+const DESKTOP: &str = include_str!("../skill/desktop/SKILL.md");
 
 /// The documentation of this version, by topic.
 const DOCS: &[(&str, &str, &str)] = &[
@@ -22,7 +26,7 @@ const DOCS: &[(&str, &str, &str)] = &[
 /// Which skill this is: pleamar's version and a fingerprint of what the skill
 /// says, so a change to it counts even without a new version.
 fn stamp() -> String {
-    let h = SKILL.bytes().chain(MEASURING.bytes()).fold(0xcbf29ce484222325u64, |h, b| (h ^ b as u64).wrapping_mul(0x100000001b3));
+    let h = SKILL.bytes().chain(MEASURING.bytes()).chain(DESKTOP.bytes()).fold(0xcbf29ce484222325u64, |h, b| (h ^ b as u64).wrapping_mul(0x100000001b3));
     format!("{}+{:08x}", env!("CARGO_PKG_VERSION"), h as u32)
 }
 
@@ -52,7 +56,10 @@ pub fn docs(topic: &str) -> i32 {
 
 /// Where each agent keeps its skills, if the agent is installed (its folder exists).
 fn places() -> Vec<(&'static str, std::path::PathBuf)> {
-    let Some(home) = std::env::var_os("HOME").map(std::path::PathBuf::from) else { return Vec::new() };
+    let home = std::env::var_os("HOME").filter(|v| !v.is_empty());
+    #[cfg(target_os = "windows")]
+    let home = home.or_else(|| std::env::var_os("USERPROFILE").filter(|v| !v.is_empty()));
+    let Some(home) = home.map(std::path::PathBuf::from) else { return Vec::new() };
     let config = std::env::var_os("XDG_CONFIG_HOME").filter(|v| !v.is_empty()).map(std::path::PathBuf::from).unwrap_or_else(|| home.join(".config"));
     [
         ("Claude Code", home.join(".claude"), "skills"),
@@ -91,6 +98,25 @@ pub fn install(loud: bool) -> i32 {
             Ok(()) if loud || before.is_some() => println!("skill · {agent}: {}", file.display()),
             Ok(()) => {}
             Err(e) => eprintln!("skill · {agent}: {}: {e}", file.display()),
+        }
+        // The desktop protocol needs pleamar-wm's independent Wayland seat.
+        // Do not advertise it as a native Windows capability.
+        if !cfg!(target_os = "linux") { continue; }
+        // The desktop one, beside it, under the same rule: never over one
+        // pleamar did not write.
+        let Some(desktop_dir) = dir.parent().map(|p| p.join("pleamar-desktop")) else { continue };
+        let desktop_file = desktop_dir.join("SKILL.md");
+        if std::fs::read_to_string(&desktop_file).is_ok_and(|t| !t.contains("<!-- pleamar skill ")) {
+            if loud {
+                println!("skill · {agent}: {} is someone else's: left as it is", desktop_file.display());
+            }
+            continue;
+        }
+        let desktop = DESKTOP.replace("{VERSION}", &stamp());
+        match std::fs::create_dir_all(&desktop_dir).and_then(|_| std::fs::write(&desktop_file, desktop)) {
+            Ok(()) if loud || before.is_some() => println!("skill · {agent}: {}", desktop_file.display()),
+            Ok(()) => {}
+            Err(e) => eprintln!("skill · {agent}: {}: {e}", desktop_file.display()),
         }
     }
     0
