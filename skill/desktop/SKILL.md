@@ -21,7 +21,7 @@ yourself unless they ask.
 ## The loop: look, act, look
 
 ```sh
-pleamar-wm agent windows                 # every window: PID, program, title, box, seen, keyboard
+pleamar-wm agent windows                 # every window: its name (PID, or PID.N for one of a program's several), program, title, box, monitor, keyboard
 pleamar-wm agent look PID [FILE]         # a picture of that window; prints FILE WxH
 pleamar-wm agent click PID X Y           # X, Y are pixels of that picture
 pleamar-wm agent type PID "some text"
@@ -31,13 +31,15 @@ pleamar-wm agent scroll PID X Y down 5   # up down left right, and how many step
 pleamar-wm agent drag PID X1 Y1 X2 Y2
 pleamar-wm agent click PID X Y right     # left right middle, and a count: … left 2 for a double click
 pleamar-wm agent focus PID               # give it the user's keyboard and show its workspace (rarely needed)
+pleamar-wm agent monitors                # the monitors, numbered
+pleamar-wm agent send PID 1              # that window to monitor 1 (when the user names a monitor)
 pleamar-wm agent done                    # finished: the light on the user's monitor goes out
 pleamar-wm agent help
 ```
 
-1. **Find the window**: `windows`, and take its PID (a browser's window
-   belongs to its main process; `pgrep -o firefox`, `pgrep -f …/zen$` also
-   find it).
+1. **Find the window**: `windows`, and take its name: its PID, or `PID.N`
+   when the program has several windows (a browser's windows belong to its
+   main process).
 2. **Look** at it: `look PID`, then read the picture. A window that is not
    seen (another workspace, put away) cannot be looked at: `focus PID` first,
    and say so to the user, since it moves what they see.
@@ -46,6 +48,13 @@ pleamar-wm agent help
 4. **Look again** after anything that changes the page. Pages move: a banner,
    a notice or a dialog appears and what was at (x, y) is something else. A
    click on the wrong thing is worse than one more look.
+
+   A **menu** (a right click, a dropdown) opens over the window: the picture
+   shows it, and you click its item like anything else. A **dialog** (save
+   as, open, «replace it?») is a window of its own, often of another program
+   (the file chooser is a portal's): while it is open, `look` and the actions
+   on the program's name reach the dialog, and `windows` lists it as
+   «dialog of PID».
 5. **Say you are done**: `pleamar-wm agent done` when the task is over. While
    you work, the user's monitor glows; without it the glow waits a minute and
    a half in case you are only thinking.
@@ -56,8 +65,7 @@ pleamar-wm agent help
   `hotkey PID ctrl+l`, then `type` the address and `key enter` goes anywhere
   without hunting for the address bar. `ctrl+t`, `ctrl+w`, `ctrl+f` too.
 - **Click a field before typing in it**, and look to check the caret is there.
-- **Typing is ASCII only** for now: no accents, ñ or emoji. Write around it,
-  or tell the user what they will have to finish by hand.
+- **Any text can be typed**: accents, ñ and emoji too.
 - **Scroll with the pointer over what scrolls**: the page, not a sidebar.
 - Things that open on their own (a translation offer, a cookie banner, a
   video that plays) are the page's, not yours: close them if they are in the
