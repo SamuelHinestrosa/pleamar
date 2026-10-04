@@ -83,6 +83,10 @@ So if you are on Hyprland and just want a new bar, pleamar is all you need.
   so the window manager is one more file you can rewrite.
 - **Your AI agent knows it**: the installer teaches Claude Code, Codex and
   OpenCode to build and verify pleamar scenes for you.
+- **And it can use your desktop**: in [pleamar-wm] an agent gets a pointer
+  and a keyboard of its own — it clicks and types in your browser while your
+  mouse and keyboard stay yours, and you see it work. It speaks
+  [Cua Driver](https://github.com/trycua/cua)'s protocol.
 - **Light**: 81 MB and a first frame in 175 ms, against 336 MB and 1876 ms for
   the same bar in Quickshell.
 
@@ -123,6 +127,7 @@ curl -fsSL https://raw.githubusercontent.com/k4ditano/pleamar/main/install.sh | 
 | --- | --- |
 | `pleamar-update` | new changes, built and put in place (it says what is new) |
 | `pleamar-update --session` | also pleamar-wm in the login screen (asks for sudo) |
+| `pleamar-update --agent` | AI agents may use your windows in pleamar-wm, with a cursor of their own |
 | `pleamar-update --uninstall` | the programs go; your `~/.config/pleamar` stays |
 
 It tells you what your distribution is missing to build it (pacman, apt, dnf,
@@ -166,6 +171,13 @@ where the file goes, how to start it with your desktop, and how to check it
 (it compiles it, opens it without a screen and looks at the picture) before
 saying it is done. `pleamar --install-skill` does it by hand;
 `pleamar --docs` prints the documentation of the version you have.
+
+**And it can use the desktop.** A second skill, `pleamar-desktop`, teaches it
+pleamar-wm's agent hands (`pleamar-update --agent`, or `agent on` in
+`session.conf`): ask *«go to reddit and find my last post»* and it looks at the
+window, clicks and types with a mint cursor of its own, on a seat apart from
+yours — your mouse and keyboard stay free, the monitor it works on glows while
+it does, and it stops to ask before publishing, sending or buying anything.
 
 # A whole scene
 

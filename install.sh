@@ -5,13 +5,16 @@
 #   ./install.sh                  install (or, if it is there, update)
 #   pleamar-update                update: new changes, built and put in place
 #   pleamar-update --session      also puts pleamar-wm in the login screen (asks for sudo)
+#   pleamar-update --agent        lets AI agents use your desktop in pleamar-wm, with a
+#                                 pointer and a keyboard of their own (Cua Driver too)
 #   pleamar-update --uninstall    takes the programs away; your ~/.config/pleamar stays
 #
 # What it installs, all in your home and nothing else:
 #   ~/.local/share/pleamar/src/   pleamar, pleamar-wm and Marea's source (git)
 #   ~/.local/bin/                 pleamar, pleamar-wm, pleamar-session, marea, pleamar-update
 #   ~/.config/pleamar/            your configuration, made once and never written over
-#   the AI agents you have        pleamar's skill (Claude Code, Codex, OpenCode)
+#   the AI agents you have        pleamar's skills (Claude Code, Codex, OpenCode): to
+#                                 build with pleamar, and to use the desktop in pleamar-wm
 #
 # From a copy of the source you already have (a developer's), it builds that
 # one instead of cloning: PLEAMAR_SRC=/folder/with/the/three ./install.sh
@@ -24,13 +27,15 @@ say() { printf '\033[1;36mpleamar ·\033[0m %s\n' "$*"; }
 fail() { printf '\033[1;31mpleamar ·\033[0m %s\n' "$*" >&2; exit 1; }
 
 session=false
+agent=false
 action=install
 for a in "$@"; do
     case "$a" in
         --session) session=true ;;
+        --agent) agent=true ;;
         --uninstall) action=uninstall ;;
         --help|-h) sed -n '2,19p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
-        *) fail "I don't know «$a» (--session, --uninstall, --help)" ;;
+        *) fail "I don't know «$a» (--session, --agent, --uninstall, --help)" ;;
     esac
 done
 
@@ -149,6 +154,20 @@ echo "$src" > "$bin/.pleamar-src"
 # The AI agents you have learn pleamar (and it refreshes itself on updates).
 "$bin/pleamar" --install-skill | sed 's/^/    /'
 
+# ── computer use, if asked ─────────────────────────────────────────
+# An agent gets a pointer and a keyboard of its own in pleamar-wm: it types
+# and clicks in a window while yours stay free, and the monitor it works on
+# shows it. Off unless asked for: whatever has it can type anywhere.
+conf="${XDG_CONFIG_HOME:-$HOME/.config}/pleamar/session.conf"
+if $agent; then
+    if grep -qE '^[[:space:]]*agent[[:space:]]+on' "$conf" 2> /dev/null; then
+        say "computer use: already on"
+    else
+        printf '\n# AI agents may use the windows with a pointer and a keyboard of their own\n# (pleamar-wm agent …, Cua Driver). Off: agent off, or remove these lines.\nagent on\n' >> "$conf"
+        say "computer use: on (from the next pleamar-wm session)"
+    fi
+fi
+
 # ── the login screen, if asked ─────────────────────────────────────
 if $session; then
     say "pleamar-wm in the login screen (asks for your password)"
@@ -173,6 +192,7 @@ cat << EOF
   On Hyprland:      exec-once = pleamar --autostart      (your shells, Marea)
   Its own session:  pleamar-session from a TTY, or pleamar-update --session for the login screen
   Up to date:       pleamar-update
+  Computer use:     pleamar-update --agent   AI agents use your windows with their own cursor
   Docs:             pleamar --docs      Ask your AI agent: it knows pleamar now.
 
 EOF
