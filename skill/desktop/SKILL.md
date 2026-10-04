@@ -31,6 +31,7 @@ pleamar-wm agent scroll PID X Y down 5   # up down left right, and how many step
 pleamar-wm agent drag PID X1 Y1 X2 Y2
 pleamar-wm agent click PID X Y right     # left right middle, and a count: … left 2 for a double click
 pleamar-wm agent focus PID               # give it the user's keyboard and show its workspace (rarely needed)
+pleamar-wm agent done                    # finished: the light on the user's monitor goes out
 pleamar-wm agent help
 ```
 
@@ -45,6 +46,9 @@ pleamar-wm agent help
 4. **Look again** after anything that changes the page. Pages move: a banner,
    a notice or a dialog appears and what was at (x, y) is something else. A
    click on the wrong thing is worse than one more look.
+5. **Say you are done**: `pleamar-wm agent done` when the task is over. While
+   you work, the user's monitor glows; without it the glow waits a minute and
+   a half in case you are only thinking.
 
 ## What works best
 

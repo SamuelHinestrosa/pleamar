@@ -1,6 +1,6 @@
-# Native integration of pleamar 0.2.14
+# Native integration of pleamar 0.2.15
 
-The Windows branch incorporates upstream `b69d686f73bb40fe4e94296afeef196ed034bbbf`
+The Windows branch incorporates upstream `d6003b7becc3b91eb852a573eac41a6ed0661a1a`
 without discarding the previous port's process ownership, surface geometry,
 text-atlas, hidden-window and cross-monitor volume-timer corrections.
 
@@ -55,3 +55,9 @@ The separate desktop-control skill is installed only on Linux: it requires
 pleamar-wm's independent Wayland seat. Windows skill discovery now falls back
 to USERPROFILE. Isolated CLI tests cover installation, refresh, preserving
 a user-owned skill and the absence of the unsupported desktop skill on Windows.
+
+The last upstream snapshot is 0.2.15: relative to 0.2.14 it updates only package
+version/reference and adds the Linux desktop agent's `done` instruction. No
+Windows runtime behavior changes in that refresh. The full installed profile
+also emits the renderer's existing 64 simultaneous effect-layer fallback during
+startup; unlimited effect-layer support is not claimed.
