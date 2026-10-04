@@ -303,4 +303,32 @@ mod tests {
         assert_eq!(twins.len(), 1, "twins: {:?}", scene.twin_of);
         assert!(matches!(scene.rules[twins[0]].when, crate::scene::Trigger::On(_)));
     }
+
+    /// A big `let` is computed in a property: read in every monitor's copy,
+    /// it is one property, or the rules naming it differ per copy and each
+    /// copy's acts —a `toggle` undoes itself—.
+    #[test]
+    fn a_big_let_is_one_property_whatever_the_copies() {
+        let dir = std::env::temp_dir().join(format!("pleamar-twin-lets-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("lets.plm");
+        std::fs::write(&path, "scene Lets {
+    surface { size: 200, 40; anchor: top; screens: each max 2 }
+    event go
+    fact a = 0
+    fact b = 0
+    fact t = 0
+    repeat i in 0..1 {
+        let big = max(a, b) + (a - b) * 3 + min(a * 2, b) + abs(a)
+        on go { t = if(big > 1, 1 - t, t) }
+    }
+}
+").unwrap();
+        let scene = super::read(path.to_str().unwrap()).unwrap();
+        let _ = std::fs::remove_dir_all(&dir);
+        let bound = scene.behaviors.iter().filter(|b| matches!(b, crate::scene::Behavior::Bind { .. })).count();
+        assert_eq!(bound, 1, "one property for the let, not one per copy");
+        let twins: Vec<usize> = (0..scene.rules.len()).filter(|&k| scene.twin_of[k] != k).collect();
+        assert_eq!(twins.len(), 1, "twins: {:?}", scene.twin_of);
+    }
 }

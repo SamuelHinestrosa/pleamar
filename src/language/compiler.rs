@@ -309,6 +309,13 @@ struct Compiler<'a> {
     scopes: Vec<Rc<Scope>>,
     components: HashMap<String, Component<'a>>,
     copies: usize,
+    /// The property each big `let` is computed in (see `let`), by what it
+    /// computes: the same `let` read again in another monitor's copy is the
+    /// same property, not one more. Only the first copy's are kept: those are
+    /// the ones the render always moves (a copy whose monitor is not there is not).
+    let_props: HashMap<String, PropId>,
+    /// Reading a monitor's copy other than the first.
+    later_copy: bool,
     /// How many groups with effects are open around what is being read.
     effects_depth: usize,
     /// Inside a `row` or a `column`, a child does not say where it goes: it goes to its slot.
@@ -363,7 +370,7 @@ pub fn compile<'a>(tree: &'a [Entry], files: &'a [String], dirs: &'a [std::path:
             other => unreachable!("'{other}' is in the vocabulary, but it has no stiffness or damping"),
         })).collect(),
         under: Vec::new(), candidates: Vec::new(), zparents: vec![0], next_zparent: 1, zblock: None, rules: Vec::new(), errors: Vec::new(), declared: Vec::new(), used: Default::default(), current_class: String::new(),
-        scrolls: Vec::new(), row_scrolls: Default::default(), pending_surfaces: Vec::new(), pending_levels: Vec::new(), pending_reserves: Vec::new(), hover_mentions: Default::default(), zone_springs: Vec::new(), pending_anchors: Vec::new(), files, dirs, strict_files, libraries, boundary_of: HashMap::new(), permissions_of: HashMap::new(), pass: 0, next_origin: 0.0, values: HashMap::new(), ambiguous: Default::default(), instance_children: Vec::new(), from_library: Default::default(), unrequested: Default::default(), unwatched: Default::default(), in_letters: Default::default(), scopes: Vec::new(), components: HashMap::new(), copies: 0, effects_depth: 0, in_slot: false, last_size: None, imposed_measure: None, pending_keyboard: None, prop_sites: HashMap::new(),
+        scrolls: Vec::new(), row_scrolls: Default::default(), pending_surfaces: Vec::new(), pending_levels: Vec::new(), pending_reserves: Vec::new(), hover_mentions: Default::default(), zone_springs: Vec::new(), pending_anchors: Vec::new(), files, dirs, strict_files, libraries, boundary_of: HashMap::new(), permissions_of: HashMap::new(), pass: 0, next_origin: 0.0, values: HashMap::new(), ambiguous: Default::default(), instance_children: Vec::new(), from_library: Default::default(), unrequested: Default::default(), unwatched: Default::default(), in_letters: Default::default(), scopes: Vec::new(), components: HashMap::new(), copies: 0, let_props: HashMap::new(), later_copy: false, effects_depth: 0, in_slot: false, last_size: None, imposed_measure: None, pending_keyboard: None, prop_sites: HashMap::new(),
     };
     // Two facts that always exist: what the surface really measures. The
     // render sets them when the compositor configures it.
@@ -451,7 +458,9 @@ pub fn compile<'a>(tree: &'a [Entry], files: &'a [String], dirs: &'a [std::path:
             let t = Transform { translate: (ox.into(), oy.into()), ..Transform::at((0.0.into(), 0.0.into())) };
             o.e.paint(Instr::Transform(Some(t.clone())));
             o.under.push(t);
+            o.later_copy = o.e.surfaces.get(k).is_some_and(|s| s.instance > 0);
             o.group(this_pass.clone().into_iter());
+            o.later_copy = false;
             o.zparents.pop();
             o.under.pop();
             o.e.paint(Instr::Transform(None));
@@ -1921,11 +1930,25 @@ impl<'a> Compiler<'a> {
                     // property computed once would be the first one's for
                     // all of them. It stays substituted, which is what makes it each one's own.
                     let per_copy = self.scopes.is_empty() && e.reads(|p| self.e.facts.get(p.0 as usize).is_some_and(|(n, _)| n.starts_with("screen.")));
+                    // The same one in every monitor's copy —it reads nothing of
+                    // its copy— is one property: a property per copy was the
+                    // same work once per monitor, and a rule naming it read
+                    // differently in each copy, so it acted once per copy (a
+                    // `toggle` in it undid itself).
                     let e = if e.node_count() > 8 && !per_copy {
-                        self.copies += 1;
-                        let p = self.e.prop_with(interned(&format!("·{name}{}", self.copies)), 0.0, Spring::LIVELY);
-                        self.e.behaviors.push(Behavior::Bind { prop: p, to: e });
-                        p.e()
+                        let key = format!("{e:?}");
+                        match self.let_props.get(&key) {
+                            Some(p) => p.e(),
+                            None => {
+                                self.copies += 1;
+                                let p = self.e.prop_with(interned(&format!("·{name}{}", self.copies)), 0.0, Spring::LIVELY);
+                                self.e.behaviors.push(Behavior::Bind { prop: p, to: e });
+                                if !self.later_copy {
+                                    self.let_props.insert(key, p);
+                                }
+                                p.e()
+                            }
+                        }
                     } else {
                         e
                     };
