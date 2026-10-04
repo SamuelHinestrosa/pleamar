@@ -1892,6 +1892,17 @@ impl Gpu {
     /// deadlines at the monitor's period.
     /// `PLEAMAR_FIFO=1` goes back to the old way, to compare.
     /// Which card, with which driver, and how frames reach the screen: for a report.
+    /// What it keeps of the programs' windows, for the timing lines: a number
+    /// that only grows over a long session is a leak.
+    pub fn kept(&self) -> String {
+        let (w, h, n) = self.windows_dims;
+        #[cfg(target_os = "linux")]
+        let buffers = self.dmabufs.len();
+        #[cfg(not(target_os = "linux"))]
+        let buffers = 0;
+        format!("{buffers} programs' buffers on the card · windows' texture {w}×{h}×{n}")
+    }
+
     pub fn describe(&self) -> String {
         let i = self.adapter.get_info();
         let kind = match i.device_type {

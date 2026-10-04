@@ -565,6 +565,8 @@ pub fn run(
     // Programs' buffers already destroyed that a window is still showing.
     #[cfg(target_os = "linux")]
     let mut nest_doomed: Vec<u64> = Vec::new();
+    // Windows closed whose last image is kept while the scene shows them leaving.
+    let mut nest_closed: Vec<usize> = Vec::new();
 
     // `PLEAMAR_TIMING=1`: where a frame's time goes, section by section, without the waits.
     // Measured too while `pleamar --report` asks for it (`probe`), but only said then.
@@ -1139,11 +1141,19 @@ pub fn run(
                             desks.stamp += 1;
                             desks.born[slot] = desks.stamp;
                             // What the slot showed before —a window closing, still fading— is no longer it.
+                            nest_closed.retain(|s| *s != slot);
                             if let Some(w) = nest_windows.get_mut(slot) {
+                                let mut gone = Vec::new();
                                 for p in w.pieces.drain(..) {
                                     nest_layers[p.layer as usize] = false;
+                                    gone.extend(p.buffer);
                                 }
                                 w.geometry = [0; 4];
+                                #[cfg(target_os = "linux")]
+                                if let Some(g) = gpu.as_mut() {
+                                    nest_doomed.retain(|b| !gone.contains(b));
+                                    g.forget_dmabufs(&gone);
+                                }
                             }
                             nest_fact(&scene, &mut facts, &to_logic, &format!("{name}.{slot}.open"), 1.0);
                             nest_text(&scene, &mut texts, &to_logic, &format!("{name}.{slot}.title"), title);
@@ -1305,7 +1315,14 @@ pub fn run(
                                 desks.alive[slot] = false;
                                 nest_places(&scene, &mut facts, &mut texts, &to_logic, &n, &nest_order, &nest_screens, &mut desks);
                             }
+                            // Whoever watched it (a share, a thumbnail) stops here: its slot
+                            // will be another window's, and a share went on showing that one.
+                            nest_watch.retain(|(s, _, _)| *s != slot);
                             // Its last image stays: the scene may want to see it leave.
+                            // It goes once the scene no longer draws it.
+                            if !nest_closed.contains(&slot) {
+                                nest_closed.push(slot);
+                            }
                             nest_fact(&scene, &mut facts, &to_logic, &format!("{name}.{slot}.open"), 0.0);
                             nest_fact(&scene, &mut facts, &to_logic, &format!("{name}.{slot}.focused"), 0.0);
                             nest_fact(&scene, &mut facts, &to_logic, &format!("{name}.{slot}.fullscreen"), 0.0);
@@ -2956,6 +2973,30 @@ pub fn run(
             }));
         }
 
+        // A window closed that the scene no longer draws (its leaving is over):
+        // its last image goes. Kept until its slot was used again, every slot
+        // ended up holding a dead window's pixels, a monitor's worth each.
+        if !nest_closed.is_empty() {
+            nest_closed.retain(|slot| {
+                if draw.windows_drawn.iter().any(|w| w.0 == *slot) {
+                    return true;
+                }
+                if let Some(w) = nest_windows.get_mut(*slot) {
+                    let mut gone = Vec::new();
+                    for p in w.pieces.drain(..) {
+                        nest_layers[p.layer as usize] = false;
+                        gone.extend(p.buffer);
+                    }
+                    #[cfg(target_os = "linux")]
+                    {
+                        nest_doomed.retain(|b| !gone.contains(b));
+                        g.forget_dmabufs(&gone);
+                    }
+                }
+                false
+            });
+        }
+
         // Where each window is seen, for the compositor: on which monitor and its
         // box there (the last one drawn, which is the one on top).
         if let Some(send) = &nest {
@@ -3433,6 +3474,19 @@ pub fn run(
             if sheet_counts.2 >= 300 {
                 println!("timing · surfaces per frame: {:.2} painted, {:.2} up to date", sheet_counts.0 as f32 / 300.0, sheet_counts.1 as f32 / 300.0);
                 sheet_counts = (0, 0, 0);
+                // What is kept for the compositor's windows: over a long
+                // session, none of these should only grow.
+                if nest.is_some() {
+                    let pieces: usize = nest_windows.iter().map(|w| w.pieces.len()).sum();
+                    let pixels: usize = nest_windows.iter().flat_map(|w| &w.pieces).map(|p| p.pixels.capacity()).sum();
+                    println!(
+                        "timing · kept: {} window slots, {pieces} pieces, {:.1} MB of their pixels, {} buffers to drop · {}",
+                        nest_windows.len(),
+                        pixels as f64 / 1e6,
+                        nest_doomed.len(),
+                        gpu.as_ref().map_or(String::new(), |g| g.kept())
+                    );
+                }
             }
         }
         if profiling {
