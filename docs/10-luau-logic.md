@@ -33,7 +33,9 @@ cancel(t)
 
 run("date", { "+%H:%M" }, function(out, code) … end)   -- a system command; answers when it finishes
 run("wl-copy", { "--type", "image/png" }, nil, { stdin = path, output = false })   -- how: a file on its input; and not waiting for what it writes
+run("sudo", { "-S", "-p", "", "-v" }, function(_, code) … end, { input = pw .. "\n" })   -- a text on its input, which never touches a file, its arguments or its environment
 local id = spawn("wf-recorder", { "-f", file }, function(line) … end, function(_, code) … end)   -- one that does not end: a call per line, and one when it HAS ended
+spawn("pacman", args, on_line, on_exit, { input = "…", errors = true, env = { LC_ALL = "C" } })   -- how, too: a text on its input, its error output among the lines, and variables of its own (also for `run`)
 kill(id, "int")                                       -- asks it to stop (or "term"); kill(id) alone kills it and forgets it
 local id = spawn("pactl", { "subscribe" }, function(line) … end)   -- one that does NOT finish: one call per line
 kill(id)

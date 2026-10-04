@@ -238,6 +238,25 @@ fn denied(c: &Mutex<Shared>, what_for: &str, how: &str) -> mlua::Error {
 }
 
 /// Can this logic launch that command? Undeclared, no; and the error says what to write.
+/// `{ env = { LC_ALL = "C" } }`: variables for that program only, on top of
+/// the scene's own. A program that speaks the user's language is read in English.
+fn environment(how: Option<&mlua::Table>) -> Vec<(String, String)> {
+    how.and_then(|t| t.get::<Option<mlua::Table>>("env").ok().flatten())
+        .map(|t| t.pairs::<String, String>().filter_map(Result::ok).collect())
+        .unwrap_or_default()
+}
+
+/// Writes `text` on the child's input and closes it, so it knows nothing more is
+/// coming. On a thread of its own: a program that writes before reading could fill
+/// its output while this waited to hand it the input.
+fn give_input(child: &mut std::process::Child, text: Option<String>) {
+    let (Some(text), Some(mut stdin)) = (text, child.stdin.take()) else { return };
+    std::thread::spawn(move || {
+        use std::io::Write;
+        let _ = stdin.write_all(text.as_bytes());
+    });
+}
+
 fn check_command_permission(c: &Mutex<Shared>, command: &str) -> mlua::Result<()> {
     if c.lock().unwrap().permissions.commands.iter().any(|o| o == command) {
         return Ok(());
@@ -775,9 +794,15 @@ impl LuauScript {
         // it writes. The latter is not a whim: a program that stays in the background
         // (`wl-copy` does, to keep serving what was copied) inherits the output
         // pipe, and waiting for it to close it is waiting forever.
+        // `{ input = "text" }` writes that text on its input instead, and closes it:
+        // what has to reach it without passing through a file, its arguments or its
+        // environment, which other programs can read (`sudo -S` and a password).
+        // And `{ env = { LC_ALL = "C" } }`, variables of its own.
         g.set("run", lua.create_function(move |_, (command, args, f, how): (String, Option<Vec<String>>, Option<Function>, Option<mlua::Table>)| {
             check_command_permission(&c, &command)?;
             let input: Option<String> = how.as_ref().and_then(|t| t.get("stdin").ok());
+            let text: Option<String> = how.as_ref().and_then(|t| t.get("input").ok());
+            let vars = environment(how.as_ref());
             let collect: bool = how.as_ref().and_then(|t| t.get::<Option<bool>>("output").ok().flatten()).unwrap_or(true);
             let id = {
                 let mut c = c.lock().unwrap();
@@ -791,7 +816,7 @@ impl LuauScript {
             let to_logic = to_logic.clone();
             std::thread::spawn(move || {
                 let mut launch = std::process::Command::new(&command);
-                launch.args(args.unwrap_or_default());
+                launch.args(args.unwrap_or_default()).envs(vars);
                 if let Some(path) = &input {
                     match std::fs::File::open(path) {
                         Ok(f) => {
@@ -803,9 +828,24 @@ impl LuauScript {
                         }
                     }
                 }
+                if text.is_some() {
+                    launch.stdin(std::process::Stdio::piped());
+                }
                 let (output, code) = if collect {
-                    match launch.output() {
+                    let out = launch.stdout(std::process::Stdio::piped()).stderr(std::process::Stdio::piped()).spawn().and_then(|mut child| {
+                        give_input(&mut child, text);
+                        child.wait_with_output()
+                    });
+                    match out {
                         Ok(o) => (String::from_utf8_lossy(&o.stdout).trim_end().to_owned(), o.status.code().unwrap_or(-1)),
+                        Err(e) => (e.to_string(), -1),
+                    }
+                } else if text.is_some() {
+                    match launch.stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null()).spawn().and_then(|mut child| {
+                        give_input(&mut child, text);
+                        child.wait()
+                    }) {
+                        Ok(s) => (String::new(), s.code().unwrap_or(-1)),
                         Err(e) => (e.to_string(), -1),
                     }
                 } else {
@@ -824,18 +864,29 @@ impl LuauScript {
         // fourth function, that one is called when the process HAS FINISHED, with its
         // code: asking something to stop and it having stopped are not the same, and
         // that difference is where a recording gets lost.
+        // And a fifth, how: `{ input = "text" }` and `env` as with `run`, and `{ errors = true }`
+        // gives what it writes on its error output too, line by line with the rest:
+        // a package manager says there what went wrong.
         let (c, to_logic) = (self.c.clone(), self.to_logic.clone());
-        g.set("spawn", lua.create_function(move |_, (command, args, f, on_exit): (String, Option<Vec<String>>, Function, Option<Function>)| {
+        g.set("spawn", lua.create_function(move |_, (command, args, f, on_exit, how): (String, Option<Vec<String>>, Function, Option<Function>, Option<mlua::Table>)| {
             use std::io::BufRead;
             check_command_permission(&c, &command)?;
+            let text: Option<String> = how.as_ref().and_then(|t| t.get("input").ok());
+            let errors: bool = how.as_ref().and_then(|t| t.get::<Option<bool>>("errors").ok().flatten()).unwrap_or(false);
             let mut launch = std::process::Command::new(&command);
-            launch.args(args.unwrap_or_default()).stdout(std::process::Stdio::piped()).stderr(std::process::Stdio::null());
+            launch.args(args.unwrap_or_default()).envs(environment(how.as_ref())).stdout(std::process::Stdio::piped());
+            launch.stderr(if errors { std::process::Stdio::piped() } else { std::process::Stdio::null() });
+            if text.is_some() {
+                launch.stdin(std::process::Stdio::piped());
+            }
             // If the program gets killed, this goes with it.
             crate::platform::die_with_parent(&mut launch);
             let mut child = launch
                 .spawn()
                 .map_err(|e| mlua::Error::runtime(format!("cannot run '{command}': {e}")))?;
+            give_input(&mut child, text);
             let output = child.stdout.take();
+            let complaints = child.stderr.take();
             let child = Arc::new(Mutex::new(Some(child)));
             CHILDREN.lock().unwrap().push(child.clone());
             let id = {
@@ -849,6 +900,18 @@ impl LuauScript {
                 id
             };
             let to_logic = to_logic.clone();
+            // Its error output on a thread of its own: read after the other, a
+            // program that fills that pipe while the other is still open blocks.
+            let complained = complaints.map(|s| {
+                let to_logic = to_logic.clone();
+                std::thread::spawn(move || {
+                    for line in std::io::BufReader::new(s).lines().map_while(Result::ok) {
+                        if to_logic.send(Event::Line(id, line)).is_err() {
+                            break;
+                        }
+                    }
+                })
+            });
             std::thread::spawn(move || {
                 if let Some(s) = output {
                     for line in std::io::BufReader::new(s).lines().map_while(Result::ok) {
@@ -856,6 +919,10 @@ impl LuauScript {
                             break;
                         }
                     }
+                }
+                // Every line before the end.
+                if let Some(t) = complained {
+                    let _ = t.join();
                 }
                 let code = child.lock().unwrap().take().and_then(|mut h| h.wait().ok()).and_then(|s| s.code()).unwrap_or(-1);
                 let _ = to_logic.send(Event::Process(id, String::new(), code));
