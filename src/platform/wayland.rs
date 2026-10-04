@@ -725,6 +725,8 @@ struct Locks {
     /// Wayland thread keeps them up to date, and one is needed per face.
     monitors: Mutex<Vec<(wl_output::WlOutput, String, i32)>>,
     engaged: Mutex<Option<Engaged>>,
+    /// For the plain covers of the monitors the scene is not on.
+    shm: Option<WlShm>,
 }
 
 struct Engaged {
@@ -749,17 +751,20 @@ struct LockFace {
     /// Where it looks on the plane: the scene's origin minus whatever is needed
     /// for its box to end up centred. It's known when configuring it.
     view_origin: (f32, f32),
+    /// A monitor the scene is not on (`screens:`): it gets a black cover, and
+    /// this is its buffer once configured.
+    cover: Option<Option<(WlShmPool, WlBuffer, std::os::fd::OwnedFd, (u32, u32))>>,
     surface: smithay_client_toolkit::session_lock::SessionLockSurface,
 }
 
 static LOCKS: std::sync::OnceLock<Locks> = std::sync::OnceLock::new();
 
-/// `Some((bounds, origin))` engages the lock of surface `which`; `None`
+/// `Some((bounds, origin, screens))` engages the lock of surface `which`; `None`
 /// releases it. The render calls it, having already released what it painted before releasing it.
-pub fn lock_screen(which: usize, what: Option<((u32, u32), (f32, f32))>) {
+pub fn lock_screen(which: usize, what: Option<((u32, u32), (f32, f32), Screens)>) {
     let Some(c) = LOCKS.get() else { return };
     let mut engaged = c.engaged.lock().unwrap();
-    let Some((bounds, origin)) = what else {
+    let Some((bounds, origin, screens)) = what else {
         if let Some(e) = engaged.take() {
             e.lock.unlock();
             drop(e);
@@ -779,16 +784,32 @@ pub fn lock_screen(which: usize, what: Option<((u32, u32), (f32, f32))>) {
         }
     };
     // One face per monitor, and all at once: until they're all there, the
-    // compositor doesn't consider the session locked.
-    let faces = c
-        .monitors
-        .lock()
-        .unwrap()
+    // compositor doesn't consider the session locked. The monitors the scene is
+    // not on (`screens:`) are covered all the same, in black.
+    let monitors = c.monitors.lock().unwrap();
+    let shown: Vec<bool> = monitors
         .iter()
-        .map(|(output, name, mhz)| {
+        .enumerate()
+        .map(|(number, (_, name, _))| match &screens {
+            Screens::All => true,
+            Screens::Named(n) => n.iter().any(|x| x == name),
+            Screens::Number(x) => *x == number,
+        })
+        .collect();
+    // On none of them (a monitor unplugged), on all: a lock with nowhere to type
+    // the password would be no way back.
+    let everywhere = !shown.contains(&true);
+    let faces = monitors
+        .iter()
+        .zip(shown)
+        .map(|((output, name, mhz), shows)| {
             let wl = c.compositor.create_surface(&c.qh);
             let id = next_surface_id();
             let surface = lock.create_lock_surface(wl, output, &c.qh);
+            if !shows && !everywhere && c.shm.is_some() {
+                // Far from anything of the scene: the mouse over it touches nothing.
+                return LockFace { id, pending: None, viewport: None, _fractional_scale: None, name: name.clone(), mhz: *mhz, view_origin: (-1e7, -1e7), cover: Some(None), surface };
+            }
             let viewport = c.viewporter.as_ref().map(|v| v.get_viewport(surface.wl_surface(), &c.qh, Silent));
             let fractional_scale = c.fractional_scales.as_ref().map(|m| m.get_fractional_scale(surface.wl_surface(), &c.qh, ScaleFor(id)));
             let paints = unsafe {
@@ -799,9 +820,10 @@ pub fn lock_screen(which: usize, what: Option<((u32, u32), (f32, f32))>) {
                     })
                     .ok()
             };
-            LockFace { id, pending: paints, viewport, _fractional_scale: fractional_scale, name: name.clone(), mhz: *mhz, view_origin: origin, surface }
+            LockFace { id, pending: paints, viewport, _fractional_scale: fractional_scale, name: name.clone(), mhz: *mhz, view_origin: origin, cover: None, surface }
         })
         .collect();
+    drop(monitors);
     *engaged = Some(Engaged { which, bounds, origin, lock, faces });
     let _ = c.connection.flush();
 }
@@ -1104,6 +1126,7 @@ pub fn run_event_loop(wanted: Vec<Surface>, extra_height: u32, instance: wgpu::I
         fractional_scales: state.fractional_scales.clone(),
         monitors: Mutex::default(),
         engaged: Mutex::default(),
+        shm: globals.bind::<WlShm, _, _>(&qh, 1..=1, Silent).ok(),
     });
     if state.viewporter.is_none() || state.fractional_scales.is_none() {
         eprintln!("warning: the compositor gives no fractional scale; it will paint at whatever whole scale it says");
@@ -1222,6 +1245,23 @@ impl smithay_client_toolkit::session_lock::SessionLockHandler for State {
         let (which, bounds, origin) = (e.which, e.bounds, e.origin);
         let Some(face) = e.faces.iter_mut().find(|k| k.surface.wl_surface() == surface.wl_surface()) else { return };
         let size = conf.new_size;
+        // A cover: black, as big as its monitor. Zeroed memory is black in XRGB.
+        if let (Some(cover), Some(shm)) = (face.cover.as_mut(), c.shm.as_ref()) {
+            let len = size.0 as usize * size.1 as usize * 4;
+            if cover.as_ref().is_none_or(|(_, _, _, was)| *was != size) && len > 0 {
+                let Some(fd) = memfd(len) else { return };
+                let pool = shm.create_pool(std::os::fd::AsFd::as_fd(&fd), len as i32, &self.qh, Silent);
+                let buffer = pool.create_buffer(0, size.0 as i32, size.1 as i32, size.0 as i32 * 4, wl_shm::Format::Xrgb8888, &self.qh, Silent);
+                *cover = Some((pool, buffer, fd, size));
+            }
+            if let Some((_, b, _, _)) = cover {
+                let wl = face.surface.wl_surface();
+                wl.attach(Some(b), 0, 0);
+                wl.damage_buffer(0, 0, size.0 as i32, size.1 as i32);
+                wl.commit();
+            }
+            return;
+        }
         if let Some(v) = &face.viewport {
             v.set_destination(size.0 as i32, size.1 as i32);
         }

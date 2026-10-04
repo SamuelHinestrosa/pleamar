@@ -269,9 +269,10 @@ pub fn popup(k: usize, what: Option<([i32; 4], (f32, f32))>) {
 /// On Wayland it's `ext-session-lock`: the compositor guarantees it, not the drawing.
 /// On Windows it will be `LockWorkStation`, which brings its own screen; on macOS, the
 /// screen saver with password.
-pub fn lock_screen(which: usize, what: Option<((u32, u32), (f32, f32))>) {
+pub fn lock_screen(which: usize, what: Option<((u32, u32), (f32, f32), crate::scene::Screens)>) {
     #[cfg(target_os = "linux")]
     wayland::lock_screen(which, what);
+    #[cfg(not(target_os = "linux"))]
     let _ = (which, what);
 }
 

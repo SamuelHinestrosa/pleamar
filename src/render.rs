@@ -789,9 +789,17 @@ pub fn run(
                     // A window measures whatever the compositor has given it, and that can change.
                     let is_window = scene.surface().window.is_some();
                     let its_own = n.view.surface == 0 && n.view.popup.is_none();
-                    // A named surface publishes what it measures (see `SheetSize`).
+                    // A named surface publishes what it measures (see `SheetSize`). A
+                    // lock one has a copy per monitor, and they all share the name: the
+                    // largest of them, so that a background drawn that big covers each
+                    // —the last one alone gave a portrait monitor a landscape picture—.
+                    let measures = if scene.surfaces.get(n.view.surface).is_some_and(|s| s.lock_screen) {
+                        sheets.iter().filter(|l| l.view.surface == n.view.surface && l.view.popup.is_none()).fold((n.size.0 as f32, n.size.1 as f32), |(w, h), l| (w.max(l.view.size.0), h.max(l.view.size.1)))
+                    } else {
+                        (n.size.0 as f32, n.size.1 as f32)
+                    };
                     if let Some((w, h)) = scene.surfaces.get(n.view.surface).and_then(|s| s.size_props).filter(|_| n.view.popup.is_none()) {
-                        for (p, v) in [(w, n.size.0 as f32), (h, n.size.1 as f32)] {
+                        for (p, v) in [(w, measures.0), (h, measures.1)] {
                             props[p.0 as usize] = Animated { x: v, v: 0.0, target: v, spring: props[p.0 as usize].spring };
                         }
                     }
@@ -2637,7 +2645,7 @@ pub fn run(
             if wants && !was {
                 locks.push(k);
                 let s = &scene.surfaces[k];
-                crate::platform::lock_screen(k, Some(((s.width, s.height), s.origin)));
+                crate::platform::lock_screen(k, Some(((s.width, s.height), s.origin, s.screens.clone())));
             } else if !wants && was {
                 locks.retain(|x| *x != k);
                 sheets.retain(|l| !(l.view.surface == k && l.view.popup.is_none()));
