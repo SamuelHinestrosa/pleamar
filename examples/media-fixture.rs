@@ -8,14 +8,14 @@ fn main() { if let Err(error) = fixture::run() { eprintln!("{error}"); std::proc
 #[cfg(target_os = "windows")]
 mod fixture {
     use std::sync::{Mutex, OnceLock};
-    use windows::{core::{w, HSTRING}, Foundation::TypedEventHandler,
+    use windows::{core::{w, HSTRING, BOOL}, Foundation::TypedEventHandler,
         Media::{SystemMediaTransportControls as Controls, SystemMediaTransportControlsButton as Button,
             SystemMediaTransportControlsButtonPressedEventArgs as Pressed, MediaPlaybackStatus, MediaPlaybackType},
         Win32::{Foundation::*, Graphics::Gdi::*, System::{LibraryLoader::GetModuleHandleW,
             WinRT::{RoInitialize, RoUninitialize, RO_INIT_MULTITHREADED, ISystemMediaTransportControlsInterop}},
             UI::{Shell::SetCurrentProcessExplicitAppUserModelID, WindowsAndMessaging::*}}};
     const BUTTON: u32 = WM_APP + 1;
-    struct State { controls: Controls, track: usize, playing: bool, events: u32 }
+    struct State { controls: Controls, track: usize, playing: bool, events: u32, artwork: bool }
     static STATE: OnceLock<Mutex<State>> = OnceLock::new();
     fn publish(hwnd: HWND, state: &State) -> windows::core::Result<()> {
         let title = if state.track == 0 { "Pleamar media validation — Español" } else { "Pleamar media validation — 日本語" };
@@ -30,6 +30,20 @@ mod fixture {
         music.SetTitle(&HSTRING::from(title))?;
         music.SetArtist(&HSTRING::from("Owned native fixture — no audio"))?;
         music.SetAlbumTitle(&HSTRING::from("Windows validation"))?;
+        if state.artwork {
+            use windows::Storage::Streams::{InMemoryRandomAccessStream, DataWriter, RandomAccessStreamReference};
+            let mut png = std::io::Cursor::new(Vec::new());
+            let color = if state.track == 0 { [220, 30, 40, 255] } else { [20, 180, 70, 255] };
+            image::RgbaImage::from_pixel(320, 180, image::Rgba(color)).write_to(&mut png, image::ImageFormat::Png)
+                .map_err(|e| windows::core::Error::new(windows::core::HRESULT(0x80004005u32 as i32), e.to_string()))?;
+            let stream = InMemoryRandomAccessStream::new()?;
+            let writer = DataWriter::CreateDataWriter(&stream)?;
+            writer.WriteBytes(png.get_ref())?;
+            writer.StoreAsync()?.join()?;
+            writer.DetachStream()?;
+            stream.Seek(0)?;
+            display.SetThumbnail(&RandomAccessStreamReference::CreateFromStream(&stream)?)?;
+        }
         display.Update()?;
         let status = if state.playing { "Playing" } else { "Paused" };
         unsafe {
@@ -119,8 +133,26 @@ mod fixture {
         let wc = WNDCLASSW { hInstance: instance.into(), lpszClassName: class, lpfnWndProc: Some(procedure),
             hCursor: LoadCursorW(None, IDC_ARROW)?, hbrBackground: HBRUSH((COLOR_WINDOW.0 + 1) as _), ..Default::default() };
         if RegisterClassW(&wc) == 0 { return Err(windows::core::Error::from_thread().into()); }
+        let mut position = (40, 300);
+        if let Some(i) = args.iter().position(|arg| arg == "--screen") {
+            let name = args.get(i + 1).ok_or("--screen needs a monitor device name")?;
+            struct Find { name: String, rect: Option<RECT> }
+            unsafe extern "system" fn monitor(handle: HMONITOR, _: HDC, _: *mut RECT, data: LPARAM) -> BOOL { unsafe {
+                let find = &mut *(data.0 as *mut Find);
+                let mut info = MONITORINFOEXW { monitorInfo: MONITORINFO { cbSize: std::mem::size_of::<MONITORINFOEXW>() as u32, ..Default::default() }, ..Default::default() };
+                if GetMonitorInfoW(handle, &mut info as *mut _ as _).as_bool() {
+                    let end = info.szDevice.iter().position(|c| *c == 0).unwrap_or(info.szDevice.len());
+                    if String::from_utf16_lossy(&info.szDevice[..end]) == find.name { find.rect = Some(info.monitorInfo.rcWork); }
+                }
+                BOOL(1)
+            } }
+            let mut find = Find { name: name.clone(), rect: None };
+            let _ = EnumDisplayMonitors(None, None, Some(monitor), LPARAM(&mut find as *mut _ as isize));
+            let rect = find.rect.ok_or("requested fixture monitor is not connected")?;
+            position = (rect.left + 40, rect.top + 300);
+        }
         let hwnd = CreateWindowExW(WS_EX_APPWINDOW, class, w!("Pleamar media fixture"), WS_OVERLAPPEDWINDOW,
-            40, 300, 580, 220, None, None, Some(instance.into()), None)?;
+            position.0, position.1, 580, 220, None, None, Some(instance.into()), None)?;
         // Explicit window identity also exercises custom classic application IDs.
         {
             use windows::Win32::{UI::Shell::PropertiesSystem::{SHGetPropertyStoreForWindow, IPropertyStore}, System::Com::StructuredStorage::PROPVARIANT};
@@ -141,7 +173,7 @@ mod fixture {
             }
             Ok(())
         }))?;
-        STATE.set(Mutex::new(State { controls: controls.clone(), track: 0, playing: true, events: 0 })).map_err(|_| "fixture already initialized")?;
+        STATE.set(Mutex::new(State { controls: controls.clone(), track: 0, playing: true, events: 0, artwork: args.iter().any(|a| a == "--art") })).map_err(|_| "fixture already initialized")?;
         publish(hwnd, &STATE.get().unwrap().lock().unwrap())?;
         let _ = ShowWindow(hwnd, SW_SHOWNOACTIVATE);
         SetTimer(Some(hwnd), 1, 15 * 60 * 1000, None);

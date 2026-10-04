@@ -60,7 +60,7 @@ windows = { version = "0.62", features = [
     "Win32_System_ProcessStatus", "Win32_System_SystemInformation",
     "Win32_System_WinRT", "Win32_System_Shutdown", "Win32_Media_Audio", "Win32_Media_Audio_Endpoints",
     "Win32_Devices_FunctionDiscovery", "Win32_UI_Shell_PropertiesSystem",
-    "Media_Control", "Networking_Connectivity", "Foundation_Collections",
+    "Media_Control", "Networking_Connectivity", "Foundation_Collections", "Storage_Streams",
     "Win32_NetworkManagement_WiFi", "Win32_NetworkManagement_Ndis", "Win32_Devices_Bluetooth", "Devices_Radios",
     "Devices_Bluetooth", "Devices_Enumeration",
     "Win32_Devices_Display",

@@ -28,6 +28,9 @@ macro_rules! complete {
 
 static MANAGER: Mutex<Option<Manager>> = Mutex::new(None);
 
+#[path = "windows_media_art.rs"]
+mod artwork;
+
 fn session() -> Result<Option<Session>> {
     let manager = {
         let mut manager = MANAGER.lock().unwrap();
@@ -45,6 +48,7 @@ pub(super) fn unavailable(error: &str) -> SysValue {
         ("player".into(), SysValue::Text(String::new())), ("playing".into(), SysValue::Bool(false)),
         ("title".into(), SysValue::Text(String::new())), ("artist".into(), SysValue::Text(String::new())),
         ("album".into(), SysValue::Text(String::new())),
+        ("art".into(), SysValue::Text(String::new())),
         ("can_toggle".into(), SysValue::Bool(false)), ("can_next".into(), SysValue::Bool(false)),
         ("can_previous".into(), SysValue::Bool(false)),
     ])
@@ -83,6 +87,10 @@ pub fn media() -> Result<SysValue> {
     let properties = complete!(session.TryGetMediaPropertiesAsync())?;
     let controls = Controls::read(&session)?;
     let player = session.SourceAppUserModelId()?.to_string();
+    let title = properties.Title()?.to_string();
+    let artist = properties.Artist()?.to_string();
+    let album = properties.AlbumTitle()?.to_string();
+    let art = artwork::read(&properties, [&player, &title, &artist, &album]);
     let level = volume::read(&player);
     Ok(SysValue::Map(vec![
         ("can_volume".into(), SysValue::Bool(level.is_ok())),
@@ -90,9 +98,10 @@ pub fn media() -> Result<SysValue> {
         ("volume_error".into(), SysValue::Text(level.err().unwrap_or_default())),
         ("available".into(), SysValue::Bool(true)), ("error".into(), SysValue::Text(String::new())),
         ("player".into(), SysValue::Text(session.SourceAppUserModelId()?.to_string())),
-        ("title".into(), SysValue::Text(properties.Title()?.to_string())),
-        ("artist".into(), SysValue::Text(properties.Artist()?.to_string())),
-        ("album".into(), SysValue::Text(properties.AlbumTitle()?.to_string())),
+        ("title".into(), SysValue::Text(title)),
+        ("artist".into(), SysValue::Text(artist)),
+        ("album".into(), SysValue::Text(album)),
+        ("art".into(), SysValue::Text(art)),
         ("playing".into(), SysValue::Bool(controls.playing)),
         ("can_toggle".into(), SysValue::Bool(controls.action("media.toggle").is_ok())),
         ("can_next".into(), SysValue::Bool(controls.next)), ("can_previous".into(), SysValue::Bool(controls.previous)),
