@@ -1637,7 +1637,11 @@ impl Gpu {
     pub fn new(instance: &wgpu::Instance, first: Option<&wgpu::Surface<'static>>) -> Gpu {
         let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
             compatible_surface: first,
-            power_preference: wgpu::PowerPreference::LowPower,
+            // `PLEAMAR_GPU=high` asks for the fast card (a laptop's discrete one) instead of the frugal one.
+            power_preference: match std::env::var("PLEAMAR_GPU").as_deref() {
+                Ok("high") => wgpu::PowerPreference::HighPerformance,
+                _ => wgpu::PowerPreference::LowPower,
+            },
             ..Default::default()
         }))
         .expect("there is no graphics adapter");
