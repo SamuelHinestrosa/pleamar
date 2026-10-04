@@ -2040,10 +2040,11 @@ pub fn run(
         {
             let c = Ctx { props: &props, facts: &facts };
             let mut acted: Vec<usize> = Vec::new();
-            for (k, (r, e)) in scene.rules.iter().zip(rules.iter_mut()).enumerate() {
+            for (k, r) in scene.rules.iter().enumerate() {
                 if rule_asleep(k) {
                     continue;
                 }
+                let Some(e) = sampled_rule(&scene, &mut rules, k, now) else { continue };
                 let fires = match &r.when {
                     Trigger::Enter(z) => edges.contains(&(true, z.0 as usize)),
                     Trigger::Leave(z) => edges.contains(&(false, z.0 as usize)),
@@ -2070,31 +2071,13 @@ pub fn run(
                     }
                     // `on change floor(list.scroll / 34) { … }`: when that changes.
                     Trigger::Change(x) => {
-                        let now = x.eval(c);
-                        let before = e.last_value.replace(now);
-                        before.is_some_and(|v| (v - now).abs() > 0.001)
+                        e.changed(x.eval(c))
                     }
                     // `on still audio.volume for 1.1s { … }`: when that has been still for that
                     // long. Each change resets the clock to zero, so six
                     // taps in a row on the volume key are a single wait.
                     Trigger::Still { value, duration } => {
-                        let value = value.eval(c);
-                        let before = e.last_value.replace(value);
-                        if before.is_some_and(|v| (v - value).abs() > 0.001) {
-                            e.armed = true;
-                            e.next = Some(now + *duration);
-                        }
-                        match e.next.filter(|_| e.armed) {
-                            Some(p) if now >= p => {
-                                e.armed = false;
-                                true
-                            }
-                            Some(p) => {
-                                appointments.push(p);
-                                false
-                            }
-                            None => false,
-                        }
+                        e.still(value.eval(c), *duration, now, &mut appointments)
                     }
                     Trigger::Key(t) => keys.iter().any(|x| x == t),
                     Trigger::Submit(t) => submitted.contains(&(t.0 as usize)),
@@ -2149,8 +2132,7 @@ pub fn run(
                     }
                     Trigger::On(_) => false, // handled with the signals, below
                 };
-                // Its twins in the other copies watched too —each one keeps its own
-                // `on change`, its own `on still`—, but only the first awake acts.
+                // Identical rules act once even when both copies are awake.
                 let twin = scene.twin_of.get(k).copied().unwrap_or(k);
                 if fires && !acted.contains(&twin) && r.guard.as_ref().is_none_or(|guard| guard.is_true(c)) {
                     acted.push(twin);
@@ -3943,9 +3925,37 @@ struct RuleState {
     armed: bool,
     next: Option<Instant>,
     last_time: Option<Instant>,
+    sampled_at: Option<Instant>,
+}
+
+fn sampled_rule<'a>(scene: &Scene, states: &'a mut [RuleState], k: usize, now: Instant) -> Option<&'a mut RuleState> {
+    let sampled = matches!(scene.rules[k].when, Trigger::Change(_) | Trigger::Still { .. });
+    // A shared value has one history, even when the active surface changes.
+    // Otherwise the newly opened copy sees only the current volume and never
+    // arms the timeout that must hide the already visible meter.
+    let owner = if sampled { scene.twin_of.get(k).copied().unwrap_or(k) } else { k };
+    let state = &mut states[owner];
+    if sampled && state.sampled_at.replace(now) == Some(now) { return None }
+    Some(state)
 }
 
 impl RuleState {
+    fn changed(&mut self, value: f32) -> bool {
+        self.last_value.replace(value).is_some_and(|before| (before - value).abs() > 0.001)
+    }
+
+    fn still(&mut self, value: f32, duration: Duration, now: Instant, appointments: &mut Vec<Instant>) -> bool {
+        if self.changed(value) {
+            self.armed = true;
+            self.next = Some(now + duration);
+        }
+        match self.next.filter(|_| self.armed) {
+            Some(p) if now >= p => { self.armed = false; true }
+            Some(p) => { appointments.push(p); false }
+            None => false,
+        }
+    }
+
     /// "It has been true for this long": fires once per episode.
     fn sustained(&mut self, true_now: bool, duration: Duration, now: Instant, appointments: &mut Vec<Instant>) -> bool {
         if !true_now {
@@ -3965,6 +3975,10 @@ impl RuleState {
         false
     }
 }
+
+#[cfg(test)]
+#[path = "render/rule_tests.rs"]
+mod rule_tests;
 
 struct Playback {
     gesture: usize,

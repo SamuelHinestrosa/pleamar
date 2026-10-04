@@ -1694,7 +1694,9 @@ pub struct Scene {
     /// names nothing of its own copy, only the scene's facts and props— is the
     /// same rule written twice: for each one, the first of its twins. Only one
     /// of them may act, or a `n = n + 1` counts once per monitor, an `emit` is
-    /// heard twice and a `toggle` undoes itself. Empty: every rule is its own.
+    /// heard twice and a `toggle` undoes itself. Identical `change` and `still`
+    /// rules also share their sampled history across active copies, so a monitor
+    /// handoff cannot lose a timeout or replay an old change. Empty: every rule is its own.
     pub twin_of: Vec<usize>,
     /// Whether it names `cursor.x` or `cursor.y`: only then is the system asked
     /// where the mouse is when it is not over the scene.

@@ -413,3 +413,18 @@ unavailable service state and notification-registration fallback. This is not
 a volume-change latency, physical hotplug, audio-service restart or sound-quality
 test. Automatic CI includes the three callback/deadline unit tests; hardware
 registration and the read-only observation are opt-in local checks.
+
+`render::rule_tests` covers shared `on change`/`on still` history when the active
+monitor copy changes, simultaneous copies, volume bursts, and independent
+per-monitor expressions. The regression previously left Marea's volume meter
+visible indefinitely when the old copy closed before the hide deadline.
+
+For the native renderer, map both diagnostic copies to one chosen monitor:
+
+```powershell
+python scripts/windows-rule-handoff.py --binary target/release/pleamar.exe --screen '\\.\DISPLAY2'
+```
+
+This uses fake volume facts, no audio services, no physical input and no keyboard
+focus request. It checks the hide deadline and return to the original copy.
+The interactive diagnostic is separate from the unit tests run in CI.
