@@ -100,6 +100,24 @@ A shell usually carries variables of its own (`MAREA_ROOT`, `MAREA_AVISOS`…). 
 Python script that reads `/proc/<pid>/environ` into a dict and calls `Popen(env=…,
 start_new_session=True)` puts it back exactly as it was.
 
+## When it stutters on someone else's machine
+
+`pleamar --report` measures every scene running (or only those named:
+`pleamar --report bar`) for 30 seconds (`--seconds N`) while the desktop is used
+as usual, and writes a Markdown file (`~/pleamar-report-….md`, or `--out FILE`)
+with no personal data in it. It holds:
+- the verdict on its first line;
+- frame times (median, p95, p99, worst) against the monitor's period;
+- the late frames and which part of the round they went to: rules, composing,
+  painting, the programs' windows, waiting for the card;
+- the card, the CPU's governor, clock and temperature, and what else took the
+  CPU meanwhile.
+
+A scene going steadily below the monitor's rate is not stuttering: either its
+own `rate:` paces it, which the report names, or the compositor's frame notices
+do. Late frames are counted against that pace. pleamar-wm has the same command
+for its session, `pleamar-wm report`, and Marea's launcher has `marea report`.
+
 ## What to watch out for
 
 - **Quickshell's numbers move** with how long it has been up and what has been

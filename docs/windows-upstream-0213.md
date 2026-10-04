@@ -1,0 +1,51 @@
+# Native integration of pleamar 0.2.13
+
+The Windows branch incorporates upstream `13ed40cc30489bc06d7b884d1362399b90c28f17`
+without discarding the previous port's process ownership, surface geometry,
+text-atlas, hidden-window and cross-monitor volume-timer corrections.
+
+The shared compiler now uses upstream copy-on-write scopes and shared large
+`let` expressions. Startup reuses the compiled scene and dependency list.
+`rgb(r, g, b)`, the vocabulary/editor updates, embedded-window resource cleanup,
+thumbnail deduplication and the Wayland monitor/lock/reserve/drag changes are
+included. The new renderer timing diagnostic is guarded on Linux because it
+references Linux-only deferred buffers. IPC quit retains the Windows event-loop
+shutdown path; other platforms use upstream's wait for the renderer.
+
+Windows implements `media.players` and `media.choose` with actual SMTC sessions.
+The Luau process additions retain the port's cancellation, reload ownership,
+callback identity and opt-in scene-relative working directory. This is a native
+default-feature build, including Luau.
+
+## Executed on Windows 11 x64/MSVC, October 4, 2026
+
+| Check | Result |
+|---|---|
+| `cargo test --lib` | 137 passed, 28 explicit opt-in helpers ignored |
+| `cargo build --release --locked --examples --bin pleamar` | Passed, six existing platform warnings |
+| `python scripts/run-tests.py --binary target/release/pleamar.exe` | 230 checks passed, including 33 documentation scenes |
+| `python scripts/test-compile-memory.py --profiler target/release/examples/allocation-profile.exe` | Five success/failure scenes, 50 compilations each, zero retained requested Rust bytes |
+| `python scripts/windows-media-choice.py --binary target/release/pleamar.exe --fixture target/release/examples/media-fixture.exe --screen '\\.\DISPLAY2'` | Two actual owned SMTC windows: choice, transport target, missing ID refusal, auto reset, closed-player fallback; foreground unchanged |
+| `python scripts/windows-rule-handoff.py --binary target/release/pleamar.exe --screen '\\.\DISPLAY2'` | Native rendered copies, burst deadline and no stale replay; foreground unchanged |
+| `python scripts/windows-run-lifetime.py --binary target/release/pleamar.exe --output RUN_DIRECTORY` | Native PowerShell children stopped on reload, with/without captured output and callbacks |
+| `python scripts/windows-service-reload.py --binary target/release/pleamar.exe --output RUN_DIRECTORY` | Native IPC, saved service/permission edits and six Luau reloads passed |
+
+The new pipe regression writes over a pipe buffer before reading over a pipe
+buffer, checks Unicode stdin/environment and scene-relative cwd, and requires
+stderr delivery before `spawn` completion. It executes on both CI platforms.
+The initial media fixture needed explicit scene event declarations and Boolean
+IPC parsing; after those test-harness corrections the unchanged media backend
+passed the native checks above.
+
+The paired Marea profile passed its 18 isolated logic suites. Its software
+catalogue, update list and confirmation were visually inspected on DISPLAY2
+using read-only WinGet requests and IPC; no physical input was injected. Screenshots
+contained the user's desktop behind transparent surfaces and are not published.
+The catalogue fixture blocks installation calls. This does not validate arbitrary
+third-party installers, UAC interaction or physical device compatibility.
+
+Linux automated CI is reported on the pull request for its exact revision.
+No Linux desktop session, sustained performance benchmark, mixed-DPI hotplug,
+physical Wi-Fi or Bluetooth pairing was performed for this integration. The
+limitations in `windows-validation.md` and the focused Windows capability docs
+still apply. Developed with Codex; this remains a reviewable preview.

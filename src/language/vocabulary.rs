@@ -41,7 +41,7 @@ pub const PROPERTIES: &[(&str, &[&str])] = &[
     ("layout", &["at", "anchor", "gap", "padding", "align", "fill", "glass", "lens", "shine", "refraction", "dispersion", "dome", "ripple", "corner", "show", "opacity", "cursor", "view", "step", "content", "wrap", "size", "grow"]),
 ];
 
-pub const FUNCTIONS: &[&str] = &["min", "max", "abs", "floor", "ceil", "sin", "cos", "clamp", "smooth", "mix", "if", "vel", "sqrt", "pow", "fract", "mod", "sign", "round", "exp", "log", "tan", "atan2", "length", "noise", "random", "pick"];
+pub const FUNCTIONS: &[&str] = &["min", "max", "abs", "floor", "ceil", "sin", "cos", "clamp", "smooth", "mix", "if", "vel", "sqrt", "pow", "fract", "mod", "sign", "round", "exp", "log", "tan", "atan2", "length", "noise", "random", "pick", "rgb"];
 /// Inside a hole of a text.
 pub const TEXT_FUNCTIONS: &[&str] = &["upper", "lower"];
 /// What can go after `on`. Any other word is the name of an event.
@@ -127,7 +127,7 @@ pub const SERVICES: &[(&str, &[&str])] = &[
     ("brightness", &["present", "level"]),
     ("network", &["online", "kind", "name", "strength", "wifi", "networks"]),
     ("bluetooth", &["present", "powered", "discovering", "devices"]),
-    ("media", &["playing", "title", "artist", "album", "length", "position", "rate", "art", "player"]),
+    ("media", &["playing", "title", "artist", "album", "length", "position", "rate", "art", "player", "players"]),
     ("window", &["title", "class", "monitor", "list"]),
     ("thumbnails", &["list", "capturing"]),
     ("workspaces", &["active", "list"]),
@@ -139,7 +139,7 @@ pub const SERVICES: &[(&str, &[&str])] = &[
 
 /// The fields of a service that are lists: each one goes into a model, never into a fact.
 /// `list` is the service's whole report, for the ones that are only a list.
-pub const LIST_FIELDS: &[&str] = &["networks", "devices", "outputs", "inputs", "list"];
+pub const LIST_FIELDS: &[&str] = &["networks", "devices", "outputs", "inputs", "players", "list"];
 
 /// The steps of a path: where it goes through. `curve … via …` is a quadratic Bézier.
 pub const PATH_COMMANDS: &[&str] = &["move", "line", "curve", "close"];

@@ -9,14 +9,18 @@
 //! Nothing is copied until the logic asks for it (`thumbnails.want`, the ids
 //! it shows, or "all"), and then only when the window changes: the compositor
 //! holds each frame until there is something new, and here no more than a few
-//! a second are taken. Each picture is made small (`SIDE` at most) and written
+//! a second are taken. A frame with the same pixels as the last one —Hyprland
+//! fills every frame waiting on a monitor when anything on it redraws— is
+//! nothing new: no file is written and nobody is told. Each picture is made small (`SIDE` at most) and written
 //! as a PNG under `$XDG_RUNTIME_DIR/pleamar/thumbnails`; `picture` is that
 //! path with a version (`…/3.png?12`), which `image … = from` paints and
 //! reloads as it changes.
 //!
-//! A window the compositor stops copying —Hyprland copies only windows that
-//! overlap a monitor, so a column scrolled away, or one on a hidden
-//! workspace, waits for good— keeps its last picture, and `stale` says it.
+//! A window the compositor stops copying keeps its last picture, and `stale`
+//! says it. Only the compositor can say so (the session `stopped`): a frame
+//! that does not come is the same, from here, whether the window did not
+//! change or the compositor will not copy it —Hyprland copies only windows that
+//! overlap a monitor, so a column scrolled away waits for good, not stale—.
 
 use super::SysValue;
 use std::collections::{HashMap, HashSet};
@@ -43,9 +47,6 @@ use wayland_protocols::ext::image_copy_capture::v1::client::{
 const SIDE: u32 = 400;
 /// A window's pictures, at most this often.
 const EVERY: Duration = Duration::from_millis(300);
-/// A frame the compositor has not filled in this long: the window is not
-/// being copied (see the top), its picture is `stale` until it is again.
-const STALE: Duration = Duration::from_secs(2);
 
 /// Which windows to copy.
 #[derive(Default, Clone, PartialEq)]
@@ -117,13 +118,13 @@ struct Capture {
     size: Option<(u32, u32)>,
     formats: Vec<wl_shm::Format>,
     shm: Option<Shm>,
-    frame: Option<(ExtImageCopyCaptureFrameV1, Instant)>,
+    frame: Option<ExtImageCopyCaptureFrameV1>,
     next: Instant,
 }
 
 impl Drop for Capture {
     fn drop(&mut self) {
-        if let Some((f, _)) = self.frame.take() {
+        if let Some(f) = self.frame.take() {
             f.destroy();
         }
         self.session.destroy();
@@ -140,6 +141,8 @@ struct Window {
     app: String,
     picture: String,
     version: u64,
+    /// The pixels of the last picture, to tell a new one from the same again.
+    pixels: u64,
     stale: bool,
     capture: Option<Capture>,
 }
@@ -204,12 +207,11 @@ impl State {
         }
     }
 
-    /// Each round: copies started and stopped as wanted, frames asked for
-    /// when it is their time, and frames that never came said stale.
+    /// Each round: copies started and stopped as wanted, and frames asked for
+    /// when it is their time.
     fn tick(&mut self, qh: &QueueHandle<State>) {
         let (Some(sources), Some(copies), Some(shm)) = (self.sources.clone(), self.copies.clone(), self.shm.clone()) else { return };
         let keys: Vec<u32> = self.windows.keys().copied().collect();
-        let mut changed = false;
         for k in keys {
             let want = { let w = &self.windows[&k]; !w.id.is_empty() && self.wants(w) };
             let w = self.windows.get_mut(&k).unwrap();
@@ -223,11 +225,8 @@ impl State {
                 let session = copies.create_session(&source, copy_manager::Options::empty(), qh, k);
                 Capture { session, _source: source, size: None, formats: Vec::new(), shm: None, frame: None, next: Instant::now() }
             });
-            if let Some((_, since)) = &c.frame {
-                if since.elapsed() > STALE && !w.stale {
-                    w.stale = true;
-                    changed = true;
-                }
+            // One on its way: the compositor holds it until the window changes.
+            if c.frame.is_some() {
                 continue;
             }
             let Some(size) = c.size else { continue };
@@ -245,10 +244,7 @@ impl State {
             frame.attach_buffer(&s.buffer);
             frame.damage_buffer(0, 0, size.0 as i32, size.1 as i32);
             frame.capture();
-            c.frame = Some((frame, Instant::now()));
-        }
-        if changed {
-            self.report();
+            c.frame = Some(frame);
         }
     }
 
@@ -256,7 +252,7 @@ impl State {
     fn taken(&mut self, k: u32) {
         let Some(w) = self.windows.get_mut(&k) else { return };
         let Some(c) = &mut w.capture else { return };
-        if let Some((f, _)) = c.frame.take() {
+        if let Some(f) = c.frame.take() {
             f.destroy();
         }
         c.next = Instant::now() + EVERY;
@@ -264,6 +260,15 @@ impl State {
         let (pw, ph) = s.size;
         // SAFETY: our own mapping, `len` bytes, filled by the compositor before `ready`.
         let px = unsafe { std::slice::from_raw_parts(s.map, s.len) };
+        let pixels = fingerprint(px, s.size);
+        if pixels == w.pixels && w.version > 0 {
+            // The same picture again: nothing to write, and only `stale` to undo.
+            if w.stale {
+                w.stale = false;
+                self.report();
+            }
+            return;
+        }
         let opaque = s.format == wl_shm::Format::Xrgb8888;
         // BGRA premultiplied (ARGB8888 in memory) to RGBA as a PNG wants it.
         let mut rgba = Vec::with_capacity(px.len());
@@ -282,10 +287,25 @@ impl State {
             return;
         }
         w.version += 1;
+        w.pixels = pixels;
         w.picture = format!("{}?{}", path.display(), w.version);
         w.stale = false;
         self.report();
     }
+}
+
+/// What tells two pictures apart, quickly: a window's frame is megabytes, and
+/// all of them come again whenever the monitor redraws.
+fn fingerprint(px: &[u8], (w, h): (u32, u32)) -> u64 {
+    let mut f = ((w as u64) << 32 | h as u64).wrapping_mul(0x9e37_79b9_7f4a_7c15);
+    let mut words = px.chunks_exact(8);
+    for c in &mut words {
+        f = (f.rotate_left(5) ^ u64::from_le_bytes(c.try_into().unwrap())).wrapping_mul(0x9e37_79b9_7f4a_7c15);
+    }
+    for &b in words.remainder() {
+        f = (f.rotate_left(5) ^ b as u64).wrapping_mul(0x9e37_79b9_7f4a_7c15);
+    }
+    f
 }
 
 static CONTROL: OnceLock<(Connection, Arc<Mutex<State>>)> = OnceLock::new();
@@ -396,7 +416,7 @@ impl Dispatch<ExtForeignToplevelListV1, ()> for State {
     fn event(e: &mut Self, _: &ExtForeignToplevelListV1, ev: toplevel_list::Event, _: &(), _: &Connection, _: &QueueHandle<Self>) {
         if let toplevel_list::Event::Toplevel { toplevel } = ev {
             e.seq += 1;
-            e.windows.insert(key(&toplevel), Window { handle: toplevel, seq: e.seq, id: String::new(), title: String::new(), app: String::new(), picture: String::new(), version: 0, stale: false, capture: None });
+            e.windows.insert(key(&toplevel), Window { handle: toplevel, seq: e.seq, id: String::new(), title: String::new(), app: String::new(), picture: String::new(), version: 0, pixels: 0, stale: false, capture: None });
         }
     }
 
@@ -473,7 +493,7 @@ impl Dispatch<ExtImageCopyCaptureFrameV1, u32> for State {
                 // Another size coming (it says so in the session), or a frame
                 // lost: asked for again a little later.
                 if let Some(c) = e.windows.get_mut(k).and_then(|w| w.capture.as_mut()) {
-                    if let Some((f, _)) = c.frame.take() {
+                    if let Some(f) = c.frame.take() {
                         f.destroy();
                     }
                     c.next = Instant::now() + EVERY;

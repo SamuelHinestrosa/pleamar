@@ -27,19 +27,42 @@ macro_rules! complete {
 }
 
 static MANAGER: Mutex<Option<Manager>> = Mutex::new(None);
+static CHOSEN: Mutex<String> = Mutex::new(String::new());
 
 #[path = "windows_media_art.rs"]
 mod artwork;
 
-fn session() -> Result<Option<Session>> {
+fn manager() -> Result<Manager> {
     let manager = {
         let mut manager = MANAGER.lock().unwrap();
         if manager.is_none() { *manager = Some(complete!(Manager::RequestAsync())?); }
         manager.as_ref().unwrap().clone()
     };
-    let sessions = manager.GetSessions().inspect_err(|_| { *MANAGER.lock().unwrap() = None; })?;
-    if sessions.Size()? == 0 { return Ok(None); }
-    manager.GetCurrentSession().or_else(|_| sessions.GetAt(0)).map(Some)
+    Ok(manager)
+}
+
+fn sessions() -> Result<(Manager, Vec<Session>)> {
+    let manager = manager()?;
+    let list = manager.GetSessions().inspect_err(|_| { *MANAGER.lock().unwrap() = None; })?;
+    let sessions = (0..list.Size()?).map(|i| list.GetAt(i)).collect::<Result<Vec<_>>>()?;
+    Ok((manager, sessions))
+}
+
+fn selected(manager: &Manager, sessions: &[Session]) -> Option<Session> {
+    let mut chosen = CHOSEN.lock().unwrap();
+    if !chosen.is_empty() {
+        if let Some(session) = sessions.iter().find(|s| s.SourceAppUserModelId().is_ok_and(|id| id.to_string() == *chosen)) {
+            return Some(session.clone());
+        }
+        // A closed player releases the explicit choice; new sessions can take over.
+        chosen.clear();
+    }
+    manager.GetCurrentSession().ok().or_else(|| sessions.first().cloned())
+}
+
+fn session() -> Result<Option<Session>> {
+    let (manager, sessions) = sessions()?;
+    Ok(selected(&manager, &sessions))
 }
 
 pub(super) fn unavailable(error: &str) -> SysValue {
@@ -49,6 +72,7 @@ pub(super) fn unavailable(error: &str) -> SysValue {
         ("title".into(), SysValue::Text(String::new())), ("artist".into(), SysValue::Text(String::new())),
         ("album".into(), SysValue::Text(String::new())),
         ("art".into(), SysValue::Text(String::new())),
+        ("players".into(), SysValue::List(Vec::new())),
         ("can_toggle".into(), SysValue::Bool(false)), ("can_next".into(), SysValue::Bool(false)),
         ("can_previous".into(), SysValue::Bool(false)),
     ])
@@ -81,18 +105,31 @@ impl Controls {
 }
 
 pub fn media() -> Result<SysValue> {
-    let Some(session) = session()? else {
+    let (manager, sessions) = sessions()?;
+    let Some(session) = selected(&manager, &sessions) else {
         return Ok(unavailable(""));
     };
     let properties = complete!(session.TryGetMediaPropertiesAsync())?;
     let controls = Controls::read(&session)?;
     let player = session.SourceAppUserModelId()?.to_string();
+    let pinned = CHOSEN.lock().unwrap().clone();
+    let players = sessions.iter().filter_map(|s| {
+        let id = s.SourceAppUserModelId().ok()?.to_string();
+        let playing = s.GetPlaybackInfo().and_then(|p| p.PlaybackStatus()).is_ok_and(|s| s == Status::Playing);
+        Some(SysValue::Map(vec![
+            ("name".into(), SysValue::Text(id.clone())),
+            ("chosen".into(), SysValue::Bool(id == pinned)),
+            ("id".into(), SysValue::Text(id)),
+            ("playing".into(), SysValue::Bool(playing)),
+        ]))
+    }).collect();
     let title = properties.Title()?.to_string();
     let artist = properties.Artist()?.to_string();
     let album = properties.AlbumTitle()?.to_string();
     let art = artwork::read(&properties, [&player, &title, &artist, &album]);
     let level = volume::read(&player);
     Ok(SysValue::Map(vec![
+        ("players".into(), SysValue::List(players)),
         ("can_volume".into(), SysValue::Bool(level.is_ok())),
         ("volume".into(), SysValue::Num(level.as_ref().copied().unwrap_or(0.0))),
         ("volume_error".into(), SysValue::Text(level.err().unwrap_or_default())),
@@ -109,6 +146,17 @@ pub fn media() -> Result<SysValue> {
 }
 
 pub fn command(name: &str, args: &[SysValue]) -> std::result::Result<(), String> {
+    if name == "media.choose" {
+        let [SysValue::Text(id)] = args else { return Err("media.choose takes a player identifier, or an empty string for automatic selection".into()); };
+        if !id.is_empty() {
+            let (_, sessions) = sessions().map_err(|e| e.to_string())?;
+            if !sessions.iter().any(|s| s.SourceAppUserModelId().is_ok_and(|v| v.to_string() == *id)) {
+                return Err("the selected media player is no longer available".into());
+            }
+        }
+        *CHOSEN.lock().unwrap() = id.clone();
+        return Ok(());
+    }
     if name == "media.volume" {
         let [SysValue::Text(player), SysValue::Num(value)] = args else { return Err("media.volume takes a player identifier and level".into()); };
         if player.is_empty() || !value.is_finite() || !(0.0..=1.0).contains(value) { return Err("invalid media player or volume".into()); }
@@ -165,6 +213,8 @@ mod tests {
         assert!(command("media.pause_typo", &[]).is_err());
         assert!(command("media.toggle", &[SysValue::Num(1.0)]).is_err());
         assert!(command("media.next", &[SysValue::Text(String::new())]).is_err());
+        assert!(command("media.choose", &[]).is_err());
+        assert!(command("media.choose", &[SysValue::Num(1.0)]).is_err());
     }
 
     #[test]

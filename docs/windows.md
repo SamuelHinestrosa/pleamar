@@ -537,6 +537,21 @@ Absence of frames or hardware counters is not a successful rendering benchmark.
 
 ## Per-player volume and bounded filename matching
 
+With the 0.2.13 upstream integration, `media.players` lists Windows SMTC
+sessions as `{id, name, playing, chosen}`. `media.choose(id)` pins the observed
+session and subsequent controls/volume to it. An empty string restores Windows'
+automatic selection; closing the selected player also releases the choice.
+An unknown ID fails without changing the selection. `chosen` denotes an explicit
+choice, not the automatically active player. Windows application identities are
+used as names when a friendly name is not available; separate browser tabs are
+not guaranteed to expose separate identities.
+
+`run` supports upstream inline `input` and `env` options while retaining
+scene-relative `cwd`, hidden consoles and owned child lifetimes. `spawn` accepts
+the same options as its fifth argument plus `errors=true` for streamed stderr;
+both streams finish before the exit callback. Inline input is written concurrently
+with output draining, so large bidirectional exchanges do not deadlock.
+
 `media.state` additionally returns `can_volume`, `volume` (0–1) and
 `volume_error`. `media.volume(player, level)` resolves the current SMTC player
 again and changes only matching Core Audio output sessions. Packaged process

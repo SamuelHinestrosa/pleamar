@@ -144,7 +144,9 @@ scene Name {
 - **Inside a layout (`row`/`column`) a child must say how much room it takes.**
   Wrap loose shapes in `group { size: w, h; … }`.
 - **`if()` and `mix()` work with colours too**: `if(urgent, amber, mint)`,
-  `mix(ink, mint, open)` —a comparison works as `t`—.
+  `mix(ink, mint, open)` —a comparison works as `t`—. A colour the logic
+  works out at runtime (a palette from the wallpaper) is `rgb(r, g, b)` over
+  three facts, 0 to 1: no file to rewrite, no reload.
 - **Text with holes** is `text "{a} · {b}"`, where `a` and `b` are live texts or
   facts. For a number with decimals, `text number(expr, 2, " %")`.
 - **A surface does not grow with what it holds, and a shadow needs room.**

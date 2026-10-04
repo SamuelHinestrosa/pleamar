@@ -357,6 +357,11 @@ impl PlatformWindow for WaylandWindow {
             return false;
         }
         let Some((output, (x, y))) = d.output_and_position() else { return false };
+        // A monitor that went away (sleep, unplugged) leaves its handle behind, and asking
+        // the compositor to photograph it is a fatal protocol error ("invalid output").
+        if !output.is_alive() || !OUTPUTS.lock().unwrap().values().any(|o| o == &output) {
+            return false;
+        }
         if d.in_flight.swap(true, Ordering::Relaxed) {
             return false;
         }
@@ -598,7 +603,10 @@ impl State {
                 continue;
             }
             let layer = self.layers.create_layer_surface(qh, wl, level, Some("pleamar"), Some(output));
-            layer.set_anchor(anchor_edges(p.anchor, p.width == 0, p.height == 0));
+            let reserves = p.exclusive_zone > 0 || p.reserve_while.is_some();
+            let stretch = Stretch { width: p.width == 0, height: p.height == 0, monitor: if reserves { info.logical_size } else { None } };
+            let (edges, size) = placement(p.anchor, stretch, (p.width, height));
+            layer.set_anchor(edges);
             // The second one on the same monitor, below the first: it's for trying things out.
             let m = p.margin;
             let margin = [m[0] + k as i32 * (height as i32 + 12), m[1], m[2], m[3]];
@@ -606,10 +614,10 @@ impl State {
             // Noted down, in case the scene decides to move it to another edge while running.
             if p.anchor_from.is_some() || p.level_while.is_some() || p.reserve_while.is_some() {
                 if let Some(c) = MOVABLE_LAYERS.get() {
-                    c.placed.lock().unwrap().push((which, layer.clone(), margin, (p.width == 0, p.height == 0)));
+                    c.placed.lock().unwrap().push((which, layer.clone(), margin, stretch));
                 }
             }
-            layer.set_size(p.width, height);
+            layer.set_size(size.0, size.1);
             // With a condition, none until the render says it holds.
             layer.set_exclusive_zone(if p.reserve_while.is_some() { 0 } else { p.exclusive_zone });
             // If the keyboard depends on something (`exclusive while open`), it's born without it.
@@ -624,13 +632,14 @@ impl State {
             let surface = self.wgpu_surface_for(layer.wl_surface());
             let output_name = self.outputs.info(output).and_then(|i| i.name).unwrap_or_default();
             let backdrop = Some(BackdropTarget::new(id, Some((output.clone(), output_name)), BackdropKind::Layer));
-            let layer_placement = Some((anchor_edges(p.anchor, p.width == 0, p.height == 0), margin));
+            let layer_placement = Some((edges, margin));
             self.placed.push(Placed { id, which, role: Role::Layer(layer), output: output.clone(), viewport, _fractional_scale: fractional_scale, scale: 1.0, size: (0, 0), pending: Some((surface, name.clone(), mhz)), layer_placement, backdrop });
             }
         }
     }
 
     fn remove_from(&mut self, output: &wl_output::WlOutput) {
+        OUTPUTS.lock().unwrap().retain(|_, o| o != output);
         if let Some(c) = LOCKS.get() {
             c.monitors.lock().unwrap().retain(|(s, _, _)| s != output);
         }
@@ -716,6 +725,8 @@ struct Locks {
     /// Wayland thread keeps them up to date, and one is needed per face.
     monitors: Mutex<Vec<(wl_output::WlOutput, String, i32)>>,
     engaged: Mutex<Option<Engaged>>,
+    /// For the plain covers of the monitors the scene is not on.
+    shm: Option<WlShm>,
 }
 
 struct Engaged {
@@ -740,17 +751,20 @@ struct LockFace {
     /// Where it looks on the plane: the scene's origin minus whatever is needed
     /// for its box to end up centred. It's known when configuring it.
     view_origin: (f32, f32),
+    /// A monitor the scene is not on (`screens:`): it gets a black cover, and
+    /// this is its buffer once configured.
+    cover: Option<Option<(WlShmPool, WlBuffer, std::os::fd::OwnedFd, (u32, u32))>>,
     surface: smithay_client_toolkit::session_lock::SessionLockSurface,
 }
 
 static LOCKS: std::sync::OnceLock<Locks> = std::sync::OnceLock::new();
 
-/// `Some((bounds, origin))` engages the lock of surface `which`; `None`
+/// `Some((bounds, origin, screens))` engages the lock of surface `which`; `None`
 /// releases it. The render calls it, having already released what it painted before releasing it.
-pub fn lock_screen(which: usize, what: Option<((u32, u32), (f32, f32))>) {
+pub fn lock_screen(which: usize, what: Option<((u32, u32), (f32, f32), Screens)>) {
     let Some(c) = LOCKS.get() else { return };
     let mut engaged = c.engaged.lock().unwrap();
-    let Some((bounds, origin)) = what else {
+    let Some((bounds, origin, screens)) = what else {
         if let Some(e) = engaged.take() {
             e.lock.unlock();
             drop(e);
@@ -770,16 +784,32 @@ pub fn lock_screen(which: usize, what: Option<((u32, u32), (f32, f32))>) {
         }
     };
     // One face per monitor, and all at once: until they're all there, the
-    // compositor doesn't consider the session locked.
-    let faces = c
-        .monitors
-        .lock()
-        .unwrap()
+    // compositor doesn't consider the session locked. The monitors the scene is
+    // not on (`screens:`) are covered all the same, in black.
+    let monitors = c.monitors.lock().unwrap();
+    let shown: Vec<bool> = monitors
         .iter()
-        .map(|(output, name, mhz)| {
+        .enumerate()
+        .map(|(number, (_, name, _))| match &screens {
+            Screens::All => true,
+            Screens::Named(n) => n.iter().any(|x| x == name),
+            Screens::Number(x) => *x == number,
+        })
+        .collect();
+    // On none of them (a monitor unplugged), on all: a lock with nowhere to type
+    // the password would be no way back.
+    let everywhere = !shown.contains(&true);
+    let faces = monitors
+        .iter()
+        .zip(shown)
+        .map(|((output, name, mhz), shows)| {
             let wl = c.compositor.create_surface(&c.qh);
             let id = next_surface_id();
             let surface = lock.create_lock_surface(wl, output, &c.qh);
+            if !shows && !everywhere && c.shm.is_some() {
+                // Far from anything of the scene: the mouse over it touches nothing.
+                return LockFace { id, pending: None, viewport: None, _fractional_scale: None, name: name.clone(), mhz: *mhz, view_origin: (-1e7, -1e7), cover: Some(None), surface };
+            }
             let viewport = c.viewporter.as_ref().map(|v| v.get_viewport(surface.wl_surface(), &c.qh, Silent));
             let fractional_scale = c.fractional_scales.as_ref().map(|m| m.get_fractional_scale(surface.wl_surface(), &c.qh, ScaleFor(id)));
             let paints = unsafe {
@@ -790,9 +820,10 @@ pub fn lock_screen(which: usize, what: Option<((u32, u32), (f32, f32))>) {
                     })
                     .ok()
             };
-            LockFace { id, pending: paints, viewport, _fractional_scale: fractional_scale, name: name.clone(), mhz: *mhz, view_origin: origin, surface }
+            LockFace { id, pending: paints, viewport, _fractional_scale: fractional_scale, name: name.clone(), mhz: *mhz, view_origin: origin, cover: None, surface }
         })
         .collect();
+    drop(monitors);
     *engaged = Some(Engaged { which, bounds, origin, lock, faces });
     let _ = c.connection.flush();
 }
@@ -815,13 +846,41 @@ fn anchor_edges(anchor: SurfaceAnchor, full_width: bool, full_height: bool) -> A
         | if full_height { Anchor::TOP | Anchor::BOTTOM } else { Anchor::empty() }
 }
 
+/// How a surface stretches: the whole width, the whole height of its monitor,
+/// and —for one that is both and keeps a reserve— the monitor's logical size.
+#[derive(Clone, Copy)]
+struct Stretch {
+    width: bool,
+    height: bool,
+    monitor: Option<(i32, i32)>,
+}
+
+/// The edges it sticks to, and the size to ask for. A surface as big as the
+/// monitor that keeps a reserve (`size: full, full; anchor: left; reserve: 68`)
+/// cannot stick to all four edges, where layer-shell ignores any reserve: it
+/// sticks to its own edge and the two across it, and asks for the monitor's
+/// size along the fourth.
+fn placement(anchor: SurfaceAnchor, s: Stretch, asked: (u32, u32)) -> (Anchor, (u32, u32)) {
+    if let (true, true, Some((w, h))) = (s.width, s.height, s.monitor) {
+        let (w, h) = (w.max(0) as u32, h.max(0) as u32);
+        match anchor {
+            SurfaceAnchor::Left => return (Anchor::LEFT | Anchor::TOP | Anchor::BOTTOM, (w, 0)),
+            SurfaceAnchor::Right => return (Anchor::RIGHT | Anchor::TOP | Anchor::BOTTOM, (w, 0)),
+            SurfaceAnchor::Top => return (Anchor::TOP | Anchor::LEFT | Anchor::RIGHT, (0, h)),
+            SurfaceAnchor::Bottom => return (Anchor::BOTTOM | Anchor::LEFT | Anchor::RIGHT, (0, h)),
+            _ => {}
+        }
+    }
+    (anchor_edges(anchor, s.width, s.height), asked)
+}
+
 /// The layers that can change edge, to reach them without going through the
 /// Wayland thread. `set_anchor` and `set_margin` are requests and work while
 /// running: there's no need to create the surface again, which is what left
 /// Marea unable to choose a corner while recording.
 struct MovableLayers {
     connection: Connection,
-    placed: Mutex<Vec<(usize, LayerSurface, [i32; 4], (bool, bool))>>,
+    placed: Mutex<Vec<(usize, LayerSurface, [i32; 4], Stretch)>>,
 }
 static MOVABLE_LAYERS: std::sync::OnceLock<MovableLayers> = std::sync::OnceLock::new();
 
@@ -867,11 +926,16 @@ pub fn rezone(which: usize, zone: i32) {
 pub fn reanchor(which: usize, anchor: SurfaceAnchor) {
     let Some(c) = MOVABLE_LAYERS.get() else { return };
     let mut any = false;
-    for (k, layer, margin, zero_width) in c.placed.lock().unwrap().iter() {
+    for (k, layer, margin, stretch) in c.placed.lock().unwrap().iter() {
         if *k != which {
             continue;
         }
-        layer.set_anchor(anchor_edges(anchor, zero_width.0, zero_width.1));
+        let (edges, size) = placement(anchor, *stretch, (0, 0));
+        layer.set_anchor(edges);
+        // As big as the monitor: from one edge to another, the size along the fourth changes too.
+        if stretch.width && stretch.height {
+            layer.set_size(size.0, size.1);
+        }
         layer.set_margin(margin[0], margin[1], margin[2], margin[3]);
         layer.commit();
         any = true;
@@ -1062,6 +1126,7 @@ pub fn run_event_loop(wanted: Vec<Surface>, extra_height: u32, instance: wgpu::I
         fractional_scales: state.fractional_scales.clone(),
         monitors: Mutex::default(),
         engaged: Mutex::default(),
+        shm: globals.bind::<WlShm, _, _>(&qh, 1..=1, Silent).ok(),
     });
     if state.viewporter.is_none() || state.fractional_scales.is_none() {
         eprintln!("warning: the compositor gives no fractional scale; it will paint at whatever whole scale it says");
@@ -1180,6 +1245,23 @@ impl smithay_client_toolkit::session_lock::SessionLockHandler for State {
         let (which, bounds, origin) = (e.which, e.bounds, e.origin);
         let Some(face) = e.faces.iter_mut().find(|k| k.surface.wl_surface() == surface.wl_surface()) else { return };
         let size = conf.new_size;
+        // A cover: black, as big as its monitor. Zeroed memory is black in XRGB.
+        if let (Some(cover), Some(shm)) = (face.cover.as_mut(), c.shm.as_ref()) {
+            let len = size.0 as usize * size.1 as usize * 4;
+            if cover.as_ref().is_none_or(|(_, _, _, was)| *was != size) && len > 0 {
+                let Some(fd) = memfd(len) else { return };
+                let pool = shm.create_pool(std::os::fd::AsFd::as_fd(&fd), len as i32, &self.qh, Silent);
+                let buffer = pool.create_buffer(0, size.0 as i32, size.1 as i32, size.0 as i32 * 4, wl_shm::Format::Xrgb8888, &self.qh, Silent);
+                *cover = Some((pool, buffer, fd, size));
+            }
+            if let Some((_, b, _, _)) = cover {
+                let wl = face.surface.wl_surface();
+                wl.attach(Some(b), 0, 0);
+                wl.damage_buffer(0, 0, size.0 as i32, size.1 as i32);
+                wl.commit();
+            }
+            return;
+        }
         if let Some(v) = &face.viewport {
             v.set_destination(size.0 as i32, size.1 as i32);
         }

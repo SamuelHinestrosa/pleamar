@@ -3,7 +3,7 @@
 **What this note is.** The complete, exact description of what the language accepts. [The language — the guide](09-language-v0.md) is the guide —read straight through, with the reason behind each thing—; this is where a doubt gets looked up. It comes from the compiler (`src/language/`), not from memory, and **it cannot fall behind without `./run-tests.sh` saying so**: its whole examples compile, and its vocabulary (§17) is compared against the one the compiler consults.
 
 ```sh
-pleamar --version                  # pleamar 0.2.8 · language 0.2
+pleamar --version                  # pleamar 0.2.13 · language 0.2
 pleamar --check scene.plm      # reads it, with whatever it imports; says whether it is fine, exits
 ./run-tests.sh                        # tests/*.plm, examples/*.plm and the examples in this note
 ```
@@ -337,6 +337,7 @@ service tray { list: icons }
 | `network` | `networks`: `{ ssid, strength, secure, known, active }`, the strongest first |
 | `bluetooth` | `devices`: `{ name, address, paired, connected, battery, icon }` |
 | `audio` | `outputs` · `inputs`: `{ id, name, default }` |
+| `media` | `players`: `{ id, name, playing, chosen }`, by bus name |
 | `window` | `list`: `{ id, title, class, monitor, active, minimized }` (compositors with wlr-foreign-toplevel) |
 | `workspaces` | `list`: `{ id, name, windows, monitor, active }` |
 | `apps` | `list`: `{ name, exec, icon, id, wmclass }` |
@@ -351,6 +352,14 @@ out. `nets.count` is how many fit, `nets.total` how many came.
 `{ id, name, default }`. `sys.call("audio.default", id)` switches to one, and the
 report comes back with the new `default` set. A desktop sound panel needs this:
 without it only the volume of whatever was already there can be moved.
+
+**Which player.** `media` reports one player: the one playing, or the first.
+`players`, above, is all of them, and `name` is what each calls itself, which
+tells two phones through KDE Connect apart where `player` cannot.
+`sys.call("media.choose", id)` pins one: it is reported, and `media.toggle`,
+`next` and `previous` go to it, while it is there; `sys.call("media.choose", "")`
+goes back to whichever is playing. The choice is the process's, not the scene's.
+`playerctld` is left out: it only mirrors another player.
 
 **Saying goodbye.** `session` is commands only —it reports nothing— and it is
 what a desktop needs to close itself: `sys.call("session.lock")`, `"suspend"`,
@@ -410,9 +419,9 @@ surface { size: 460, 320;  kind: window;  title: "pleamar · settings" }
 box { from: 0, 0;  size: screen.width, screen.height;  color: coal }
 ```
 
-**`surface`**: `size: width, height` (`full` as the width is the whole monitor, and as the height too: `size: full, full` is all of it; a named surface publishes what it really measures as `name.width` and `name.height`, which with `full` is the only way to know it) · `kind:` `panel` `window` `lock` · `title:` (a window only) · `anchor:` `top` `bottom` `left` `right` `top_left` `top_right` `bottom_left` `bottom_right` `center` — or **the name of a fact whose values are anchors** (`fact corner: top_left | top_right = top_right`, `anchor: corner`), and then it moves from edge to edge while it runs, without being recreated · `margin: n` or `top, right, bottom, left` · `level:` `background` `bottom` `top` `overlay` — or two, **`level: top, overlay while open`**: the first as a rule, the second while that holds, changed on the fly (a panel above the rest while it has something open, so a full-screen catcher can sit under it; in its place the rest of the time, so a full-screen video still covers it) · `reserve: n` (the room windows leave it), or **`reserve: n while expr`**, only while that holds (a shell that lets you choose whether windows go under it or leave it its strip) · `rate: 60` (at most that many frames a second, on any monitor: what a scene costs is then the same on a 60 Hz screen and on a 165 Hz one; without it, the monitor's) · `screens: all` or `"HDMI-A-1", "DP-3"` · `keyboard:` `none` `on_demand` `exclusive`, and with `while expr` it only asks for it while that is true. With `on_demand` the compositor hands the keyboard over on a click; so when the scene does `focus` on a field without having the keyboard —a search opened from a shortcut, which nobody clicked— it is asked for as `exclusive` for as long as the `while` holds, and let go when it stops: that is how a launcher behaves, and Esc closing it is what gives it back.
+**`surface`**: `size: width, height` (`full` as the width is the whole monitor, and as the height too: `size: full, full` is all of it; a named surface publishes what it really measures as `name.width` and `name.height`, which with `full` is the only way to know it) · `kind:` `panel` `window` `lock` · `title:` (a window only) · `anchor:` `top` `bottom` `left` `right` `top_left` `top_right` `bottom_left` `bottom_right` `center` — or **the name of a fact whose values are anchors** (`fact corner: top_left | top_right = top_right`, `anchor: corner`), and then it moves from edge to edge while it runs, without being recreated · `margin: n` or `top, right, bottom, left` · `level:` `background` `bottom` `top` `overlay` — or two, **`level: top, overlay while open`**: the first as a rule, the second while that holds, changed on the fly (a panel above the rest while it has something open, so a full-screen catcher can sit under it; in its place the rest of the time, so a full-screen video still covers it) · `reserve: n` (the room windows leave it; a surface `size: full, full` anchored to one edge keeps it too —a bar and its panels on one surface as tall as the monitor—: it sticks to that edge and the two across it, not to all four, where the compositor would ignore any reserve), or **`reserve: n while expr`**, only while that holds (a shell that lets you choose whether windows go under it or leave it its strip) · `rate: 60` (at most that many frames a second, on any monitor: what a scene costs is then the same on a 60 Hz screen and on a 165 Hz one; without it, the monitor's) · `screens: all` or `"HDMI-A-1", "DP-3"` · `keyboard:` `none` `on_demand` `exclusive`, and with `while expr` it only asks for it while that is true. With `on_demand` the compositor hands the keyboard over on a click; so when the scene does `focus` on a field without having the keyboard —a search opened from a shortcut, which nobody clicked— it is asked for as `exclusive` for as long as the `while` holds, and let go when it stops: that is how a launcher behaves, and Esc closing it is what gives it back.
 
-**A lock screen: `kind: lock`.** It is not a surface painted over everything: it is `ext-session-lock`, where the *compositor* guarantees that nothing else is seen or touched while it lasts, on every monitor. So it does not exist until its `open:` is true —which is mandatory: without it the session would be locked from the start— and it goes when `open:` stops being true. Its `size:` is the box that gets centred on each monitor; what lies around it shows too, so paint the backdrop large. `lock.held`, a name that always exists, is 1 once the compositor **confirms** the session is locked: a drawn padlock certifies nothing, this does. The password goes in an `input` with `secret: true` and is checked by the logic, `sys.ask("auth.check", text.password)`. Inside it, `screen.width` and `screen.height` are what its monitor measures —the same as its own `name.width` and `name.height`—, not its `size:`.
+**A lock screen: `kind: lock`.** It is not a surface painted over everything: it is `ext-session-lock`, where the *compositor* guarantees that nothing else is seen or touched while it lasts, on every monitor. So it does not exist until its `open:` is true —which is mandatory: without it the session would be locked from the start— and it goes when `open:` stops being true. Its `size:` is the box that gets centred on each monitor; what lies around it shows too, so paint the backdrop large. `lock.held`, a name that always exists, is 1 once the compositor **confirms** the session is locked: a drawn padlock certifies nothing, this does. The password goes in an `input` with `secret: true` and is checked by the logic, `sys.ask("auth.check", text.password)`. It has one copy per monitor, and its `name.width` and `name.height` are the **largest** of them, each way: a backdrop that big, centred on the box, covers every monitor, a portrait one beside a landscape one included. `screens:` puts it only on those monitors (`screens: "DP-2"`): the protocol still wants every monitor covered, so the others get plain black, and the pointer over them touches nothing. If none of those is plugged in, it goes on all of them: a lock with nowhere to type the password would be no way back.
 
 ```plm
 language 0.1
@@ -454,6 +463,7 @@ From weakest to strongest: `or` · `and` · `not` · `< > <= >= == !=` (they do 
 | `tan(deg)` `atan2(y, x)` | tangent, and the angle of the point (x, y): **in degrees**, like `sin` and `cos`. `atan2(pointer.y - cy, pointer.x - cx)` is where the mouse is, seen from (cx, cy) |
 | `length(x, y)` | how long the vector (x, y) is: `length(pointer.x - cx, pointer.y - cy)` is how far the mouse is |
 | `pick(i, a, b, c…)` | the one at place `i` (0 is the first; rounded, and kept within the list). With an enum fact it reads as a table: `pick(mode, 40, 150, 260)`. It also chooses **colours** —`color: pick(mode, #9ed6bd, #f0b85a, #ef7a66)`— and **texts** —`text pick(skin, "Liquid", "Light liquid", "Classic")`, each one translated like any other, or the name of a live text—: one text instead of three with `show:` |
+| `rgb(r, g, b)` | a **colour** from three numbers, 0 to 1 each, any of which can be a fact or a property: `let ink = rgb(pal_r, pal_g, pal_b)`. Where `mix` and `pick` choose among colours the scene already has, this one lets the logic hand over a colour that did not exist when the scene was read (a palette taken from the wallpaper), by setting three facts, without a file to rewrite and a scene to reload. Only as a colour: it is not a number |
 | `fract(x)` `mod(a, b)` | the part after the point, and the remainder **always positive**: `mod(-1, 3)` is 2, which is what something going round in a circle needs |
 | `round(x)` `sign(x)` | to the nearest integer; −1, 0 or 1 |
 | `noise(x)` `noise(x, y)` | smooth noise from −1 to 1: the same input, the same value, and it never jumps. `noise(time)` is a wobble that never repeats; `noise(k * 0.3, time)` a different one for each `k` |
@@ -1410,7 +1420,7 @@ properties.popup: at size open
 properties.children: move
 properties.grid: at columns gap width row show opacity
 properties.layout: at anchor gap padding align fill glass lens shine refraction dispersion dome ripple corner show opacity cursor view step content wrap size grow
-functions: min max abs floor ceil sin cos clamp smooth mix if vel sqrt pow fract mod sign round exp log tan atan2 length noise random pick
+functions: min max abs floor ceil sin cos clamp smooth mix if vel sqrt pow fract mod sign round exp log tan atan2 length noise random pick rgb
 text_functions: upper lower
 triggers: press release scroll drag hold enter leave hover away idle key submit focus blur drop carry change still
 effects: toggle emit impulse play focus blur close promote fullscreen minimize restore float tile launch send swap workspace pick dock
@@ -1430,7 +1440,7 @@ services.battery: present percent charging
 services.brightness: present level
 services.network: online kind name strength wifi networks
 services.bluetooth: present powered discovering devices
-services.media: playing title artist album length position rate art player
+services.media: playing title artist album length position rate art player players
 services.window: title class monitor list
 services.thumbnails: list capturing
 services.workspaces: active list

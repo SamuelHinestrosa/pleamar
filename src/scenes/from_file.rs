@@ -7,8 +7,27 @@ use std::sync::mpsc::Sender;
 use std::time::Duration;
 
 /// Reads and compiles a scene. The error already comes with its file, its line and its arrow.
+/// A scene compiled a moment ago to look at it (`script_for`) is not compiled again.
 pub fn read(path: &str) -> Result<Scene, String> {
-    crate::language::read_file(path).map(|(e, _)| e)
+    let ready = READY.lock().unwrap().take();
+    match ready {
+        Some((p, e)) if p == path => Ok(e),
+        _ => compile(path),
+    }
+}
+
+/// A big scene costs hundreds of MB to compile (pleamar-wm's session): at
+/// start it was compiled three times —to see whether it had logic, to show
+/// it, and to know which files to watch—, two of them at once.
+static READY: std::sync::Mutex<Option<(String, Scene)>> = std::sync::Mutex::new(None);
+/// The files the last compilation of each scene read: what to watch.
+static FILES: std::sync::Mutex<Option<(String, Vec<std::path::PathBuf>)>> = std::sync::Mutex::new(None);
+
+fn compile(path: &str) -> Result<Scene, String> {
+    let (e, mut files) = crate::language::read_file(path)?;
+    files.extend(e.attachments.iter().cloned());
+    *FILES.lock().unwrap() = Some((path.to_owned(), files));
+    Ok(e)
 }
 
 pub struct FromFile {
@@ -52,8 +71,18 @@ pub fn script_for(path: &str, tx: Sender<ToRender>, to_logic: Sender<Event>, blo
     // or if the scene asks for some service: the script also sets that up and hands it out,
     // even if there is not a single line of Luau.
     #[cfg(feature = "luau")]
-    if std::path::Path::new(&logic).is_file() || read(path).is_ok_and(|e| !e.plugins.is_empty() || !e.services.is_empty()) {
-        return Box::new(crate::logic_luau::LuauScript::new(path, &logic, tx, to_logic, blocked));
+    {
+        if std::path::Path::new(&logic).is_file() {
+            return Box::new(crate::logic_luau::LuauScript::new(path, &logic, tx, to_logic, blocked));
+        }
+        // Compiled to look at it, and kept for the script to show it.
+        if let Ok(e) = compile(path) {
+            let wants_logic = !e.plugins.is_empty() || !e.services.is_empty();
+            *READY.lock().unwrap() = Some((path.to_owned(), e));
+            if wants_logic {
+                return Box::new(crate::logic_luau::LuauScript::new(path, &logic, tx, to_logic, blocked));
+            }
+        }
     }
     let _ = (tx, to_logic, blocked, logic);
     Box::new(FromFile::new(path))
@@ -176,13 +205,17 @@ pub fn watch(path: String, to_render: Sender<ToRender>, to_logic: Sender<Event>)
             // The scene and whatever it imports: touching a library also reloads it.
             // The scene, its libraries and whatever they bring attached —the SVGs of their
             // figures—: you draw the hat, save, and it is on.
-            let mut watched: Vec<std::path::PathBuf> = crate::language::read_file(&path).map_or_else(
-                |_| vec![path.clone().into()],
-                |(e, mut f)| {
-                    f.extend(e.attachments.iter().cloned());
-                    f
-                },
-            );
+            // Those the scene's compilation read, if it has already been: not compiled again for this.
+            let known = FILES.lock().unwrap().take().filter(|(p, _)| *p == path).map(|(_, f)| f);
+            let mut watched: Vec<std::path::PathBuf> = known.unwrap_or_else(|| {
+                crate::language::read_file(&path).map_or_else(
+                    |_| vec![path.clone().into()],
+                    |(e, mut f)| {
+                        f.extend(e.attachments.iter().cloned());
+                        f
+                    },
+                )
+            });
             let date = |v: &[std::path::PathBuf]| v.iter().map(|r| std::fs::metadata(r).and_then(|m| m.modified()).ok()).collect::<Vec<_>>();
             let mut last = date(&watched);
             loop {
@@ -315,5 +348,33 @@ mod tests {
         // The count is one rule written twice; the press is each copy's own zone.
         assert_eq!(twins.len(), 1, "twins: {:?}", scene.twin_of);
         assert!(matches!(scene.rules[twins[0]].when, crate::scene::Trigger::On(_)));
+    }
+
+    /// A big `let` is computed in a property: read in every monitor's copy,
+    /// it is one property, or the rules naming it differ per copy and each
+    /// copy's acts —a `toggle` undoes itself—.
+    #[test]
+    fn a_big_let_is_one_property_whatever_the_copies() {
+        let dir = std::env::temp_dir().join(format!("pleamar-twin-lets-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("lets.plm");
+        std::fs::write(&path, "scene Lets {
+    surface { size: 200, 40; anchor: top; screens: each max 2 }
+    event go
+    fact a = 0
+    fact b = 0
+    fact t = 0
+    repeat i in 0..1 {
+        let big = max(a, b) + (a - b) * 3 + min(a * 2, b) + abs(a)
+        on go { t = if(big > 1, 1 - t, t) }
+    }
+}
+").unwrap();
+        let scene = super::read(path.to_str().unwrap()).unwrap();
+        let _ = std::fs::remove_dir_all(&dir);
+        let bound = scene.behaviors.iter().filter(|b| matches!(b, crate::scene::Behavior::Bind { .. })).count();
+        assert_eq!(bound, 1, "one property for the let, not one per copy");
+        let twins: Vec<usize> = (0..scene.rules.len()).filter(|&k| scene.twin_of[k] != k).collect();
+        assert_eq!(twins.len(), 1, "twins: {:?}", scene.twin_of);
     }
 }

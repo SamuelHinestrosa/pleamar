@@ -350,7 +350,7 @@ pub fn run_with(options: Vec<String>) {
                     let _ = to_logic.send(Event::Submit(scene::intern(who), rest.to_owned()));
                     tx.send(ToRender::Text(scene::intern(who), rest.to_owned()))
                 }
-                "quit" => { if !platform::request_quit() { quit() } Ok(()) },
+                "quit" => { if !platform::request_quit() { quit_after_render(tx) } Ok(()) },
                 _ => {
                     eprintln!("orders · I don't understand '{line}'");
                     return Some(format!("? I don't understand '{}': emit, fact, text, submit, focus, get, probe, quit", line.trim()));
@@ -434,14 +434,7 @@ pub fn run_with(options: Vec<String>) {
             }
             if platform::request_quit() { return; }
             // Quitting goes through the render so that it closes its last measurement cycle.
-            let _ = tx.send(ToRender::Quit);
-            // Until the render has let the card go (a few seconds at most):
-            // leaving while it still works with it brought the driver down with it.
-            let asked = std::time::Instant::now();
-            while !RENDER_DONE.load(std::sync::atomic::Ordering::SeqCst) && asked.elapsed() < Duration::from_secs(3) {
-                std::thread::sleep(Duration::from_millis(10));
-            }
-            quit();
+            quit_after_render(&tx);
         });
     }
 
@@ -464,6 +457,17 @@ pub fn run_with(options: Vec<String>) {
 /// The process goes away whole —the destruction order does not deserve code in a
 /// prototype—, but not without first stopping what the logic left running, nor
 /// what a platform handed over still has working with the card (`provide_before_quit`).
+/// Quitting goes through the render, and waits until it has let the card go (a few
+/// seconds at most): leaving while it still works with it brought the driver down with it.
+fn quit_after_render(tx: &std::sync::mpsc::Sender<ToRender>) -> ! {
+    let _ = tx.send(ToRender::Quit);
+    let asked = std::time::Instant::now();
+    while !RENDER_DONE.load(std::sync::atomic::Ordering::SeqCst) && asked.elapsed() < Duration::from_secs(3) {
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    quit()
+}
+
 fn quit() -> ! {
     #[cfg(target_os = "windows")]
     platform::finish_recordings();

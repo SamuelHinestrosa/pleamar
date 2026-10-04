@@ -20,7 +20,7 @@
 | [Language reference — version 0.1](11-language-reference.md) | **The reference**: lexicon, EBNF grammar, every element with what it accepts, and the version number. Its examples are compiled by `./run-tests.sh` |
 | [Known limitations](08-limitations.md) | Everything that is half-done, with its severity, to cross off one by one |
 
-## Status (19 Sep 2026)
+## Status (4 Oct 2026)
 
 - ✅ **The renderer animates on its own.** With the logic blocked for 600 ms, 38 frames at ~17 ms. The same trial in QML: a 600 ms gap.
 - ✅ **A scene is data.** Properties, expressions, draw list, behaviors and zones. Two scenes (Marea, island) on the same renderer.
@@ -53,7 +53,9 @@
 - ✅ **Several windows in one process** (`surface panel { … }`), **lists that scroll with the wheel** (`view:`), **services that do not depend on Hyprland** (`ext-workspace`, `wlr-foreign-toplevel`) and a core with nothing of any particular shell in it.
 - ✅ **The messages speak English**: the 210 a pleamar user sees, with their "did you mean…?".
 - ✅ **One surface per monitor, with its own state** (`screens: each`): `examples/bar` is now one bar per screen, each with its own active workspace.
-- ⬜ session lock, IME, and showing a screen inside the scene: see note 07. Ordinary windows are done (`kind: window`).
+- ✅ **Lock screens** (`kind: lock`, ext-session-lock) and **every window of the desktop with its picture** (the `thumbnails` service).
+- ✅ **Measuring on someone else's machine**: `pleamar --report` measures the scenes running while they use the desktop, and writes what it saw —frame times, where the late ones went, the card, the CPU— to a file to send us.
+- ⬜ IME, and a whole screen live inside the scene: see note 07. Ordinary windows are done (`kind: window`).
 
 ## Next step
 

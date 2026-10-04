@@ -40,10 +40,10 @@ Instantiated types, with the number of times they appear across the two configur
 | `IpcHandler` | 4 | ✅ `pleamar --say`, with `emit`, `fact`, `text`, `get` |
 | `IconImage` | 3 | ✅ `image x = icon "…"` |
 | `SystemClock` | 2 | ✅ `clock` service, and `service clock as now { … }` with no logic at all |
-| `ScreencopyView` | 2 | ⬜ seeing what is on a screen or in a window |
+| `ScreencopyView` | 2 | 🟡 a window: the `thumbnails` service, a small picture of each window of the desktop that follows it as it changes (ext-image-copy-capture). A whole screen, live, not yet |
 | `NotificationServer` | 2 | ✅ `notifications` service |
 | `FloatingWindow` | 2 | ✅ `kind: window`, with its title; and what it draws is measured against the window's own size |
-| `WlSessionLock` | 1 | ⬜ session lock |
+| `WlSessionLock` | 1 | ✅ `kind: lock` (ext-session-lock), on every monitor or those `screens:` names |
 | `LazyLoader` | 1 | ⬜ · §2 |
 | `GlobalShortcut` | 1 | 🟡 a compositor bind that calls `--say` |
 | `PwObjectTracker` | 1 | ✅ `audio` service (through `wpctl`, though, not native) |
@@ -67,7 +67,7 @@ Exclusive keyboard, clicking outside a popup, real dragging, the wheel, and noti
 
 ### ⚪ The rest
 
-Session lock (S7); `ScreencopyView`; IME (E7).
+A whole screen live in the scene (`ScreencopyView`; windows are done, as thumbnails); IME (E7).
 
 ## 3. What pleamar has and Quickshell does not
 

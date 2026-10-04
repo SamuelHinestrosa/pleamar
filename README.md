@@ -74,7 +74,10 @@ So if you are on Hyprland and just want a new bar, pleamar is all you need.
 - **Luau logic in a sandbox**, on its own thread, behind permissions you approve —
   a plugin runs with what you allow it, never with everything you can do.
 - **System services with no code**: clock, audio, battery, network, media,
-  notifications, tray, windows, brightness, files — named in the scene and filled.
+  notifications, tray, windows and their thumbnails, brightness, files — named
+  in the scene and filled.
+- **Lock screens** on `ext-session-lock`, where the compositor guarantees nothing
+  else is seen while it lasts.
 - **Live reload**: save the file and it reloads without losing what was in motion;
   save it broken and the last good scene stays, with a band saying where.
 - **Its own compositor**: [pleamar-wm] runs other programs' windows inside a scene,
@@ -320,9 +323,9 @@ per plugin, one per service, and a workshop thread for text and images.
 # What is missing
 
 Measured against two real Quickshell configs (648 QML files between them), in
-[`docs/07-whats-missing.md`](docs/07-whats-missing.md): session lock, showing a screen
-inside the scene, input methods for Japanese or Chinese, and list copies that are
-born and die on their own.
+[`docs/07-whats-missing.md`](docs/07-whats-missing.md): a live view of a whole
+screen inside the scene (windows come as thumbnails), input methods for Japanese
+or Chinese, and list copies that are born and die on their own.
 
 Known limitations, **each one with its plan to fix it**, in
 [`docs/08-limitations.md`](docs/08-limitations.md). They are written down as

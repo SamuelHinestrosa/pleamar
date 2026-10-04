@@ -42,7 +42,7 @@ pub enum SysValue {
 ///  · `battery`    → `{ present, percent, charging }`
 ///  · `network`    → `{ online, kind = "wired" | "wifi" | "none", name, strength, wifi, networks }` (see `networkmanager`)
 ///  · `bluetooth`  → `{ present, powered, discovering, devices }` (see `bluez`)
-///  · `media`      → `{ playing, title, artist, album, length, position, rate, art, player }`, or `{ player = "" }` if nothing is playing
+///  · `media`      → `{ playing, title, artist, album, length, position, rate, art, player, players }`, or `{ player = "" }` if nothing is playing
 ///  · `clock`      → `{ hour, minute, second, day, month, year, weekday, time, date }`, when the minute changes
 ///  · `clock.seconds` → the same, every second
 ///  · `files:x.json` → the text of that file when it changes
@@ -287,9 +287,10 @@ pub fn popup(k: usize, what: Option<([i32; 4], (f32, f32))>) {
 /// On Wayland it's `ext-session-lock`: the compositor guarantees it, not the drawing.
 /// On Windows it will be `LockWorkStation`, which brings its own screen; on macOS, the
 /// screen saver with password.
-pub fn lock_screen(which: usize, what: Option<((u32, u32), (f32, f32))>) {
+pub fn lock_screen(which: usize, what: Option<((u32, u32), (f32, f32), crate::scene::Screens)>) {
     #[cfg(target_os = "linux")]
     wayland::lock_screen(which, what);
+    #[cfg(not(target_os = "linux"))]
     let _ = (which, what);
 }
 

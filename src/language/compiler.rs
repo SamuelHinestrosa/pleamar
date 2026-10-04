@@ -11,6 +11,7 @@ use super::vocabulary as vocab;
 use super::{closest_match, CompileError};
 use crate::scene::*;
 use std::collections::HashMap;
+use std::rc::Rc;
 use std::time::Duration;
 
 type R<T> = Result<T, CompileError>;
@@ -174,7 +175,7 @@ struct Scope {
     springs: HashMap<String, Spring>,
     /// Mark of a child that comes from outside the component (`children`): it is read with
     /// the names of whoever wrote it, not with the ones inside.
-    outer_scope: Option<Vec<Scope>>,
+    outer_scope: Option<Vec<Rc<Scope>>>,
     /// The copy of a library component: from which file.
     library: Option<usize>,
     /// From a `strict` library: in here only what is asked for, what is
@@ -200,7 +201,7 @@ pub struct Library {
 
 /// What a copy brings for the slots of its component, and the scope of whoever wrote it.
 struct InstanceChildren<'a> {
-    outer: Vec<Scope>,
+    outer: Vec<Rc<Scope>>,
     /// Per slot ("" is the one with no name): what goes inside, and whether it has already been placed.
     slots: Vec<(String, Vec<&'a Entry>, bool)>,
 }
@@ -296,7 +297,7 @@ struct Compiler<'a> {
     zblock: Option<u16>,
     /// The rules are left for the end: that way they can name shapes that are
     /// painted further down.
-    rules: Vec<(&'a Node, Vec<Scope>)>,
+    rules: Vec<(&'a Node, Vec<Rc<Scope>>)>,
     errors: Vec<CompileError>,
     /// Each name that is declared, with its location: for the editor.
     declared: Vec<Symbol>,
@@ -306,9 +307,16 @@ struct Compiler<'a> {
     /// The statement being read (`fact`, `prop`…), to know what class
     /// whatever is declared inside it belongs to.
     current_class: String,
-    scopes: Vec<Scope>,
+    scopes: Vec<Rc<Scope>>,
     components: HashMap<String, Component<'a>>,
     copies: usize,
+    /// The property each big `let` is computed in (see `let`), by what it
+    /// computes: the same `let` read again in another monitor's copy is the
+    /// same property, not one more. Only the first copy's are kept: those are
+    /// the ones the render always moves (a copy whose monitor is not there is not).
+    let_props: HashMap<String, PropId>,
+    /// Reading a monitor's copy other than the first.
+    later_copy: bool,
     /// How many groups with effects are open around what is being read.
     effects_depth: usize,
     /// Inside a `row` or a `column`, a child does not say where it goes: it goes to its slot.
@@ -363,7 +371,7 @@ pub fn compile<'a>(tree: &'a [Entry], files: &'a [String], dirs: &'a [std::path:
             other => unreachable!("'{other}' is in the vocabulary, but it has no stiffness or damping"),
         })).collect(),
         under: Vec::new(), candidates: Vec::new(), zparents: vec![0], next_zparent: 1, zblock: None, rules: Vec::new(), errors: Vec::new(), declared: Vec::new(), used: Default::default(), current_class: String::new(),
-        scrolls: Vec::new(), row_scrolls: Default::default(), pending_surfaces: Vec::new(), pending_levels: Vec::new(), pending_reserves: Vec::new(), hover_mentions: Default::default(), zone_springs: Vec::new(), pending_anchors: Vec::new(), files, dirs, strict_files, libraries, boundary_of: HashMap::new(), permissions_of: HashMap::new(), pass: 0, next_origin: 0.0, values: HashMap::new(), ambiguous: Default::default(), instance_children: Vec::new(), from_library: Default::default(), unrequested: Default::default(), unwatched: Default::default(), in_letters: Default::default(), scopes: Vec::new(), components: HashMap::new(), copies: 0, effects_depth: 0, in_slot: false, last_size: None, imposed_measure: None, pending_keyboard: None, prop_sites: HashMap::new(),
+        scrolls: Vec::new(), row_scrolls: Default::default(), pending_surfaces: Vec::new(), pending_levels: Vec::new(), pending_reserves: Vec::new(), hover_mentions: Default::default(), zone_springs: Vec::new(), pending_anchors: Vec::new(), files, dirs, strict_files, libraries, boundary_of: HashMap::new(), permissions_of: HashMap::new(), pass: 0, next_origin: 0.0, values: HashMap::new(), ambiguous: Default::default(), instance_children: Vec::new(), from_library: Default::default(), unrequested: Default::default(), unwatched: Default::default(), in_letters: Default::default(), scopes: Vec::new(), components: HashMap::new(), copies: 0, let_props: HashMap::new(), later_copy: false, effects_depth: 0, in_slot: false, last_size: None, imposed_measure: None, pending_keyboard: None, prop_sites: HashMap::new(),
     };
     // Two facts that always exist: what the surface really measures. The
     // render sets them when the compositor configures it.
@@ -407,7 +415,7 @@ pub fn compile<'a>(tree: &'a [Entry], files: &'a [String], dirs: &'a [std::path:
         if pass == 1 {
             let instances: Vec<usize> = o.e.surfaces.iter().filter(|s| matches!(s.screens, Screens::Number(_))).map(|s| s.instance).collect();
             for k in instances {
-                o.scopes.push(o.screen_scope(k));
+                o.scopes.push(Rc::new(o.screen_scope(k)));
                 o.declare_measures_early(body);
                 o.scopes.pop();
             }
@@ -444,14 +452,16 @@ pub fn compile<'a>(tree: &'a [Entry], files: &'a [String], dirs: &'a [std::path:
                     scope.exprs.insert(n.to_owned(), Expr::Sub(Box::new(o.facts[n].e()), Box::new(Expr::K(off))));
                 }
             }
-            o.scopes.push(scope);
+            o.scopes.push(Rc::new(scope));
             // Each copy's groups with `z:` are sorted among themselves.
             o.zparents.push(o.next_zparent);
             o.next_zparent += 1;
             let t = Transform { translate: (ox.into(), oy.into()), ..Transform::at((0.0.into(), 0.0.into())) };
             o.e.paint(Instr::Transform(Some(t.clone())));
             o.under.push(t);
+            o.later_copy = o.e.surfaces.get(k).is_some_and(|s| s.instance > 0);
             o.group(this_pass.clone().into_iter());
+            o.later_copy = false;
             o.zparents.pop();
             o.under.pop();
             o.e.paint(Instr::Transform(None));
@@ -509,7 +519,7 @@ pub fn compile<'a>(tree: &'a [Entry], files: &'a [String], dirs: &'a [std::path:
         for (k, instance) in copies {
             let per_copy = matches!(o.e.surfaces[k].screens, Screens::Number(_));
             if per_copy {
-                o.scopes.push(o.surface_scope(&o.e.surfaces[k].name, instance));
+                o.scopes.push(Rc::new(o.surface_scope(&o.e.surfaces[k].name, instance)));
             }
             let mut c = Cur::new(tokens, l, col);
             match o.expr(&mut c) {
@@ -867,7 +877,7 @@ impl<'a> Compiler<'a> {
                 }
             };
             if g != interpolated {
-                if let Some(e) = self.scopes.last_mut() {
+                if let Some(e) = self.scopes.last_mut().map(Rc::make_mut) {
                     e.alias.insert(format!("{interpolated}.{part}"), name);
                 }
             }
@@ -906,7 +916,7 @@ impl<'a> Compiler<'a> {
         // everything that comes after it would look for a text that does not exist.
         let from_scene = self.scopes.last().is_some_and(|e| e.suffix.starts_with("#screen"))
             && (self.texts.contains_key(&interpolated) || self.facts.contains_key(&interpolated) || self.props.contains_key(&interpolated) || self.lets.contains_key(&interpolated));
-        match self.scopes.last_mut() {
+        match self.scopes.last_mut().map(Rc::make_mut) {
             Some(e) if !e.suffix.is_empty() && !local.contains('$') && !from_scene => {
                 let g = format!("{interpolated}{}", e.suffix);
                 e.alias.insert(interpolated, g.clone());
@@ -1329,6 +1339,8 @@ impl<'a> Compiler<'a> {
                     None => x.un(Un::Noise),
                 }
             }
+            // A colour, not a number: it is read where a colour is wanted (see `color`).
+            "rgb" => return Err(CompileError::at(l, col, "`rgb(r, g, b)` makes a colour, not a number: it goes where a colour does, `color: rgb(r, g, b)` or `let tint = rgb(r, g, b)`")),
             other => unreachable!("'{other}' is in the vocabulary, but `function` cannot compute it"),
         })
     }
@@ -1366,6 +1378,20 @@ impl<'a> Compiler<'a> {
                 let [b0, b1, b2] = b;
                 Ok([a0.mix(b0, t.clone()), a1.mix(b1, t.clone()), a2.mix(b2, t)])
             }
+            // `rgb(r, g, b)`: a colour from three numbers, 0 to 1 each, which can be anything that is
+            // a number: a fact, a property, a sum. It is how the logic gives the scene a colour (a
+            // palette taken from a wallpaper) without writing a file for the scene to reload.
+            Some(TokenKind::Id(m)) if m == "rgb" && matches!(c.tokens.get(c.i + 1).map(|x| &x.kind), Some(TokenKind::Sym("("))) => {
+                c.i += 1;
+                c.expect_sym("(")?;
+                let r = self.expr(c)?;
+                c.expect_sym(",")?;
+                let g = self.expr(c)?;
+                c.expect_sym(",")?;
+                let b = self.expr(c)?;
+                c.expect_sym(")")?;
+                Ok([r, g, b])
+            }
             // `pick(i, #a, #b, #c)`: the one at place i, channel by channel.
             Some(TokenKind::Id(m)) if m == "pick" => {
                 c.i += 1;
@@ -1396,7 +1422,7 @@ impl<'a> Compiler<'a> {
                 let [b0, b1, b2] = b;
                 Ok([b0.mix(a0, cond.clone()), b1.mix(a1, cond.clone()), b2.mix(a2, cond)])
             }
-            _ => c.error("expected a colour here: #151616, the name of one, mix(#a, #b, how much) or if(condition, #a, #b)"),
+            _ => c.error("expected a colour here: #151616, the name of one, mix(#a, #b, how much), if(condition, #a, #b) or rgb(r, g, b)"),
         }
     }
 
@@ -1832,7 +1858,7 @@ impl<'a> Compiler<'a> {
                     let local = c.id("a name for the measure")?;
                     let name = self.declare(&local);
                     let part = self.interpolate_in(&local);
-                    if let Some(e) = self.scopes.last_mut() {
+                    if let Some(e) = self.scopes.last_mut().map(Rc::make_mut) {
                         e.with_parts.insert(part);
                     }
                     let (w, h) = self.e.measured(interned(&name));
@@ -1875,6 +1901,7 @@ impl<'a> Compiler<'a> {
                         }
                         match c.tokens.get(k).map(|x| &x.kind) {
                             Some(TokenKind::Color(_)) => true,
+                            Some(TokenKind::Id(n)) if n == "rgb" && matches!(c.tokens.get(k + 1).map(|x| &x.kind), Some(TokenKind::Sym("("))) => true,
                             Some(TokenKind::Id(n)) => self.colors.contains_key(n) || self.scopes.iter().any(|e| e.colors.contains_key(n)),
                             _ => false,
                         }
@@ -1882,7 +1909,7 @@ impl<'a> Compiler<'a> {
                     if is_color {
                         let k = self.color(&mut c)?;
                         c.expect_end()?;
-                        match self.scopes.last_mut() {
+                        match self.scopes.last_mut().map(Rc::make_mut) {
                             Some(e) => e.colors.insert(name, k),
                             None => self.colors.insert(name, k),
                         };
@@ -1904,15 +1931,29 @@ impl<'a> Compiler<'a> {
                     // property computed once would be the first one's for
                     // all of them. It stays substituted, which is what makes it each one's own.
                     let per_copy = self.scopes.is_empty() && e.reads(|p| self.e.facts.get(p.0 as usize).is_some_and(|(n, _)| n.starts_with("screen.")));
+                    // The same one in every monitor's copy —it reads nothing of
+                    // its copy— is one property: a property per copy was the
+                    // same work once per monitor, and a rule naming it read
+                    // differently in each copy, so it acted once per copy (a
+                    // `toggle` in it undid itself).
                     let e = if e.node_count() > 8 && !per_copy {
-                        self.copies += 1;
-                        let p = self.e.prop_with(interned(&format!("·{name}{}", self.copies)), 0.0, Spring::LIVELY);
-                        self.e.behaviors.push(Behavior::Bind { prop: p, to: e });
-                        p.e()
+                        let key = format!("{e:?}");
+                        match self.let_props.get(&key) {
+                            Some(p) => p.e(),
+                            None => {
+                                self.copies += 1;
+                                let p = self.e.prop_with(interned(&format!("·{name}{}", self.copies)), 0.0, Spring::LIVELY);
+                                self.e.behaviors.push(Behavior::Bind { prop: p, to: e });
+                                if !self.later_copy {
+                                    self.let_props.insert(key, p);
+                                }
+                                p.e()
+                            }
+                        }
                     } else {
                         e
                     };
-                    match self.scopes.last_mut() {
+                    match self.scopes.last_mut().map(Rc::make_mut) {
                         Some(env) => env.exprs.insert(name.clone(), e.clone()),
                         None => self.lets.insert(name.clone(), e.clone()),
                     };
@@ -1924,7 +1965,7 @@ impl<'a> Compiler<'a> {
                     if per_copy && self.scopes.is_empty() {
                         let copies: Vec<usize> = self.e.surfaces.iter().filter(|s| s.name.is_empty() && matches!(s.screens, Screens::Number(_))).map(|s| s.instance).collect();
                         for k in copies {
-                            self.scopes.push(self.screen_scope(k));
+                            self.scopes.push(Rc::new(self.screen_scope(k)));
                             let mut c2 = Cur::new(&n.head[3..], n.line, n.col);
                             let own = self.expr(&mut c2);
                             self.scopes.pop();
@@ -2212,7 +2253,7 @@ impl<'a> Compiler<'a> {
                     PEEKED.with(|m| m.set((n.line, n.col)));
                     self.current_class = word_at(0).unwrap_or("row").to_owned();
                     let name = self.declare(local);
-                    if let Some(e) = self.scopes.last_mut() {
+                    if let Some(e) = self.scopes.last_mut().map(Rc::make_mut) {
                         e.with_parts.insert(local.to_owned());
                     }
                     for part in ["width", "height", "count"] {
@@ -2231,7 +2272,7 @@ impl<'a> Compiler<'a> {
 
     /// What the copy in progress brings for the slot this `children` names, and the scope
     /// of whoever wrote it. A slot is placed once.
-    fn take_slot(&mut self, n: &Node) -> R<(Vec<&'a Entry>, Vec<Scope>)> {
+    fn take_slot(&mut self, n: &Node) -> R<(Vec<&'a Entry>, Vec<Rc<Scope>>)> {
         let which = match n.head.get(1).map(|f| &f.kind) {
             Some(TokenKind::Id(p)) => p.clone(),
             None => String::new(),
@@ -3502,13 +3543,13 @@ impl<'a> Compiler<'a> {
                 // With `screens: each`, each copy has its own: its properties, its zones
                 // and its rules. `$screen` is its number, and `screen.name` that of its monitor.
                 if per_screen {
-                    self.scopes.push(self.surface_scope(&name, instance));
+                    self.scopes.push(Rc::new(self.surface_scope(&name, instance)));
                 } else if lock {
                     let mut env = Scope::default();
                     for part in ["width", "height"] {
                         env.alias.insert(format!("screen.{part}"), format!("{name}.{part}"));
                     }
-                    self.scopes.push(env);
+                    self.scopes.push(Rc::new(env));
                 }
                 let t = Transform { translate: (ox.into(), oy.into()), ..Transform::at((0.0.into(), 0.0.into())) };
                 self.e.paint(Instr::Transform(Some(t.clone())));
@@ -4052,6 +4093,9 @@ impl<'a> Compiler<'a> {
             Some(TokenKind::Id(x)) if x == "mix" && matches!(c.tokens.get(c.i + 2).map(|y| &y.kind), Some(TokenKind::Color(_))) => {
                 env.colors.insert(p.clone(), self.color(c)?);
             }
+            Some(TokenKind::Id(x)) if x == "rgb" && matches!(c.tokens.get(c.i + 1).map(|y| &y.kind), Some(TokenKind::Sym("("))) => {
+                env.colors.insert(p.clone(), self.color(c)?);
+            }
             Some(TokenKind::Id(x)) if alone && (self.colors.contains_key(x) || self.scopes.iter().any(|e| e.colors.contains_key(x))) => {
                 env.colors.insert(p.clone(), self.color(c)?);
             }
@@ -4088,7 +4132,7 @@ impl<'a> Compiler<'a> {
         // whoever wrote it, so it is as deep as the component it goes into; by
         // depth alone, closing `Card` took the rules of the `Switch` inside it
         // as its own, and `on press touch` looked for `touch` in `Card`.
-        let marks = |v: &[Scope]| v.iter().map(|e| e.suffix.clone()).collect::<Vec<_>>();
+        let marks = |v: &[Rc<Scope>]| v.iter().map(|e| e.suffix.clone()).collect::<Vec<_>>();
         let ours = marks(&now);
         for r in &mut self.rules[from..] {
             if r.1.len() == now.len() && marks(&r.1) == ours {
@@ -4206,7 +4250,7 @@ impl<'a> Compiler<'a> {
             return Err(CompileError::at(l, col, format!("'{name}' has nowhere to put what goes inside it: its component is missing a `children`")));
         }
         self.instance_children.push(InstanceChildren { outer: self.scopes.clone(), slots });
-        self.scopes.push(env);
+        self.scopes.push(Rc::new(env));
         self.declare_measures_early(body);
         // How much room it takes is said by the component itself: `size: 300, 44`. If it fails, the scope
         // is closed all the same: otherwise, what comes after would be read as if it were in here.
@@ -4270,7 +4314,7 @@ impl<'a> Compiler<'a> {
     fn open_iteration(&mut self, var: &str, v: i64) {
         let mut env = Scope { suffix: format!("#{var}{v}"), ..Default::default() };
         env.exprs.insert(var.to_owned(), Expr::K(v as f32));
-        self.scopes.push(env);
+        self.scopes.push(Rc::new(env));
     }
 
     /// `row bar ~calm { at: x, y; gap: 8; padding: 6; align: center; fill: #222; corner: 12; …children… }`
@@ -4414,7 +4458,7 @@ impl<'a> Compiler<'a> {
         });
 
         // The children, with the `repeat`s already unrolled.
-        let mut children: Vec<(&'a Node, Vec<Scope>)> = Vec::new();
+        let mut children: Vec<(&'a Node, Vec<Rc<Scope>>)> = Vec::new();
         self.unroll(n.body.as_deref().unwrap_or(&[]).iter().collect(), &mut Vec::new(), &mut children)?;
 
         struct Placed {
@@ -4474,7 +4518,7 @@ impl<'a> Compiler<'a> {
         }
         // The children come out of a queue: after each one (except the first) its separator slips in,
         // which is seen if that child is there and some of the earlier ones too.
-        let mut queue: std::collections::VecDeque<(&'a Node, Vec<Scope>, Option<Expr>)> = children.into_iter().map(|(h, e)| (h, e, None)).collect();
+        let mut queue: std::collections::VecDeque<(&'a Node, Vec<Rc<Scope>>, Option<Expr>)> = children.into_iter().map(|(h, e)| (h, e, None)).collect();
         let mut presences: Vec<Expr> = Vec::new();
         while let Some((child, scopes, forced)) = queue.pop_front() {
             let mark = self.rules.len();
@@ -4598,7 +4642,7 @@ impl<'a> Compiler<'a> {
                             env.exprs.insert(v.clone(), Expr::K(presences.len() as f32));
                         }
                         let sep = *sep;
-                        queue.push_front((sep, vec![env], Some(presence.clone() * before.min(Expr::K(1.0)))));
+                        queue.push_front((sep, vec![Rc::new(env)], Some(presence.clone() * before.min(Expr::K(1.0)))));
                     }
                     presences.push(presence);
                     placed_items.push(placed);
@@ -4763,7 +4807,7 @@ impl<'a> Compiler<'a> {
             PEEKED.with(|m| m.set((n.line, n.col)));
             self.current_class = if is_row { "row".to_owned() } else { "column".to_owned() };
             let name = self.declare(&local);
-            if let Some(e) = self.scopes.last_mut() {
+            if let Some(e) = self.scopes.last_mut().map(Rc::make_mut) {
                 e.with_parts.insert(local.clone());
             }
             let mut under = self.under.clone();
@@ -4796,7 +4840,7 @@ impl<'a> Compiler<'a> {
                 }
                 self.scrolls.push((name.clone(), *prop, until, step.clone(), spring.unwrap_or(Spring::QUICK), grab));
             }
-            let target = match self.scopes.last_mut() {
+            let target = match self.scopes.last_mut().map(Rc::make_mut) {
                 Some(e) => &mut e.exprs,
                 None => &mut self.lets,
             };
@@ -4824,7 +4868,7 @@ impl<'a> Compiler<'a> {
     }
 
     /// The children of a stack, with each `repeat` unrolled into its iterations.
-    fn unroll(&mut self, entries: Vec<&'a Entry>, scope: &mut Vec<Scope>, children: &mut Vec<(&'a Node, Vec<Scope>)>) -> R<()> {
+    fn unroll(&mut self, entries: Vec<&'a Entry>, scope: &mut Vec<Rc<Scope>>, children: &mut Vec<(&'a Node, Vec<Rc<Scope>>)>) -> R<()> {
         for e in entries {
             let Entry::Node(n) = e else { continue };
             if matches!(n.head.first().map(|f| &f.kind), Some(TokenKind::Id(p)) if p == "repeat") {
@@ -4836,7 +4880,7 @@ impl<'a> Compiler<'a> {
                 for v in from..until {
                     let mut env = Scope { suffix: format!("#{var}{v}"), ..Default::default() };
                     env.exprs.insert(var.clone(), Expr::K(v as f32));
-                    scope.push(env);
+                    scope.push(Rc::new(env));
                     self.unroll(n.body.as_deref().unwrap_or(&[]).iter().collect(), scope, children)?;
                     scope.pop();
                 }
@@ -4846,7 +4890,7 @@ impl<'a> Compiler<'a> {
                 let (from_outside, outside) = self.take_slot(n)?;
                 // Each one takes its place in the stack, and is read with the names of whoever
                 // wrote it. A `repeat` or a `for` from outside unrolls like the ones inside.
-                let mut outer_scope = vec![Scope { outer_scope: Some(outside.clone()), ..Default::default() }];
+                let mut outer_scope = vec![Rc::new(Scope { outer_scope: Some(outside.clone()), ..Default::default() })];
                 let inside = std::mem::replace(&mut self.scopes, outside);
                 let r = self.unroll(from_outside, &mut outer_scope, children);
                 self.scopes = inside;
@@ -4859,7 +4903,7 @@ impl<'a> Compiler<'a> {
                 self.scopes.truncate(self.scopes.len() - scope.len());
                 let (var, model, capacity, from) = head?;
                 for k in 0..capacity {
-                    scope.push(self.for_iteration(&var, &model, k, &from));
+                    scope.push(Rc::new(self.for_iteration(&var, &model, k, &from)));
                     self.unroll(n.body.as_deref().unwrap_or(&[]).iter().collect(), scope, children)?;
                     scope.pop();
                 }
@@ -5093,7 +5137,7 @@ impl<'a> Compiler<'a> {
         if let Some(o) = &opacity {
             self.e.paint(Instr::Opacity(Some(o.clone())));
         }
-        let mut children: Vec<(&'a Node, Vec<Scope>)> = Vec::new();
+        let mut children: Vec<(&'a Node, Vec<Rc<Scope>>)> = Vec::new();
         self.unroll(n.body.as_deref().unwrap_or(&[]).iter().collect(), &mut Vec::new(), &mut children)?;
         let cell_w = (width.clone() - gap.clone() * (columns as f32 - 1.0)) / Expr::K(columns as f32);
         let level = self.under.len();
@@ -5135,7 +5179,7 @@ impl<'a> Compiler<'a> {
             let mut here = Scope::default();
             here.exprs.insert("cell.w".into(), w.clone());
             here.exprs.insert("cell.h".into(), row_given.clone().unwrap_or(Expr::K(0.0)));
-            self.scopes.push(here);
+            self.scopes.push(Rc::new(here));
             let instr = self.e.instrs.len();
             let slot = Transform::at((0.0.into(), 0.0.into())).translate(x, Expr::K(0.0));
             self.e.paint(Instr::Transform(Some(slot.clone())));
@@ -5684,7 +5728,7 @@ impl<'a> Compiler<'a> {
             let mark = self.rules.len();
             let env = self.for_iteration(&var, &model, k, &from);
             let is_present = env.visible.clone().unwrap();
-            self.scopes.push(env);
+            self.scopes.push(Rc::new(env));
             let from = self.candidates.len();
             self.e.paint(Instr::Opacity(Some(is_present.clone())));
             self.group(n.body.as_deref().unwrap_or(&[]).iter());
@@ -5861,7 +5905,7 @@ impl<'a> Compiler<'a> {
         if let Some(v) = payload_name.as_ref() {
             let mut here = Scope::default();
             here.exprs.insert(v.clone(), Expr::Payload);
-            self.scopes.push(here);
+            self.scopes.push(Rc::new(here));
         }
         // `while` works in any rule: it is checked at the moment of firing.
         // (`idle` and `every` have already taken it: in them it also decides whether the time counts.)
