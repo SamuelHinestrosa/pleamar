@@ -359,6 +359,7 @@ tells two phones through KDE Connect apart where `player` cannot.
 `sys.call("media.choose", id)` pins one: it is reported, and `media.toggle`,
 `next` and `previous` go to it, while it is there; `sys.call("media.choose", "")`
 goes back to whichever is playing. The choice is the process's, not the scene's.
+`playerctld` is left out: it only mirrors another player.
 
 **Saying goodbye.** `session` is commands only —it reports nothing— and it is
 what a desktop needs to close itself: `sys.call("session.lock")`, `"suspend"`,

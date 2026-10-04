@@ -32,9 +32,11 @@ fn chosen() -> String {
     CHOSEN.lock().map(|c| c.clone()).unwrap_or_default()
 }
 
+/// Every player on the bus but `playerctld`, which is no player of its own: it mirrors whichever
+/// one was active last, and would show up twice.
 fn players(c: &Connection) -> Vec<String> {
     let Ok(bus) = DBusProxy::new(c) else { return Vec::new() };
-    let mut names: Vec<String> = bus.list_names().unwrap_or_default().into_iter().map(|n| n.to_string()).filter(|n| n.starts_with(PREFIX)).collect();
+    let mut names: Vec<String> = bus.list_names().unwrap_or_default().into_iter().map(|n| n.to_string()).filter(|n| n.starts_with(PREFIX) && n[PREFIX.len()..] != *"playerctld").collect();
     names.sort();
     names
 }
