@@ -72,6 +72,10 @@ searches, reading, opening and saving for later are fine. Never type a
 password or a payment detail; leave that to them. If a page asks for a login
 or a captcha, stop there and say so.
 
+The user can stop you at any moment (the «Stop» on the monitor's pill, or
+`pleamar-wm agent stop`): then whatever you try answers that **the user
+stopped the agent**. Stop there, do not try again, and say where you left it.
+
 When you finish, say what you did, step by step, and what you left for them.
 
 ## Other agents' tools
