@@ -807,6 +807,7 @@ impl LuauScript {
             let text: Option<String> = how.as_ref().and_then(|t| t.get("input").ok());
             let vars = environment(how.as_ref());
             let collect: bool = how.as_ref().and_then(|t| t.get::<Option<bool>>("output").ok().flatten()).unwrap_or(true);
+            let errors: bool = how.as_ref().and_then(|t| t.get::<Option<bool>>("errors").ok().flatten()).unwrap_or(false);
             let id = {
                 let mut c = c.lock().unwrap();
                 c.next += 1;
@@ -840,6 +841,11 @@ impl LuauScript {
                         child.wait_with_output()
                     });
                     match out {
+                        // `{ errors = true }`: what it said on its error output too, after the rest.
+                        Ok(o) if errors && !o.stderr.is_empty() => {
+                            let said = format!("{}\n{}", String::from_utf8_lossy(&o.stdout).trim_end(), String::from_utf8_lossy(&o.stderr).trim_end());
+                            (said.trim().to_owned(), o.status.code().unwrap_or(-1))
+                        }
                         Ok(o) => (String::from_utf8_lossy(&o.stdout).trim_end().to_owned(), o.status.code().unwrap_or(-1)),
                         Err(e) => (e.to_string(), -1),
                     }
