@@ -283,3 +283,7 @@ mod tests {
 #[cfg(test)]
 #[path = "windows_desktop_tests.rs"]
 mod native_tests;
+
+#[cfg(test)]
+#[path = "windows_scene_capture_tests.rs"]
+mod scene_tests;

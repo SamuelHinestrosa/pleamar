@@ -29,8 +29,8 @@ fn keyboard_ready(entry: &Entry) -> Result<(), String> { unsafe {
     if !IsWindowEnabled(entry.identity.window()).as_bool() { return Err("the window is blocked by a dialog; list and look again".into()); }
     // Do not release keys the user is holding, or mix their input with an
     // automation gesture. Retry only after they have released those keys.
-    for key in [VK_SHIFT, VK_CONTROL, VK_MENU, VK_LWIN, VK_RWIN, VK_LBUTTON, VK_RBUTTON, VK_MBUTTON] {
-        if GetAsyncKeyState(key.0 as i32) < 0 { return Err("the user is holding a modifier or mouse button; no input was sent".into()); }
+    for key in [VK_SHIFT, VK_CONTROL, VK_MENU, VK_LWIN, VK_RWIN, VK_LBUTTON, VK_RBUTTON, VK_MBUTTON, VK_XBUTTON1, VK_XBUTTON2, VK_ESCAPE] {
+        if GetAsyncKeyState(key.0 as i32) < 0 { return Err("the user is holding a modifier, mouse button or Escape; input stopped".into()); }
     }
     if GetForegroundWindow() != entry.identity.window() {
         let mut foreground_pid = 0;
@@ -91,7 +91,34 @@ fn move_mouse(point: POINT) -> Result<INPUT, String> {
 }
 fn unobstructed(entry: &Entry, point: POINT) -> Result<(), String> {
     let hit = unsafe { GetAncestor(WindowFromPoint(point), GA_ROOT) };
-    if hit != entry.identity.window() { return Err("another window covers this point; no input was sent".into()); }
+    if hit != entry.identity.window() { return Err("another window covers this point; pointer action stopped".into()); }
+    Ok(())
+}
+fn within_clip(points: &[POINT], clip: RECT) -> Result<(), String> {
+    if points.iter().any(|p| p.x < clip.left || p.x >= clip.right || p.y < clip.top || p.y >= clip.bottom) {
+        return Err("the cursor is confined away from the requested gesture; no buttons or wheel events were sent. Release it in the application that owns it before retrying".into());
+    }
+    Ok(())
+}
+pub(super) fn cursor_clip(points: &[POINT]) -> Result<(), String> {
+    let mut clip = RECT::default();
+    unsafe { GetClipCursor(&mut clip) }.map_err(|error| format!("cannot read cursor confinement: {error}"))?;
+    within_clip(points, clip)
+}
+fn pointer_ready(entry: &Entry, points: &[POINT]) -> Result<(), String> {
+    cursor_clip(points)?;
+    let mut gui = GUITHREADINFO { cbSize: size_of::<GUITHREADINFO>() as u32, ..Default::default() };
+    unsafe { GetGUIThreadInfo(0, &mut gui) }.map_err(|error| format!("cannot determine mouse capture ownership: {error}"))?;
+    if !gui.hwndCapture.is_invalid() && unsafe { GetAncestor(gui.hwndCapture, GA_ROOT) } != entry.identity.window() {
+        return Err("another window has captured the mouse; pointer action stopped".into());
+    }
+    for point in points { unobstructed(entry, *point)?; }
+    Ok(())
+}
+fn at_requested_point(expected: POINT, actual: POINT) -> Result<(), String> {
+    if actual != expected {
+        return Err("the cursor did not reach the requested point; no buttons or wheel events were sent".into());
+    }
     Ok(())
 }
 fn send(inputs: &[INPUT]) -> Result<(), String> {
@@ -185,11 +212,30 @@ pub(super) fn command(name: &str, args: &[SysValue], epoch: u64) -> Result<(), S
     keyboard_ready(&entry)?;
     let current = target(&id)?;
     fresh(&id, &current)?;
-    for p in points { unobstructed(&current, p)?; }
+    if !points.is_empty() { pointer_ready(&current, &points)?; }
     check_epoch(epoch)?;
     if inputs.is_empty() { return Ok(()); }
-    // One insertion prevents another injected gesture interleaving with ours.
-    let result = send(&inputs);
+    let result = (|| {
+        if let Some(first) = points.first() {
+            // A game can confine the shared cursor, or a hook can reject its
+            // movement while SendInput reports acceptance. Never include a
+            // click in the first insertion: check where the cursor arrived.
+            send(&inputs[..1])?;
+            let mut actual = POINT::default();
+            unsafe { GetCursorPos(&mut actual) }.map_err(|error| error.to_string())?;
+            at_requested_point(*first, actual)?;
+            check_epoch(epoch)?;
+            keyboard_ready(&entry)?;
+            let current = target(&id)?;
+            fresh(&id, &current)?;
+            pointer_ready(&current, &points)?;
+            check_epoch(epoch)?;
+            // Keep the remaining balanced gesture in one insertion.
+            send(&inputs[1..])
+        } else {
+            send(&inputs)
+        }
+    })();
     CATALOG.with(|c| { c.borrow_mut().shots.remove(&id); });
     result
 }
@@ -197,6 +243,24 @@ pub(super) fn command(name: &str, args: &[SysValue], epoch: u64) -> Result<(), S
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test] fn pointer_gestures_reject_confinement_to_another_display() {
+        let secondary = POINT { x: -1600, y: 400 };
+        let primary = RECT { left: 0, top: 0, right: 2560, bottom: 1440 };
+        assert!(within_clip(&[secondary], primary).is_err());
+        let locked = RECT { left: 1280, top: 720, right: 1280, bottom: 720 };
+        assert!(within_clip(&[secondary], locked).is_err());
+        assert!(within_clip(&[POINT { x: 1280, y: 720 }], locked).is_err());
+        let full = RECT { left: -1920, top: -200, right: 2560, bottom: 1440 };
+        assert!(within_clip(&[secondary, POINT { x: 0, y: 0 }], full).is_ok());
+        assert!(within_clip(&[secondary, POINT { x: 2560, y: 1440 }], full).is_err());
+        assert!(within_clip(&[POINT { x: -1920, y: -200 }], full).is_ok());
+    }
+    #[test] fn accepted_cursor_movement_must_arrive_before_clicking() {
+        let wanted = POINT { x: -1600, y: 400 };
+        assert!(at_requested_point(wanted, wanted).is_ok());
+        assert!(at_requested_point(wanted, POINT { x: 1280, y: 720 }).is_err());
+        assert!(at_requested_point(wanted, POINT { x: -1599, y: 400 }).is_err());
+    }
     #[test] fn physical_points_respect_negative_monitor_origins_and_edges() {
         let rect = RECT { left: -1920, top: -180, right: 0, bottom: 900 };
         assert_eq!(point(&SysValue::Num(20.9), &SysValue::Num(40.2), rect).unwrap(), POINT { x: -1900, y: -140 });

@@ -41,7 +41,12 @@ Marea invokes these on stop/new chat, worker death and normal completion.
 
 Coordinates are physical pixels in the latest picture, including the frame.
 Input rejects a missing/stale picture, changed geometry or modal target,
-closed window, covered point, invalid coordinates or held modifier/button.
+closed window, covered point, invalid coordinates, held modifier/button/Escape,
+cursor confinement outside the gesture or mouse capture held by another window.
+Pointer actions first insert only movement and check the actual cursor position;
+buttons and wheel events are withheld if it did not arrive. The backend never
+releases another application's confinement. These checks reduce shared-input
+races but cannot make the user's mouse independent.
 Every inserted gesture invalidates its picture: look again to verify the
 application's actual result. A successful SendInput call only acknowledges
 event insertion; it does not prove the application's task succeeded.

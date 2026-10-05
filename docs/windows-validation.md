@@ -14,13 +14,35 @@ shown/hidden hot reload and popup recreation. DX12 presented the scene at 125%
 scale; the foreground window was unchanged. This test sent no physical input
 and did not inspect capture pixels or third-party recorder output.
 
-Prior-head Windows/Ubuntu engine CI (`cd3e4c3`) and Marea logic/installer CI
-(`57b6ef0`) passed. Marea's full installer lifecycle includes isolated signed-out
-SDK startup, update failure/recovery, Unicode paths, startup and uninstall/state
-preservation. The newer refresh needs CI at its own commit. Native AI window
-capture/identity/cancellation checks passed, while positive input, real account
-login and model conversations remain unverified. Detailed earlier evidence
-below applies only to its stated revisions.
+At `c59ae3d`, portable Linux CI and the Ubuntu native job passed. The Windows
+native job failed its existing removed/restored quiet-service reload assertion
+(run `37298908475`). Investigation reproduced a second shared-runtime bug:
+Luau retained a removed field's value and suppressed an equal cached snapshot
+when the renderer recreated that field at its default. The new regression checks
+actual numeric and text messages reaching the renderer, and fails on the old
+code. Reload now retires values for removed declarations on both platforms.
+All 153 ordinary release-mode library tests pass locally after this correction.
+Two permission-only test fixtures now retain their declared callback fields
+during revocation; passing an empty scene correctly retires those fields.
+
+Marea's Windows/Ubuntu logic and full installer lifecycle passed at `14d6bf6`
+with this engine (runs `37299027748`, `37299030286`). The installer report covers
+isolated signed-out SDK startup, update failure/recovery, Unicode paths, startup
+and uninstall/state preservation. It does not validate graphical interaction.
+
+Pointer input now checks cursor confinement, mouse capture ownership and actual
+cursor arrival before sending buttons or wheel events. A game had confined the
+shared cursor to a point on the primary display; the backend must report that
+restriction, never release it or click the wrong window. Pure coordinate tests
+cover confinement and rejected arrival. Positive physical input remains pending.
+
+The opt-in `platform::windows_desktop::scene_tests::native_scene_capture` helper
+starts only an owned, non-activating scene on verified non-primary DISPLAY2 and
+captures its own HWND through WGC. Marea's six-state chat layout review used it
+with actual DX12 presentation and example data, no account or physical input.
+The foreground was unchanged and the child exited cleanly. Native AI window
+capture/identity/cancellation checks passed; real login and model conversations
+remain unverified. Earlier evidence below applies only to its stated revisions.
 
 ## Original PR review
 
