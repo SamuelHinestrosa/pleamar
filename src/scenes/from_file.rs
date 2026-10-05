@@ -280,6 +280,43 @@ mod tests {
         }
     }
 
+    /// A `for` inside a `grid`: a cell past the end of its list is neither
+    /// seen nor pressed, as in a row or a column. It used to keep showing the
+    /// records of the last longer list.
+    #[test]
+    fn a_grid_only_has_the_cells_its_list_reaches() {
+        let dir = std::env::temp_dir().join(format!("pleamar-grid-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("grid.plm");
+        std::fs::write(&path, "scene Cells {
+    surface { size: 200, 100 }
+    model rows max 4 { title: text }
+    grid {
+        at: 0, 0; columns: 2; width: 200; gap: 10; row: 40
+        for r in rows {
+            group {
+                size: 95, 40
+                zone box hit { from: 0, 0; size: 95, 40 }
+                text r.title { at: 4, 20; size: 12; color: #fff }
+            }
+        }
+    }
+}
+").unwrap();
+        let scene = super::read(path.to_str().unwrap()).unwrap();
+        let _ = std::fs::remove_dir_all(&dir);
+        let mut facts: Vec<f32> = scene.facts.iter().map(|f| f.1).collect();
+        let count = scene.facts.iter().position(|f| f.0 == "rows.count").expect("rows.count");
+        let active = |facts: &[f32]| scene.zones.iter().filter(|z| z.active.is_true(crate::scene::Ctx { props: &[], facts })).count();
+        assert_eq!(scene.zones.len(), 4);
+        facts[count] = 4.0;
+        assert_eq!(active(&facts), 4);
+        facts[count] = 1.0;
+        assert_eq!(active(&facts), 1, "a cell the list does not reach can still be pressed");
+        facts[count] = 0.0;
+        assert_eq!(active(&facts), 0);
+    }
+
     /// A rule that names nothing of its copy is the same rule once per monitor:
     /// only the first one may act, or a count goes up twice per monitor.
     #[test]

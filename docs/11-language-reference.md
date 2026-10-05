@@ -657,7 +657,10 @@ which inside a `repeat` may depend on it—. It does not have to say its size:
 inside it **`cell.w` and `cell.h`** are the size of its cell, so it is drawn
 in its own coordinates, from its corner. With `row:` every row is that tall;
 without it, each child says its height (`group { size: cell.w, 90 }`) and a
-row is as tall as its tallest child. Its zones go where it goes.
+row is as tall as its tallest child. Its zones go where it goes. With a
+`for` inside, a cell the list does not reach is not there —neither seen nor
+pressed—, and **its place stays**: the cells never move to fill it, so six
+cards that become two leave four empty places, not a reshuffled grid.
 
 And **inside any layout —`row`, `column`, `grid`— a `prop`, a `let`, a
 `fact` or a rule is not a child**: it is read where it is written, with the
