@@ -428,3 +428,18 @@ python scripts/windows-rule-handoff.py --binary target/release/pleamar.exe --scr
 This uses fake volume facts, no audio services, no physical input and no keyboard
 focus request. It checks the hide deadline and return to the original copy.
 The interactive diagnostic is separate from the unit tests run in CI.
+
+Effect groups have CPU regressions for empty groups and 128 visible siblings.
+The explicit GPU test checks pixels from all 128 groups against reference tiles,
+including overlapping shapes at half opacity, and repeats close/reopen four
+times. Each surface uses one compositing texture and releases it when closed.
+It renders only an owned fixture and never captures the desktop:
+
+```powershell
+$env:PLEAMAR_EFFECT_IMAGE = 'effect-groups.png' # optional fixture export
+cargo test --locked gpu::effect_tests:: -- --ignored --nocapture
+```
+
+The GPU test is opt-in because a real graphics adapter is required. CPU
+regressions and `group-effects-many.plm` are part of the normal checks; the
+fixture can also run natively on a chosen display with `--screen`.

@@ -58,6 +58,29 @@ a user-owned skill and the absence of the unsupported desktop skill on Windows.
 
 The last upstream snapshot is 0.2.15: relative to 0.2.14 it updates only package
 version/reference and adds the Linux desktop agent's `done` instruction. No
-Windows runtime behavior changes in that refresh. The full installed profile
-also emits the renderer's existing 64 simultaneous effect-layer fallback during
-startup; unlimited effect-layer support is not claimed.
+Windows runtime behavior changes in that refresh. That installed profile emitted
+the renderer's existing 64-group fallback during startup. The correction below
+is newer than the installed 0.2.15-preview.13 package.
+
+## Effect-group correction, October 5, 2026
+
+The cap counted groups, including empty ones, although siblings already shared
+one GPU texture. Empty groups could exhaust it before any visible effect was
+drawn. Composition now records only nonempty groups, and sibling effects and
+opacity no longer lose their semantics after group 64. This does not add support
+for nested effect groups or promise bounded frame time for arbitrarily big scenes.
+
+- The two new CPU regressions failed against the previous implementation and
+  pass with the correction. The complete native suite passed: 139 unit tests,
+  one integration test, and 29 opt-in helpers skipped.
+- The explicit GPU test passed on an RTX 5070 using DX12. It compares every tile
+  in 128 alternating blur/half-opacity groups, after 128 empty groups, and repeats
+  close/reopen four times. The fixture image was inspected. Each open surface
+  uses one compositing texture; closing releases it.
+- A default-feature release build passed. The native `group-effects-many.plm`
+  fixture presented on DISPLAY2 (scale 1.25), accepted five opacity changes and
+  four close/reopen cycles, published a new fact after a saved-file reload, and
+  exited through IPC with status zero. No physical input was injected.
+
+These checks cover this compositing defect. They do not establish sustained
+performance, physical input coverage, desktop-agent support or full parity.

@@ -11,10 +11,6 @@ use composition::Composition;
 
 const PER_SHAPE: usize = 20;
 const PER_ELEMENT: usize = 60;
-/// How many groups with opacity or effects can be blending in the same frame.
-/// They all share ONE layer: each one is painted into it right before it is
-/// blended (see `paint`), so this is not memory, only a sanity limit.
-pub const MAX_LAYERS: usize = 64;
 /// How many frames painted without groups with opacity until their layers are given back.
 const IDLE_LAYER_FRAMES: u32 = 300;
 /// The strip added to the surface for the frame graph.
@@ -48,7 +44,6 @@ pub struct DrawList {
     /// The pieces of the scene that some open popup is showing.
     pub views: Vec<[f32; 4]>,
     clips_warned: bool,
-    effects_warned: bool,
     /// The seconds the render has been running, and when each event last
     /// happened (−1: never): what the particles are worked out from.
     pub clock: f32,
@@ -235,7 +230,7 @@ enum OpacityGroup {
     Multiply(f32),
     /// Invisible: nothing inside is emitted.
     Hidden,
-    Layer { alpha: f32, index: usize, first_element: usize, fx: Option<Fx> },
+    Layer { alpha: f32, first_element: usize, fx: Option<Fx> },
 }
 
 /// What an emitter remembers between frames.
@@ -810,14 +805,11 @@ impl DrawList {
                     let inside_layer = opacity_groups.iter().any(|g| matches!(g, OpacityGroup::Layer { .. }));
                     opacity_groups.push(if a <= 0.001 {
                         OpacityGroup::Hidden
-                    } else if a >= 0.999 || inside_layer || self.offscreen_groups.len() >= MAX_LAYERS {
+                    } else if a >= 0.999 || inside_layer {
                         OpacityGroup::Multiply(a)
                     } else {
-                        OpacityGroup::Layer { alpha: a, index: self.offscreen_groups.len(), first_element: self.element_count(), fx: None }
+                        OpacityGroup::Layer { alpha: a, first_element: self.element_count(), fx: None }
                     });
-                    if let Some(OpacityGroup::Layer { first_element, .. }) = opacity_groups.last() {
-                        self.offscreen_groups.push((*first_element as u32..*first_element as u32, 0));
-                    }
                 }
                 Instr::Effect(fx) => {
                     let a = fx.alpha.eval(c).clamp(0.0, 1.0);
@@ -829,13 +821,9 @@ impl DrawList {
                         }
                     }
                     let inside_layer = opacity_groups.iter().any(|g| matches!(g, OpacityGroup::Layer { .. }));
-                    let full = self.offscreen_groups.len() >= MAX_LAYERS;
-                    if full && !std::mem::replace(&mut self.effects_warned, true) {
-                        eprintln!("render · more than {MAX_LAYERS} groups with effects or opacity at once: the rest are painted without their effects");
-                    }
                     opacity_groups.push(if a <= 0.001 {
                         OpacityGroup::Hidden
-                    } else if inside_layer || full {
+                    } else if inside_layer {
                         OpacityGroup::Multiply(a)
                     } else {
                         let v = |e: &Option<Expr>, default: f32| e.as_ref().map_or(default, |e| e.eval(c));
@@ -884,12 +872,9 @@ impl DrawList {
                         if neutral && a >= 0.999 {
                             OpacityGroup::Multiply(1.0)
                         } else {
-                            OpacityGroup::Layer { alpha: a, index: self.offscreen_groups.len(), first_element: self.element_count(), fx: Some(fx) }
+                            OpacityGroup::Layer { alpha: a, first_element: self.element_count(), fx: Some(fx) }
                         }
                     });
-                    if let Some(OpacityGroup::Layer { first_element, .. }) = opacity_groups.last() {
-                        self.offscreen_groups.push((*first_element as u32..*first_element as u32, 0));
-                    }
                 }
                 Instr::Particles(pp) => {
                     // With reduced motion there is nothing that carries itself: no particles.
@@ -984,15 +969,17 @@ impl DrawList {
                     opacity_groups.push(if a <= 0.001 { OpacityGroup::Hidden } else { OpacityGroup::Multiply(a) });
                 }
                 Instr::Opacity(None) => {
-                    if let Some(OpacityGroup::Layer { alpha, index, first_element, fx }) = opacity_groups.pop() {
+                    if let Some(OpacityGroup::Layer { alpha, first_element, fx }) = opacity_groups.pop() {
                         let end = self.element_count();
-                        self.offscreen_groups[index].0 = first_element as u32..end as u32;
                         // The group's box is the union of those inside.
                         let bounds = (first_element..end).fold(None, |u, k| {
                             let e = &self.elements[k * PER_ELEMENT + 4..k * PER_ELEMENT + 8];
                             Some(union(u, [e[0], e[1], e[2], e[3]]))
                         });
                         if let Some(bounds) = bounds {
+                            // Sibling groups reuse one texture. Empty groups need no
+                            // pass or descriptor, and do not limit the visible ones.
+                            self.offscreen_groups.push((first_element as u32..end as u32, 0));
                             // A blur and a glow spill out of what is inside: the box grows with them.
                             let spill = fx.map_or(0.0, |f| f.blur.max(f.glow.0) * 1.5 + 2.0);
                             let bounds = [bounds[0] - spill, bounds[1] - spill, bounds[2] + spill, bounds[3] + spill];
@@ -2854,9 +2841,64 @@ impl Sheet {
 pub const N_UNIFORMS: usize = 8 + 120 + 4 + 4;
 
 #[cfg(test)]
+mod effect_tests;
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use crate::shapes::{Affine, FlatShape};
+
+    pub(super) fn effect_group() -> Instr {
+        Instr::Effect(Box::new(Effects { alpha: 1.0.into(), blur: Some(2.0.into()), glow: None,
+            saturation: None, brightness: None, contrast: None, hue: None,
+            mask: None, mode: 0, shader: None }))
+    }
+
+    fn solid_at(x: f32) -> Instr {
+        Instr::Solid { shape: Shape::circle((x.into(), 40.0.into()), 8.0),
+            color: [1.0.into(), 0.5.into(), 0.2.into()], alpha: 1.0.into(), glass_spec: None }
+    }
+
+    fn draw_instructions(instrs: &[Instr]) -> DrawList {
+        let (tx, _rx) = std::sync::mpsc::channel();
+        let mut text = Texts::open(tx);
+        let mut draw = DrawList::default();
+        draw.compose(instrs, Ctx { props: &[], facts: &[] }, &[], &mut text, None, (2048.0, 120.0), false);
+        draw
+    }
+
+    #[test]
+    fn empty_effect_groups_do_not_consume_compositing_slots() {
+        let mut instrs = Vec::new();
+        for _ in 0..128 {
+            instrs.extend([effect_group(), Instr::Opacity(None)]);
+        }
+        instrs.extend([effect_group(), solid_at(40.0), Instr::Opacity(None)]);
+        let draw = draw_instructions(&instrs);
+        assert_eq!(draw.offscreen_groups, vec![(0..1, 0)]);
+        assert_eq!(draw.element_count(), 2);
+        assert_eq!(draw.elements[PER_ELEMENT], 2.0, "the visible group must retain its effect");
+    }
+
+    #[test]
+    fn many_sibling_opacity_and_effect_groups_reuse_one_texture() {
+        let mut instrs = Vec::new();
+        for k in 0..128 {
+            instrs.push(if k % 2 == 0 { effect_group() } else { Instr::Opacity(Some(0.5.into())) });
+            instrs.extend([solid_at(16.0 * k as f32 + 8.0), Instr::Opacity(None)]);
+        }
+        let draw = draw_instructions(&instrs);
+        assert_eq!(draw.offscreen_groups.len(), 128);
+        assert_eq!(draw.element_count(), 256);
+        for (k, (span, texture)) in draw.offscreen_groups.iter().enumerate() {
+            assert_eq!(*texture, 0, "siblings reuse the same GPU texture");
+            assert_eq!(*span, (2 * k) as u32..(2 * k + 1) as u32);
+            let composite = &draw.elements[(2 * k + 1) * PER_ELEMENT..];
+            assert_eq!(composite[0], 2.0);
+            assert_eq!(composite[3], if k % 2 == 0 { 1.0 } else { 0.5 });
+            assert_eq!(composite[20], if k % 2 == 0 { 2.0 } else { 0.0 });
+        }
+    }
 
     #[test]
     fn uploads_follow_each_buffer_including_length_nan_and_invalidation() {
