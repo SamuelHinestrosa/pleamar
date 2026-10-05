@@ -129,6 +129,7 @@ fn start_service(name: &str, notify: Box<dyn Fn(SysValue) + Send>) -> bool {
 }
 
 pub fn query(name: &str, args: &[SysValue]) -> Result<SysValue, String> {
+    if name.starts_with("hotkeys.") { return super::windows_hotkeys::query(name, args); }
     if name.starts_with("desktop.") { return super::windows_desktop::query(name, args); }
     if name.starts_with("tray.") { return super::windows_tray::query(name, args); }
     if name.starts_with("notifications.") { return super::windows_notifications::query(name, args); }

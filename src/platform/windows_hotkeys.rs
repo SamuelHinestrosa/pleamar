@@ -1,4 +1,4 @@
-//! Registered shortcuts, without a keyboard hook or polling held keys.
+//! Registered shortcuts and an optional, separately owned Windows-key layer.
 use super::SysValue;
 use std::collections::HashMap;
 use std::sync::{OnceLock, mpsc};
@@ -6,11 +6,15 @@ use windows::Win32::Foundation::{LPARAM, WPARAM};
 use windows::Win32::System::Threading::GetCurrentThreadId;
 use windows::Win32::UI::{Input::KeyboardAndMouse::*, WindowsAndMessaging::*};
 
+#[path = "windows_hotkeys_logo.rs"]
+mod logo;
+
 const WAKE: u32 = WM_APP + 17;
 type Reply = mpsc::SyncSender<Result<(), String>>;
 enum Request {
     Watch(Box<dyn Fn(SysValue) + Send>),
     Bind(String, Option<(HOT_KEY_MODIFIERS, u32)>, Reply),
+    Fire(String),
 }
 struct Manager { sender: mpsc::SyncSender<Request>, thread: u32 }
 static MANAGER: OnceLock<Result<Manager, String>> = OnceLock::new();
@@ -37,6 +41,10 @@ fn manager() -> Result<&'static Manager, String> {
                 } else if message.message == WAKE {
                     for request in requests.try_iter() {
                         match request {
+                            Request::Fire(name) => {
+                                sequence += 1;
+                                for listener in &listeners { listener(event(&name, sequence)); }
+                            }
                             Request::Watch(notify) => { notify(event("", sequence)); listeners.push(notify); }
                             Request::Bind(name, binding, reply) => {
                                 let result = match binding {
@@ -83,6 +91,12 @@ fn send(request: Request) -> Result<(), String> {
     unsafe { PostThreadMessageW(manager.thread, WAKE, WPARAM(0), LPARAM(0)).map_err(|e| e.to_string()) }
 }
 pub fn service(notify: Box<dyn Fn(SysValue) + Send>) -> bool { send(Request::Watch(notify)).is_ok() }
+fn publish(name: String) -> Result<(), String> { send(Request::Fire(name)) }
+
+pub fn query(name: &str, args: &[SysValue]) -> Result<SysValue, String> {
+    if name == "hotkeys.state" && args.is_empty() { logo::state() }
+    else { Err("hotkeys.state takes no arguments".into()) }
+}
 
 fn parse(chord: &str) -> Result<(HOT_KEY_MODIFIERS, u32), String> {
     let mut modifiers = HOT_KEY_MODIFIERS(0);
@@ -109,17 +123,22 @@ fn parse(chord: &str) -> Result<(HOT_KEY_MODIFIERS, u32), String> {
 }
 
 pub fn command(name: &str, args: &[SysValue]) -> Result<(), String> {
+    if let ("hotkeys.windows", [value]) = (name, args) { return logo::configure(value); }
     let (event, binding) = match (name, args) {
         ("hotkeys.bind", [SysValue::Text(event), SysValue::Text(chord)]) => (event, Some(parse(chord)?)),
         ("hotkeys.unbind", [SysValue::Text(event)]) => (event, None),
         _ => return Err("hotkeys.bind takes an event and chord; hotkeys.unbind takes the event".into()),
     };
-    if event.is_empty() || event.len() > 64 || !event.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '-' | '.')) {
-        return Err("invalid shortcut event name".into());
-    }
+    validate_event(event)?;
     let (reply, response) = mpsc::sync_channel(1);
     send(Request::Bind(event.clone(), binding, reply))?;
     response.recv().map_err(|e| e.to_string())?
+}
+
+fn validate_event(event: &str) -> Result<(), String> {
+    if event.is_empty() || event.len() > 64 || !event.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '-' | '.')) {
+        Err("invalid shortcut event name".into())
+    } else { Ok(()) }
 }
 
 #[cfg(test)]

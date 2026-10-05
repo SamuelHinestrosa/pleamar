@@ -32,6 +32,9 @@ jobs:
           ./scripts/test-windows-runtime.ps1 -Archive $archive
       - name: Unit tests with Luau
         run: cargo test --locked
+      - name: Windows-key hook ownership on an isolated private desktop
+        if: runner.os == 'Windows'
+        run: cargo test --locked --lib native_layer_private_desktop -- --ignored --nocapture
       - name: Allocation diagnostic bookkeeping
         run: cargo test --locked --example allocation-profile
       - name: Build diagnostic executables
