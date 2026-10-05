@@ -803,6 +803,8 @@ pub(crate) use windows_toasts::register_shortcut as register_notification_shortc
 #[cfg(target_os = "windows")]
 mod windows_windows;
 #[cfg(target_os = "windows")]
+mod windows_desktop;
+#[cfg(target_os = "windows")]
 mod windows_search;
 #[cfg(target_os = "windows")]
 mod windows_hotkeys;
@@ -822,6 +824,8 @@ mod windows_brightness_wmi;
 mod windows_backdrop;
 #[cfg(target_os = "windows")]
 mod windows_capture;
+#[cfg(target_os = "windows")]
+mod windows_capture_winrt;
 #[cfg(target_os = "windows")]
 mod windows_recording;
 #[cfg(target_os = "windows")]

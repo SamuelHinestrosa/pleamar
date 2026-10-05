@@ -46,7 +46,7 @@ fn monitor(name: &str) -> Result<HMONITOR> {
 
 impl Capture {
     pub fn new(name: &str) -> Result<Self> { unsafe {
-        if !GraphicsCaptureSession::IsSupported()? { return Err(windows::core::Error::new(E_NOTIMPL, "Windows Graphics Capture is unavailable")); }
+        if !crate::platform::windows_capture_winrt::supported()? { return Err(windows::core::Error::new(E_NOTIMPL, "Windows Graphics Capture is unavailable")); }
         let interop: IGraphicsCaptureItemInterop = windows::core::factory::<GraphicsCaptureItem, _>()?;
         let item: GraphicsCaptureItem = interop.CreateForMonitor(monitor(name)?)?;
         let source_size = item.Size()?;
@@ -74,7 +74,7 @@ impl Capture {
         video_context.VideoProcessorSetStreamColorSpace1(&processor, 0, DXGI_COLOR_SPACE_RGB_FULL_G22_NONE_P709);
         video_context.VideoProcessorSetOutputColorSpace1(&processor, DXGI_COLOR_SPACE_YCBCR_STUDIO_G22_LEFT_P709);
         let runtime: IDirect3DDevice = CreateDirect3D11DeviceFromDXGIDevice(&device.cast::<IDXGIDevice>()?)?.cast()?;
-        let pool = Direct3D11CaptureFramePool::CreateFreeThreaded(&runtime, DirectXPixelFormat::B8G8R8A8UIntNormalized, 3, source_size)?;
+        let pool = crate::platform::windows_capture_winrt::frame_pool(&runtime, DirectXPixelFormat::B8G8R8A8UIntNormalized, 3, source_size)?;
         let closed = Arc::new(AtomicBool::new(false));
         let flag = closed.clone();
         item.Closed(&windows::Foundation::TypedEventHandler::new(move |_, _| { flag.store(true, Ordering::Release); Ok(()) }))?;

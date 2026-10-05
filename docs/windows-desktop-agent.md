@@ -1,0 +1,100 @@
+# Native desktop tools (work in progress)
+
+The Windows `desktop` service supplies Marea's desktop agent with native
+window identities, per-window WGC pictures, input, focus and monitor movement.
+It requires `desktop.*` permission. Linux's compositor path is unchanged.
+This branch is not a declaration of complete Windows/Linux agent parity.
+
+Read with `sys.ask_async` on the `desktop` service worker:
+
+| Query | Arguments | Result |
+| --- | --- | --- |
+| `desktop.windows` | `{}` | `{epoch, input="foreground", windows, monitors}` |
+| `desktop.look` | `{id}` | `{width, height, data}`; `data` is a base64 PNG |
+
+Window ids are opaque decimal strings, not HWNDs or process ids. Each window
+reports its separate OS process id, program, title, physical box, monitor name,
+focus, minimized state and known owner (`dialogof`). Monitor numbers refer to
+the current list, sorted by device name. Disconnected monitors are not usable.
+The catalog lives with the service worker; refresh it at the start of a turn.
+
+Commands use `sys.call_async` and report OS errors in their callbacks. Their
+first two arguments are the catalog epoch and window id:
+
+| Command | Remaining arguments |
+| --- | --- |
+| `desktop.click` | `x, y, "left"/"right"/"middle", count` (1–3) |
+| `desktop.type` | text (up to 4000 Unicode characters; no NUL) |
+| `desktop.key` | enter, tab, escape, backspace, space, arrows, delete, home, end, pageup, pagedown, f1–f12 |
+| `desktop.hotkey` | e.g. `ctrl+shift+t`; ctrl, alt and shift modifiers |
+| `desktop.scroll` | `x, y, direction, steps` (1–30) |
+| `desktop.drag` | `x1, y1, x2, y2` within the picture |
+| `desktop.focus` | none; requests restore/foreground focus |
+| `desktop.send` | monitor number |
+
+`sys.call("desktop.cancel")` synchronously increments a process-wide epoch.
+It performs no UI/COM work and invalidates actions already queued on service
+workers. An OS input batch already inserted cannot be recalled. Afterwards,
+request a new window catalog. `desktop.done`, with no arguments, runs on the
+service worker to discard its catalog, pictures and window lifetime hook.
+Marea invokes these on stop/new chat, worker death and normal completion.
+
+Coordinates are physical pixels in the latest picture, including the frame.
+Input rejects a missing/stale picture, changed geometry or modal target,
+closed window, covered point, invalid coordinates or held modifier/button.
+Every inserted gesture invalidates its picture: look again to verify the
+application's actual result. A successful SendInput call only acknowledges
+event insertion; it does not prove the application's task succeeded.
+
+Windows uses the user's shared foreground input queue. There is no independent
+compositor input seat, separate mint pointer, monitor glow or compositor stop
+pill in this implementation. Marea's stop button remains available. Focus
+requests can be denied by Windows; protected/elevated applications can reject
+input. If approving a card gave Marea focus, an approved input action requests
+focus back for its target. It refuses to steal focus from a different application
+the user selected. The backend does not attach to foreign input queues, raise privileges
+or substitute unacknowledged PostMessage events for real input.
+See Microsoft's [SendInput contract](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-sendinput).
+
+Captures use [CreateForWindow](https://learn.microsoft.com/en-us/windows/win32/api/windows.graphics.capture.interop/nf-windows-graphics-capture-interop-igraphicscaptureiteminterop-createforwindow),
+not a desktop crop. An occluding application is not copied into the picture.
+Known modal dialogs route through their disabled owner; a new/ambiguous dialog
+requires a catalog refresh. Separate popup menus, protected content and HDR
+fidelity still need explicit validation. Capture is bounded to 8192 pixels per
+axis, 16 megapixels and 5 MiB of encoded PNG, with a 3-second frame deadline.
+Images travel through the existing pipe without granting the agent filesystem
+access outside its sandbox. GPU frames/pools/sessions and readback buffers are
+released after each picture.
+
+The initial real-window regression exposed a second-capture access violation
+in a generated WinRT static factory cache after its apartment was retired.
+`windows_capture_winrt` obtains scoped factories instead; both agent captures
+and the existing video recorder use this helper. On 2026-10-05 the repeated
+native capture regression passed on DISPLAY2: 404×292 initial, 544×352 after
+resize, 284×232 modal dialog, and a new identity after close/reopen. No physical
+input was sent, and foreground focus/pointer position remained unchanged.
+
+The real generated Marea desktop adapter also ran through a native Luau scene:
+catalog lookup, a 13,140-character PNG response, cancellation and clean exit.
+The scene rendered on DISPLAY2 and advanced 33 timer ticks during the run.
+This is a component integration test, not a model conversation or a full Marea
+UI acceptance test. Separately, 148 ordinary Rust tests and twenty isolated
+Marea logic suites passed; six Node tests passed. Subsequent input changes
+still require positive native input validation.
+
+## Validation commands
+
+```powershell
+cargo test --release --locked --lib platform::windows_desktop
+cargo test --release --locked --lib platform::windows_desktop::native_tests::native_catalog_capture_and_lifetimes -- --ignored --exact --nocapture
+```
+
+The second command requires active **non-primary `\\.\DISPLAY2`**. It creates
+only a child fixture's windows there, captures known pixels, resizes/moves the
+fixture within that monitor, follows its modal dialog, rejects invalid/stale
+input and checks closed/reopened identities. It sends no physical mouse or
+keyboard input. The emitted evidence directory contains PNGs and `result.json`.
+This test does not prove positive input, arbitrary-app compatibility or a real
+AI conversation; those validations and background-input parity remain open.
+
+Implemented with Codex; validation scope must be kept separate from full parity.

@@ -129,6 +129,7 @@ fn start_service(name: &str, notify: Box<dyn Fn(SysValue) + Send>) -> bool {
 }
 
 pub fn query(name: &str, args: &[SysValue]) -> Result<SysValue, String> {
+    if name.starts_with("desktop.") { return super::windows_desktop::query(name, args); }
     if name.starts_with("tray.") { return super::windows_tray::query(name, args); }
     if name.starts_with("notifications.") { return super::windows_notifications::query(name, args); }
     if name.starts_with("recording.") { return super::windows_recording::query(name, args); }
@@ -155,6 +156,7 @@ pub fn query(name: &str, args: &[SysValue]) -> Result<SysValue, String> {
 }
 
 pub fn command(name: &str, args: &[SysValue]) -> Result<(), String> {
+    if name.starts_with("desktop.") { return super::windows_desktop::command(name, args); }
     if name.starts_with("tray.") { return super::windows_tray_actions::command(name, args); }
     if name == "window.restore" { return super::windows_windows::restore(args); }
     if name.starts_with("hotkeys.") { return super::windows_hotkeys::command(name, args); }
