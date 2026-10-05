@@ -7,6 +7,8 @@
 #   pleamar-update --session      also puts pleamar-wm in the login screen (asks for sudo)
 #   pleamar-update --agent        lets AI agents use your desktop in pleamar-wm, with a
 #                                 pointer and a keyboard of their own (Cua Driver too)
+#   pleamar-update --remote       this desktop from a browser elsewhere: a password and
+#                                 codes made, and pleamar-wm remote started with the session
 #   pleamar-update --uninstall    takes the programs away; your ~/.config/pleamar stays
 #
 # What it installs, all in your home and nothing else:
@@ -28,14 +30,16 @@ fail() { printf '\033[1;31mpleamar ·\033[0m %s\n' "$*" >&2; exit 1; }
 
 session=false
 agent=false
+remote=false
 action=install
 for a in "$@"; do
     case "$a" in
         --session) session=true ;;
         --agent) agent=true ;;
+        --remote) remote=true ;;
         --uninstall) action=uninstall ;;
-        --help|-h) sed -n '2,19p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
-        *) fail "I don't know «$a» (--session, --agent, --uninstall, --help)" ;;
+        --help|-h) sed -n '2,22p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+        *) fail "I don't know «$a» (--session, --agent, --remote, --uninstall, --help)" ;;
     esac
 done
 
@@ -63,6 +67,9 @@ if [ "$action" = uninstall ]; then
     done
     say "the programs are gone from $bin"
     say "left as they were: your ~/.config/pleamar, and the source in $src"
+    if grep -qE '^[[:space:]]*(wm:[[:space:]]*)?pleamar-wm remote' "${XDG_CONFIG_HOME:-$HOME/.config}/pleamar/autostart" 2> /dev/null; then
+        say "your autostart still starts pleamar-wm remote: take that line out"
+    fi
     if [ -f /usr/share/wayland-sessions/pleamar-wm.desktop ]; then
         say "the login screen still offers pleamar-wm: sudo rm /usr/share/wayland-sessions/pleamar-wm.desktop /usr/local/bin/pleamar-wm-session"
     fi
@@ -169,6 +176,73 @@ if $agent; then
     fi
 fi
 
+# ── this desktop from elsewhere, if asked ──────────────────────────
+# pleamar-wm remote: a page, on 127.0.0.1, that shows the monitors and takes
+# the mouse and the keys. Off unless asked for: whatever gets in uses your
+# desktop as you. It needs a password and codes, and something in front that
+# encrypts it and makes it reachable (Tailscale Funnel, for example).
+if $remote; then
+    needs=""
+    command -v wf-recorder > /dev/null || needs="$needs wf-recorder"
+    command -v grim > /dev/null || needs="$needs grim"
+    command -v wl-copy > /dev/null || needs="$needs wl-clipboard"
+    command -v notify-send > /dev/null || needs="$needs libnotify"
+    if [ -n "$needs" ]; then
+        say "remote: to show the screen (and the clipboard, the notices) it needs:$needs"
+        if command -v pacman > /dev/null; then
+            hint="sudo pacman -S --needed wf-recorder grim wl-clipboard libnotify"
+        elif command -v apt > /dev/null; then
+            hint="sudo apt install wf-recorder grim wl-clipboard libnotify-bin"
+        elif command -v dnf > /dev/null; then
+            hint="sudo dnf install wf-recorder grim wl-clipboard libnotify"
+        elif command -v zypper > /dev/null; then
+            hint="sudo zypper install wf-recorder grim wl-clipboard libnotify-tools"
+        else
+            hint="your distribution's packages for:$needs"
+        fi
+        echo "    $hint"
+        if [ -t 0 ] && [ "${hint#sudo }" != "$hint" ]; then
+            printf 'pleamar · run it now? [y/N] '
+            read -r yes
+            case "$yes" in y|Y|s|S) sh -c "$hint" || true ;; esac
+        fi
+    fi
+    # Its mouse and keyboard are made with uinput: the device must be yours
+    # (most systems give it to whoever is at the computer; some don't).
+    if [ ! -w /dev/uinput ]; then
+        say "remote: /dev/uinput is not yours, so the mouse and keys from there would do nothing"
+        rule='echo KERNEL==\"uinput\", TAG+=\"uaccess\" > /etc/udev/rules.d/70-pleamar-uinput.rules && modprobe uinput && udevadm control --reload && udevadm trigger --name-match=uinput'
+        echo "    sudo sh -c '$rule'"
+        if [ -t 0 ]; then
+            printf 'pleamar · run it now? [y/N] '
+            read -r yes
+            case "$yes" in y|Y|s|S) sudo sh -c "$rule" || true ;; esac
+        fi
+    fi
+    if [ -f "${XDG_CONFIG_HOME:-$HOME/.config}/pleamar/remote.conf" ]; then
+        say "remote: it has a password already (new ones: pleamar-wm remote setup)"
+    else
+        "$bin/pleamar-wm" remote setup
+    fi
+    auto="${XDG_CONFIG_HOME:-$HOME/.config}/pleamar/autostart"
+    if grep -qE '^[[:space:]]*(wm:[[:space:]]*)?pleamar-wm remote' "$auto" 2> /dev/null; then
+        say "remote: already started with the session"
+    else
+        printf '\n# This desktop from a browser elsewhere (pleamar-update --remote). Out, now:\n# Super+Shift+Escape. Off: remove these lines.\nwm: pleamar-wm remote\n' >> "$auto"
+        say "remote: starts with the next pleamar-wm session (now: pleamar-wm remote)"
+    fi
+    port=$(sed -n 's/^port[[:space:]]\{1,\}\([0-9]\{1,\}\).*/\1/p' "${XDG_CONFIG_HOME:-$HOME/.config}/pleamar/remote.conf" 2> /dev/null | head -1)
+    port=${port:-8765}
+    if command -v tailscale > /dev/null; then
+        say "remote: to reach it from outside, once (it stays):"
+        echo "    tailscale funnel --bg --https=8443 http://127.0.0.1:$port"
+        echo "    (if it asks for root: sudo tailscale set --operator=$(id -un), then again)"
+    else
+        say "remote: it listens only on 127.0.0.1:$port; put something in front that encrypts it,"
+        say "        Tailscale Funnel for example: tailscale funnel --bg --https=8443 http://127.0.0.1:$port"
+    fi
+fi
+
 # ── the login screen, if asked ─────────────────────────────────────
 if $session; then
     say "pleamar-wm in the login screen (asks for your password)"
@@ -194,6 +268,7 @@ cat << EOF
   Its own session:  pleamar-session from a TTY, or pleamar-update --session for the login screen
   Up to date:       pleamar-update
   Computer use:     pleamar-update --agent   AI agents use your windows with their own cursor
+  From elsewhere:   pleamar-update --remote  this desktop from a browser, with password and codes
   Docs:             pleamar --docs      Ask your AI agent: it knows pleamar now.
 
 EOF
