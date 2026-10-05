@@ -1861,7 +1861,11 @@ impl<'a> Compiler<'a> {
                     if let Some(e) = self.scopes.last_mut().map(Rc::make_mut) {
                         e.with_parts.insert(part);
                     }
-                    let (w, h) = self.e.measured(interned(&name));
+                    // Brought forward already (a component's `size:` reads it): the same one.
+                    let (w, h) = match self.measurements.get(&name) {
+                        Some(&known) => known,
+                        None => self.e.measured(interned(&name)),
+                    };
                     self.props.insert(format!("{name}.width"), w);
                     self.props.insert(format!("{name}.height"), h);
                     self.measurements.insert(name, (w, h));
@@ -2247,6 +2251,21 @@ impl<'a> Compiler<'a> {
             let word_at = |k: usize| match n.head.get(k).map(|f| &f.kind) { Some(TokenKind::Id(p)) => Some(p.as_str()), _ => None };
             match word_at(0) {
                 Some("component" | "repeat" | "for") => continue,
+                // `measure m` too: a component's `size:` is read before its
+                // body, and a row that is as tall as its text needs it there.
+                Some("measure") => if let Some(local) = word_at(1) {
+                    let name = self.declare(local);
+                    let part = self.interpolate_in(local);
+                    if let Some(e) = self.scopes.last_mut().map(Rc::make_mut) {
+                        e.with_parts.insert(part);
+                    }
+                    if !self.measurements.contains_key(&name) {
+                        let (w, h) = self.e.measured(interned(&name));
+                        self.props.insert(format!("{name}.width"), w);
+                        self.props.insert(format!("{name}.height"), h);
+                        self.measurements.insert(name, (w, h));
+                    }
+                },
                 Some("row" | "column") => if let Some(local) = word_at(1) {
                     // It is brought forward so it can be read before getting to it, but the location
                     // noted is its own: it is where the editor has to take you.
@@ -2256,7 +2275,7 @@ impl<'a> Compiler<'a> {
                     if let Some(e) = self.scopes.last_mut().map(Rc::make_mut) {
                         e.with_parts.insert(local.to_owned());
                     }
-                    for part in ["width", "height", "count"] {
+                    for part in ["width", "height", "count", "content"] {
                         let full_name = format!("{name}.{part}");
                         if !self.props.contains_key(&full_name) {
                             let p = self.e.prop_with(interned(&full_name), 0.0, Spring::LIVELY);
@@ -4857,7 +4876,8 @@ impl<'a> Compiler<'a> {
                 self.props.insert(format!("{name}.scroll"), *prop);
             }
             // Whoever read it before this point read the property declared early: here it is filled in.
-            for (part, a) in [("width", &size.0), ("height", &size.1), ("count", &how_many)] {
+            let content_length = if is_row { content.0.clone() } else { content.1.clone() };
+            for (part, a) in [("width", &size.0), ("height", &size.1), ("count", &how_many), ("content", &content_length)] {
                 if let Some(prop) = self.props.get(&format!("{name}.{part}")).copied() {
                     self.e.behaviors.push(Behavior::Bind { prop, to: a.clone() });
                 }

@@ -844,6 +844,29 @@ pub fn prepare_runtime() -> Result<(), String> {
     Ok(())
 }
 
+/// Bounded helper writes must remain cancellable even if a child keeps stdin
+/// open without reading it. The owning worker retries only until its deadline.
+pub(crate) fn nonblocking_child_input(pipe: &std::process::ChildStdin) -> std::io::Result<()> {
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::io::AsRawHandle;
+        use ::windows::Win32::{Foundation::HANDLE, System::Pipes::{SetNamedPipeHandleState, PIPE_NOWAIT}};
+        unsafe { SetNamedPipeHandleState(HANDLE(pipe.as_raw_handle()), Some(&PIPE_NOWAIT), None, None) }
+            .map_err(std::io::Error::from)
+    }
+    #[cfg(unix)]
+    {
+        use std::os::fd::AsRawFd;
+        let fd = pipe.as_raw_fd();
+        let flags = unsafe { libc::fcntl(fd, libc::F_GETFL) };
+        if flags == -1 || unsafe { libc::fcntl(fd, libc::F_SETFL, flags | libc::O_NONBLOCK) } == -1 {
+            Err(std::io::Error::last_os_error())
+        } else { Ok(()) }
+    }
+    #[cfg(not(any(target_os = "windows", unix)))]
+    { let _ = pipe; Err(std::io::ErrorKind::Unsupported.into()) }
+}
+
 /// An explicitly authored autostart command uses the host's shell.
 pub fn shell_command(line: &str) -> std::process::Command {
     #[cfg(target_os = "windows")]

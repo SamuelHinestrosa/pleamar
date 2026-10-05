@@ -3,7 +3,7 @@
 **What this note is.** The complete, exact description of what the language accepts. [The language — the guide](09-language-v0.md) is the guide —read straight through, with the reason behind each thing—; this is where a doubt gets looked up. It comes from the compiler (`src/language/`), not from memory, and **it cannot fall behind without `./run-tests.sh` saying so**: its whole examples compile, and its vocabulary (§17) is compared against the one the compiler consults.
 
 ```sh
-pleamar --version                  # pleamar 0.2.15 · language 0.2
+pleamar --version                  # pleamar 0.2.16 · language 0.2
 pleamar --check scene.plm      # reads it, with whatever it imports; says whether it is fine, exits
 ./run-tests.sh                        # tests/*.plm, examples/*.plm and the examples in this note
 ```
@@ -471,7 +471,7 @@ From weakest to strongest: `or` · `and` · `not` · `< > <= >= == !=` (they do 
 
 **`time`** is the seconds since the scene started. It exists if the scene names it —and has not declared a `time` of its own—, and while it does, the scene never rests: that is its point. With reduced motion (`--reduced-motion`) it stops, like `spin`.
 
-Valid as a name: a `let`, a `prop`, a `fact`, a measure (`label.width`), how much a named layout takes up and how many children it has in view (`list.width`, `list.height`, `list.count`: they can also be read before the point where it is declared), the numeric field of a record (`r.depth`, `r.index`, `rows.count`), and the presence of a claim (`shape.rec`: 1 while it wins).
+Valid as a name: a `let`, a `prop`, a `fact`, a measure (`label.width`), how much a named layout takes up and how many children it has in view (`list.width`, `list.height`, `list.count`, and with `view:` `list.content`: they can also be read before the point where it is declared, and by rules), the numeric field of a record (`r.depth`, `r.index`, `rows.count`), and the presence of a claim (`shape.rec`: 1 while it wins).
 
 ## 8. Drawing
 

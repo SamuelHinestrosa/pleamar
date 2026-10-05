@@ -136,7 +136,10 @@ fn run_and_spawn_drain_output_while_writing_inline_input() {
                 Event::Line(_, line) => lines.push(line),
                 Event::Process(_, output, code) => {
                     assert_eq!(code, 17, "{mode}: {output}");
-                    if mode == "run" { assert!(output.ends_with("INPUT_ENV_CWD_COMPLETE")); }
+                    if mode == "run" {
+                        assert!(output.contains("INPUT_ENV_CWD_COMPLETE\n"));
+                        assert!(output.ends_with("STDERR_COMPLETE"), "run did not append stderr after stdout");
+                    }
                     else {
                         assert!(lines.iter().any(|l| l == "INPUT_ENV_CWD_COMPLETE"));
                         assert!(lines.iter().any(|l| l == "STDERR_COMPLETE"), "exit arrived before stderr");

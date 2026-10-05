@@ -36,7 +36,9 @@ run("wl-copy", { "--type", "image/png" }, nil, { stdin = path, output = false })
 run("node", { "tools/reader.mjs" }, consume, { cwd = "." }) -- opt-in working directory relative to this logic file
 run("sudo", { "-S", "-p", "", "-v" }, function(_, code) … end, { input = pw .. "\n" })   -- a text on its input, which never touches a file, its arguments or its environment
 local id = spawn("wf-recorder", { "-f", file }, function(line) … end, function(_, code) … end)   -- one that does not end: a call per line, and one when it HAS ended
-spawn("pacman", args, on_line, on_exit, { input = "…", errors = true, env = { LC_ALL = "C" } })   -- how, too: a text on its input, its error output among the lines, and variables of its own (also for `run`)
+spawn("pacman", args, on_line, on_exit, { input = "…", errors = true, env = { LC_ALL = "C" } })   -- how, too: a text on its input, its error output among the lines, and variables of its own (`env` and `errors` also for `run`: its error output after the rest)
+local id = spawn("node", { "worker.mjs" }, on_line, on_exit, { stdin = "open" })   -- its input left open:
+write(id, '{"type":"prompt"}\n')                       -- a line to it while it runs (true if it got there); write(id) closes it
 kill(id, "int")                                       -- asks it to stop (or "term"); kill(id) alone kills it and forgets it
 local id = spawn("pactl", { "subscribe" }, function(line) … end)   -- one that does NOT finish: one call per line
 kill(id)
@@ -54,6 +56,15 @@ log("whatever", 42)
 tr("Good morning")                   -- the scene's `translations`, in the language `locale` says
 busy(600)                                 -- fake work, to see that the renderer does not care
 ```
+
+With `stdin = "open"`, `input` is sent first without blocking startup; later
+`write` calls preserve its order. A successful write means the bytes reached the
+pipe, not that the helper has processed them. `write(id)` waits for earlier input
+then closes the pipe. Each input is limited to 8 MiB and each write waits at most
+two seconds. A failed, oversized or timed-out write returns `false`, closes the
+input and stops that helper, so a partial message cannot be retried against a
+still-running protocol. Unknown or already-closed IDs return `false`. Reload,
+shutdown and `kill(id)` discard pending input; a write rechecks command permission.
 
 **Facts have a type**, the one the scene gave them: a yes-or-no is read and written with `true` and `false`; an enum (`fact mode: low | normal | critical`), with the name of its value; everything else, numbers. `on("fact:mode", function(m) … end)` receives the same. A value that does not exist is an error that says which ones there are: `'mode' cannot be 'critcal'. Did you mean 'critical'?`
 

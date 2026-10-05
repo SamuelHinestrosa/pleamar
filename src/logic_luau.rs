@@ -27,6 +27,11 @@ use std::sync::mpsc::Sender;
 use std::sync::{Arc, Mutex, Weak};
 use std::time::{Duration, Instant};
 
+mod input;
+use input::InputPipe;
+#[cfg(test)]
+mod input_tests;
+
 /// Everything the logic has left running. When the program exits it has to be
 /// stopped: a child does not die with its parent, and an orphaned `pactl subscribe`
 /// would stay there forever.
@@ -179,6 +184,7 @@ struct Shared {
     running: HashMap<u32, (Function, Arc<Mutex<Option<std::process::Child>>>)>,
     /// None reserves a run before its worker starts; reload cancels that reservation.
     commands: HashMap<u32, Option<Child>>,
+    inputs: HashMap<u32, InputPipe>,
     watchers: HashMap<String, Vec<WatchHandler>>,
     /// Only this VM owns these subscriptions; the platform owns their workers.
     watched: HashMap<String, Option<Arc<()>>>,
@@ -851,6 +857,7 @@ impl LuauScript {
         c.watched.clear();
         c.latest.clear();
         c.subscriptions.clear();
+        c.inputs.clear();
         for (_, (_, child)) in c.running.drain() {
             stop_child(&child);
         }
@@ -1285,6 +1292,7 @@ impl LuauScript {
             let text: Option<String> = how.as_ref().and_then(|t| t.get("input").ok());
             let vars = environment(how.as_ref());
             let collect: bool = how.as_ref().and_then(|t| t.get::<Option<bool>>("output").ok().flatten()).unwrap_or(true);
+            let errors: bool = how.as_ref().and_then(|t| t.get::<Option<bool>>("errors").ok().flatten()).unwrap_or(false);
             // Opt-in: existing commands retain their inherited working directory.
             // Relative cwd values belong to the logic file, so packaged helpers
             // work when a scene is opened by absolute path from another folder.
@@ -1323,7 +1331,7 @@ impl LuauScript {
                     launch.stdin(std::process::Stdio::null());
                 }
                 launch.stdout(if collect { std::process::Stdio::piped() } else { std::process::Stdio::null() })
-                    .stderr(std::process::Stdio::null());
+                    .stderr(if collect && errors { std::process::Stdio::piped() } else { std::process::Stdio::null() });
                 let started = start_run(&state, id, &command, &mut launch);
                 let (child, output) = match started {
                     Ok(Some(child)) => child,
@@ -1333,14 +1341,32 @@ impl LuauScript {
                         return;
                     }
                 };
-                if let Some(process) = child.lock().unwrap().as_mut() {
+                let complaints = child.lock().unwrap().as_mut().and_then(|process| {
                     give_input(process, text);
-                }
+                    process.stderr.take()
+                });
+                // Both pipes must drain concurrently, including while stdin is written.
+                let complained = complaints.map(|mut stream| std::thread::spawn(move || {
+                    let mut bytes = Vec::new();
+                    std::io::Read::read_to_end(&mut stream, &mut bytes).map(|_| bytes)
+                }));
                 let mut bytes = Vec::new();
-                let read = match output {
+                let mut read = match output {
                     Some(mut output) => std::io::Read::read_to_end(&mut output, &mut bytes),
                     None => Ok(0),
                 };
+                if let Some(complained) = complained {
+                    match complained.join() {
+                        Ok(Ok(error_bytes)) if !error_bytes.is_empty() => {
+                            while bytes.last().is_some_and(|b| b.is_ascii_whitespace()) { bytes.pop(); }
+                            if !bytes.is_empty() { bytes.push(b'\n'); }
+                            bytes.extend(error_bytes);
+                        }
+                        Ok(Ok(_)) => {}
+                        Ok(Err(error)) => read = Err(error),
+                        Err(_) => read = Err(std::io::Error::other("stderr reader failed")),
+                    }
+                }
                 if read.is_err() { stop_child(&child); }
                 let code = wait_child(&child);
                 let weak = Arc::downgrade(&child);
@@ -1370,11 +1396,12 @@ impl LuauScript {
             let text: Option<String> = how.as_ref().and_then(|t| t.get("input").ok());
             let errors: bool = how.as_ref().and_then(|t| t.get::<Option<bool>>("errors").ok().flatten()).unwrap_or(false);
             let cwd: Option<String> = how.as_ref().map(|t| t.get("cwd")).transpose()?.flatten();
+            let open: bool = how.as_ref().and_then(|t| t.get::<Option<String>>("stdin").ok().flatten()).is_some_and(|v| v == "open");
             let mut launch = std::process::Command::new(&command);
             if let Some(cwd) = cwd { launch.current_dir(command_folder.join(cwd)); }
             launch.args(args.unwrap_or_default()).envs(environment(how.as_ref())).stdout(std::process::Stdio::piped());
             launch.stderr(if errors { std::process::Stdio::piped() } else { std::process::Stdio::null() });
-            if text.is_some() {
+            if text.is_some() || open {
                 launch.stdin(std::process::Stdio::piped());
             }
             // If the program gets killed, this goes with it.
@@ -1383,13 +1410,24 @@ impl LuauScript {
             let mut child = launch
                 .spawn()
                 .map_err(|e| mlua::Error::runtime(format!("cannot run '{command}': {e}")))?;
-            give_input(&mut child, text);
+            // The initial text and later writes share one ordered pipe writer.
+            let kept = if open {
+                child.stdin.take()
+            } else {
+                give_input(&mut child, text.clone());
+                None
+            };
             let output = child.stdout.take();
             let complaints = child.stderr.take();
             let child = track_child(child);
+            let kept = kept.map(|stdin| InputPipe::new(command.clone(), stdin, &child, text)).transpose()
+                .map_err(|error| { stop_child(&child); mlua::Error::runtime(format!("cannot open '{command}' input: {error}")) })?;
             {
                 let mut c = c.lock().unwrap();
                 c.running.insert(id, (f, child.clone()));
+                if let Some(stdin) = kept {
+                    c.inputs.insert(id, stdin);
+                }
                 if let Some(end) = on_exit {
                     c.processes.insert(id, Callback { f: end, query: None });
                 }
@@ -1424,11 +1462,30 @@ impl LuauScript {
             });
             Ok(id)
         })?)?;
+        // `write(id, "line\n")`: to the input of one started with `{ stdin = "open" }`.
+        // `write(id)` closes it (the program reads its end). Whether it got there.
         let c = self.c.clone();
+        g.set("write", lua.create_function(move |_, (id, text): (u32, Option<String>)| {
+            // Waiting on a slow child must never hold the shared state lock.
+            let input = {
+                let mut c = c.lock().unwrap();
+                let Some(input) = c.inputs.remove(&id) else { return Ok(false) };
+                if !c.permissions.commands.contains(&input.command) {
+                    input.abort();
+                    return Ok(false);
+                }
+                input
+            };
+            let close = text.is_none();
+            let ok = input.write(text);
+            if ok && !close { c.lock().unwrap().inputs.insert(id, input); }
+            Ok(ok)
+        })?)?;
         // `kill(id)` kills it and forgets about it. `kill(id, "int")` —or `"term"`— ASKS
         // it: it sends it the signal and keeps track of it until it leaves
         // on its own. A recorder that gets killed leaves an MP4 with no index, which
         // nobody can open; with SIGINT it writes it and exits.
+        let c = self.c.clone();
         g.set("kill", lua.create_function(move |_, (id, how): (u32, Option<String>)| {
             let signal = match how.as_deref() {
                 None => None,
@@ -1447,6 +1504,7 @@ impl LuauScript {
                 }
                 None => {
                     c.processes.remove(&id);
+                    c.inputs.remove(&id);
                     if let Some((_, child)) = c.running.remove(&id) {
                         stop_child(&child);
                     }
@@ -1799,6 +1857,7 @@ impl Script for LuauScript {
             Event::Process(id, output, code) => {
                 self.c.lock().unwrap().running.remove(&id);
                 self.c.lock().unwrap().commands.remove(&id);
+                self.c.lock().unwrap().inputs.remove(&id);
                 let f = self.c.lock().unwrap().processes.remove(&id);
                 if let Some(f) = f {
                     self.call_handler(&f.f, (output, code));

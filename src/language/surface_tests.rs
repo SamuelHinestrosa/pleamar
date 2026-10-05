@@ -2,6 +2,37 @@ use super::read_with;
 use crate::scene::{Animated, Ctx};
 
 #[test]
+fn component_size_and_list_content_share_each_copys_actual_measure() {
+    use crate::scene::{Behavior, Instr};
+    let path = std::env::current_dir().unwrap().join("tests/component-own-measure.plm");
+    let scene = read_with(path.to_str().unwrap(), vec![(path.clone(), include_str!("../../tests/component-own-measure.plm").into())]).unwrap().0;
+    let mut props: Vec<_> = scene.props.iter().map(|(_, x, spring)| Animated::at(*x, *spring)).collect();
+    let facts: Vec<_> = scene.facts.iter().map(|(_, x)| *x).collect();
+    let measures: Vec<_> = scene.instrs.iter().filter_map(|i| match i {
+        Instr::Text { measure: Some((_, h)), .. } => Some(*h), _ => None,
+    }).collect();
+    assert_eq!(measures.len(), 2);
+    assert_ne!(measures[0], measures[1]);
+    for (h0, h1) in [(20.0, 40.0), (70.0, 10.0)] {
+        props[measures[0].0 as usize].x = h0;
+        props[measures[1].0 as usize].x = h1;
+        for _ in 0..scene.behaviors.len() {
+            for behavior in &scene.behaviors {
+                if let Behavior::Bind { prop, to } = behavior {
+                    let value = to.eval(Ctx { props: &props, facts: &facts });
+                    props[prop.0 as usize].x = value;
+                }
+            }
+        }
+        let c = Ctx { props: &props, facts: &facts };
+        let content = scene.props.iter().position(|p| p.0 == "list.content").unwrap();
+        assert_eq!(props[content].x, h0 + h1 + 24.0);
+        assert_eq!(scene.zones[0].bounds(c), Some([0.0, 0.0, 100.0, h0 + 12.0]));
+        assert_eq!(scene.zones[1].bounds(c), Some([0.0, h0 + 12.0, 100.0, h0 + h1 + 24.0]));
+    }
+}
+
+#[test]
 fn repeated_surfaces_keep_independent_measured_geometry() {
     let path = std::env::current_dir().unwrap().join("surface-sizes.plm");
     let source = r#"scene Sizes {
