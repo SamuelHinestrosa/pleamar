@@ -22,6 +22,7 @@ yourself unless they ask.
 
 ```sh
 pleamar-wm agent windows                 # every window: its name (PID, or PID.N for one of a program's several), program, title, box, monitor, keyboard
+pleamar-wm agent open firefox            # start a program for your work: see below
 pleamar-wm agent look PID [FILE]         # a picture of that window; prints FILE WxH
 pleamar-wm agent click PID X Y           # X, Y are pixels of that picture
 pleamar-wm agent type PID "some text"
@@ -37,6 +38,12 @@ pleamar-wm agent done                    # finished: the light on the user's mon
 pleamar-wm agent help
 ```
 
+0. **A program that is not open**: `open COMMAND` (`open --monitor 1 …` when
+   the user names one). The monitor you will work on lights up first, so the
+   user sees it coming, and the window opens there —one the user is not on—
+   without taking their keyboard. Never start programs from your shell (`&`,
+   `setsid`, `xdg-open`): they open wherever the user's pointer is and take
+   their keyboard.
 1. **Find the window**: `windows`, and take its name: its PID, or `PID.N`
    when the program has several windows (a browser's windows belong to its
    main process).
