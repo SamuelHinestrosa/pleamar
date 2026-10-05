@@ -101,6 +101,11 @@ pleamar scene: layouts, window decorations, animations, what happens on drag.
   editor— is the other skill, `pleamar-desktop`: pleamar-wm gives an agent a
   pointer and a keyboard of its own (`agent on` in `session.conf`,
   `pleamar-wm agent …`).
+- **Using this desktop from another computer**, in a browser, is
+  `pleamar-wm remote` (`remote setup` for its password and codes, then put
+  it behind something that encrypts it, such as Tailscale Funnel). What
+  only whoever sits in front should see —its own mark that someone is in—
+  goes on a surface with `captures: hidden`, which the picture sent leaves out.
 
 ## The shape of a scene
 
@@ -248,6 +253,8 @@ emit("chosen", 3)                -- a declared event
 on("chosen", function(n) end)    -- listen: events, "fact:x", "text:x", "press:zone"
 after(200, f)  every(1000, f)    -- timers
 run("date", {"+%H:%M"}, f)       -- a command, if `permissions { run: … }` allows it
+local id = spawn("node", {"worker.mjs"}, on_line, on_exit, { stdin = "open" })
+write(id, '{"type":"ask"}\n')   -- a line to a program while it runs (a JSON-lines agent)
 sys.watch("audio", f)            -- a service; sys.ask(…) asks, sys.call(…) commands
 ```
 

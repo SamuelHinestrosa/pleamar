@@ -158,6 +158,10 @@ pub struct Surface {
     pub keyboard_while: bool,
     /// As long as no rule uses the right button, it closes the program.
     pub right_click_quits: bool,
+    /// `captures: hidden`: seen on the monitor but left out of what is
+    /// captured of it (a screenshot, a recording, a remote desktop), where
+    /// the compositor can do that (pleamar-wm).
+    pub hidden_from_captures: bool,
 }
 
 /// Whether the surface wants the keyboard. `OnDemand` is the normal thing in a panel with
@@ -173,7 +177,7 @@ pub enum Keyboard {
 impl Default for Surface {
     fn default() -> Self {
         // Neutral: full width, at the top, on all monitors. Whatever the scene asks for wins.
-        Surface { name: String::new(), instance: 0, origin: (0.0, 0.0), open: None, window: None, lock_screen: false, width: 0, size_props: None, cursor_props: None, height: 40, anchor: SurfaceAnchor::Top, anchor_from: None, level_while: None, margin: [0; 4], level: Level::Above, exclusive_zone: 0, reserve_while: None, max_fps: 0, screens: Screens::All, keyboard: Keyboard::Never, keyboard_while: false, right_click_quits: true }
+        Surface { name: String::new(), instance: 0, origin: (0.0, 0.0), open: None, window: None, lock_screen: false, width: 0, size_props: None, cursor_props: None, height: 40, anchor: SurfaceAnchor::Top, anchor_from: None, level_while: None, margin: [0; 4], level: Level::Above, exclusive_zone: 0, reserve_while: None, max_fps: 0, screens: Screens::All, keyboard: Keyboard::Never, keyboard_while: false, right_click_quits: true, hidden_from_captures: false }
     }
 }
 

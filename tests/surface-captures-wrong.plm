@@ -1,0 +1,4 @@
+// expect: error «shown or hidden»
+scene X {
+    surface { size: 100, 100; captures: secret }
+}

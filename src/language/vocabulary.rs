@@ -18,7 +18,7 @@ pub const LIBRARY_STATEMENTS: &[&str] = &["let", "spring", "component", "permiss
 
 /// Which properties each element accepts. `shape` are the ones common to all shapes.
 pub const PROPERTIES: &[(&str, &[&str])] = &[
-    ("surface", &["size", "anchor", "margin", "level", "reserve", "screens", "keyboard", "open", "kind", "title", "rate"]),
+    ("surface", &["size", "anchor", "margin", "level", "reserve", "screens", "keyboard", "open", "kind", "title", "rate", "captures"]),
     ("permissions", &["run", "services"]),
     ("shape", &["rotate", "stroke", "color", "opacity", "blend", "glass", "lens", "shine", "refraction", "dispersion", "dome", "ripple", "active", "show", "cursor", "carries", "grow"]),
     ("ellipse", &["at", "radius", "scale"]),
@@ -156,6 +156,9 @@ pub const LEVELS: &[&str] = &["background", "bottom", "top", "overlay"];
 /// Which kind of window a surface asks for: stuck to an edge, or a normal one.
 pub const SURFACE_KINDS: &[&str] = &["panel", "window", "lock"];
 pub const KEYBOARD_MODES: &[&str] = &["none", "on_demand", "exclusive"];
+/// Whether what a surface shows goes into captures of the monitor too (a
+/// screenshot, a recording, a remote desktop), or only to the monitor.
+pub const CAPTURES: &[&str] = &["shown", "hidden"];
 pub const TEXT_ALIGNS: &[&str] = &["left", "center", "right"];
 pub const STACK_ALIGNS: &[&str] = &["start", "center", "end"];
 /// How a group with effects blends: covering, or adding light.
@@ -203,6 +206,7 @@ pub fn to_text() -> String {
     line("surface.level", LEVELS);
     line("surface.kind", SURFACE_KINDS);
     line("surface.keyboard", KEYBOARD_MODES);
+    line("surface.captures", CAPTURES);
     line("text.align", TEXT_ALIGNS);
     line("layout.align", STACK_ALIGNS);
     line("group.mode", GROUP_MODES);
