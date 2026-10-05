@@ -49,7 +49,17 @@ def main():
     def write(path, contents):
         temporary = path.with_suffix('.tmp')
         temporary.write_text(contents, encoding='utf-8')
-        temporary.replace(path)
+        # An overlapping Windows reader/scanner can briefly deny replacement.
+        # Retry publication only; persistent locks and reload deadlines still fail.
+        deadline = time.monotonic() + 1
+        while True:
+            try:
+                temporary.replace(path)
+                break
+            except PermissionError as error:
+                if error.winerror not in (5, 32) or time.monotonic() >= deadline:
+                    raise
+                time.sleep(.02)
 
     def data(owner, contents):
         path = state / 'pleamar' / owner / 'state.txt'
