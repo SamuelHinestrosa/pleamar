@@ -744,6 +744,11 @@ struct Engaged {
     screens: Screens,
     lock: smithay_client_toolkit::session_lock::SessionLock,
     faces: Vec<LockFace>,
+    /// Faces whose monitor has gone but that the render still paints: they are
+    /// destroyed only once it has let go of them (`sheet_released`). Destroying
+    /// the surface under a swapchain that still uses it is a protocol error, and
+    /// the compositor ends the locker for it.
+    retiring: Vec<LockFace>,
 }
 
 /// The lock surface of ONE monitor.
@@ -810,7 +815,7 @@ pub fn lock_screen(which: usize, what: Option<((u32, u32), (f32, f32), Screens)>
         .map(|((output, name, mhz), shows)| lock_face(c, &lock, output, name, *mhz, shows || everywhere, origin))
         .collect();
     drop(monitors);
-    *engaged = Some(Engaged { which, bounds, origin, screens, lock, faces });
+    *engaged = Some(Engaged { which, bounds, origin, screens, lock, faces, retiring: Vec::new() });
     let _ = c.connection.flush();
 }
 
@@ -866,7 +871,9 @@ fn lock_face_for_new_monitor(output: &wl_output::WlOutput, name: &str, number: u
     println!("lock   · {name} arrived while locked: it has its face");
 }
 
-/// A monitor that goes while the session is locked takes its face with it. If
+/// A monitor that goes while the session is locked takes its face with it. A
+/// face the render paints waits in `retiring` until the render has let go of it,
+/// as on unlock; a cover, or a face not yet configured, is destroyed here. If
 /// what is left are only black covers, the first of them becomes the scene: a
 /// cover paints nothing, so it can be destroyed here, and it is destroyed before
 /// the new face is made, since a monitor can only have one. Gives back the ids
@@ -876,15 +883,14 @@ fn lock_face_for_gone_monitor(output: &wl_output::WlOutput) -> Vec<u32> {
     let mut engaged = c.engaged.lock().unwrap();
     let Some(e) = engaged.as_mut() else { return Vec::new() };
     let mut gone = Vec::new();
-    e.faces.retain(|f| {
-        if &f.output != output {
-            return true;
-        }
-        if f.cover.is_none() {
+    let (going, staying): (Vec<LockFace>, Vec<LockFace>) = std::mem::take(&mut e.faces).into_iter().partition(|f| &f.output == output);
+    e.faces = staying;
+    for f in going {
+        if f.cover.is_none() && f.pending.is_none() {
             gone.push(f.id);
+            e.retiring.push(f);
         }
-        false
-    });
+    }
     if !e.faces.is_empty() && e.faces.iter().all(|f| f.cover.is_some()) {
         let cover = e.faces.remove(0);
         let (output, name, mhz) = (cover.output.clone(), cover.name.clone(), cover.mhz);
@@ -895,6 +901,19 @@ fn lock_face_for_gone_monitor(output: &wl_output::WlOutput) -> Vec<u32> {
     }
     let _ = c.connection.flush();
     gone
+}
+
+/// The render has let go of surface `id`: if it was the face of a monitor that
+/// went while locked, it can be destroyed now.
+pub fn sheet_released(id: u32) {
+    let Some(c) = LOCKS.get() else { return };
+    let mut engaged = c.engaged.lock().unwrap();
+    let Some(e) = engaged.as_mut() else { return };
+    let before = e.retiring.len();
+    e.retiring.retain(|f| f.id != id);
+    if e.retiring.len() != before {
+        let _ = c.connection.flush();
+    }
 }
 
 /// The edges it sticks to, as protocol flags. With width 0 it also

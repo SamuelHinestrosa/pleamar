@@ -276,6 +276,15 @@ pub fn lock_screen(which: usize, what: Option<((u32, u32), (f32, f32), crate::sc
     let _ = (which, what);
 }
 
+/// The render has let go of the sheet of surface `id`, and with it of its
+/// swapchain: what the platform kept alive for it until then can go.
+pub fn sheet_released(id: u32) {
+    #[cfg(target_os = "linux")]
+    wayland::sheet_released(id);
+    #[cfg(not(target_os = "linux"))]
+    let _ = id;
+}
+
 /// Sticks surface `which` to another edge, while running. On Wayland it's a
 /// layer-shell request —`set_anchor` and `set_margin` work on a live
 /// surface, without creating it again—; on Windows it will be moving the window and
