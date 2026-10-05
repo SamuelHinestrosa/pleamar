@@ -132,6 +132,7 @@ curl -fsSL https://raw.githubusercontent.com/k4ditano/pleamar/main/install.sh | 
 | `pleamar-update` | new changes, built and put in place (it says what is new) |
 | `pleamar-update --session` | also pleamar-wm in the login screen (asks for sudo) |
 | `pleamar-update --agent` | AI agents may use your windows in pleamar-wm, with a cursor of their own |
+| `pleamar-update --remote` | this desktop from a browser elsewhere: a password and codes made, and `pleamar-wm remote` started with the session |
 | `pleamar-update --uninstall` | the programs go; your `~/.config/pleamar` stays |
 
 It tells you what your distribution is missing to build it (pacman, apt, dnf,
