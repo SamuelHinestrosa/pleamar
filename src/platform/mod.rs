@@ -66,12 +66,8 @@ struct Hub {
 static HUBS: std::sync::Mutex<Vec<((String, String, String), std::sync::Arc<std::sync::Mutex<Hub>>)>> = std::sync::Mutex::new(Vec::new());
 
 pub fn service(from: &str, name: &str, tag: &str, notify: Box<dyn Fn(SysValue) + Send>) -> bool {
-    // Linux reads apps once. Windows keeps its catalog current, so it also
-    // needs listener replacement when a plugin is removed and added again.
-    #[cfg(not(target_os = "windows"))]
-    if name == "apps" {
-        return start_service(from, name, notify);
-    }
+    // One-shot catalogs also need replay: a new Luau state must receive their
+    // last value without reading every application file again on each reload.
     let key = (from.to_owned(), name.to_owned(), tag.to_owned());
     let mut hubs = HUBS.lock().unwrap();
     if let Some((_, hub)) = hubs.iter().find(|(k, _)| *k == key) {

@@ -44,16 +44,20 @@ fn declarative_and_luau_subscriptions_do_not_replace_each_other() {
     assert_eq!(HUBS.lock().unwrap().iter().filter(|(key, _)| key.0 == owner).count(), 2);
 }
 
-#[cfg(target_os = "windows")]
+#[cfg(any(target_os = "windows", target_os = "linux"))]
 #[test]
-fn windows_application_catalog_does_not_retain_recreated_listeners() {
+fn application_catalog_replays_without_restarting_or_retaining_old_listeners() {
     let owner = "test-recreated-apps-owner";
     let (first, mut previous) = subscribe(owner, "apps", "watch");
-    assert!(matches!(first.recv_timeout(Duration::from_secs(30)).unwrap(), SysValue::List(_)));
+    let initial = first.recv_timeout(Duration::from_secs(30)).unwrap();
+    assert!(matches!(initial, SysValue::List(_)));
     for _ in 0..12 {
         let (replacement, alive) = subscribe(owner, "apps", "watch");
         assert!(previous.upgrade().is_none(), "apps retained the previous listener");
-        assert!(matches!(replacement.try_recv().unwrap(), SysValue::List(_)));
+        let replay = replacement.try_recv().unwrap();
+        assert!(matches!(replay, SysValue::List(_)));
+        #[cfg(target_os = "linux")]
+        assert_eq!(replay, initial);
         previous = alive;
     }
     assert_eq!(HUBS.lock().unwrap().iter().filter(|(key, _)| key.0 == owner).count(), 1);
