@@ -489,6 +489,16 @@ would say only the page shown):
 sys.call("thumbnails.want", "all")
 ```
 
+An overview that shows the windows moving asks for them live instead: the
+same `picture`, but each frame goes from the compositor to the image without
+a file, at the size the image is drawn (a very large one a little softer)
+and up to 30 times a second. Asked for no longer, each keeps its last frame
+as a file.
+
+```luau
+sys.call("thumbnails.live", "all")
+```
+
 
 ## Only for whoever sits there
 

@@ -134,6 +134,9 @@ struct Typesetter {
     /// How many real pixels per logical pixel it is painted at: that of the finest sheet.
     scale: f32,
     exhausted: bool,
+    /// The last frame of each live window drawn (`thumbnails:3`, at that size):
+    /// which version, and where. Asked for again with nothing new, it is left as it is.
+    frames: HashMap<LiveKey, (u64, AtlasSlot)>,
 }
 
 impl Typesetter {
@@ -141,7 +144,7 @@ impl Typesetter {
         let t0 = std::time::Instant::now();
         let fonts = FontSystem::new();
         println!("text   · {} system fonts in {} ms", fonts.db().len(), t0.elapsed().as_millis());
-        Typesetter { fonts, swash: SwashCache::new(), shelves: Shelves::new(), glyphs: HashMap::new(), pending_upload: Vec::new(), scale: 1.0, exhausted: false }
+        Typesetter { fonts, swash: SwashCache::new(), shelves: Shelves::new(), glyphs: HashMap::new(), pending_upload: Vec::new(), scale: 1.0, exhausted: false, frames: HashMap::new() }
     }
 
     /// When the scale changes, everything painted stops being valid.
@@ -151,6 +154,7 @@ impl Typesetter {
         self.glyphs.clear();
         self.pending_upload.clear();
         self.exhausted = false;
+        self.frames.clear();
     }
 
     fn lay_out(&mut self, c: &LayoutKey) -> Layout {
@@ -316,6 +320,9 @@ impl Typesetter {
     /// With `into`, a new version of one already loaded, painted over it.
     fn load_live(&mut self, name: &str, size: (u32, u32), into: Option<AtlasSlot>) -> Option<AtlasSlot> {
         let px = self.live_px(size);
+        if name.starts_with("thumbnails:") {
+            return self.load_frame(name, size, px, into);
+        }
         let path = if std::path::Path::new(name).is_absolute() { Some(std::path::PathBuf::from(name)) } else { crate::platform::icon(name) };
         let rgba = rasterize_image(&path?, px)?;
         let slot = match into {
@@ -323,6 +330,25 @@ impl Typesetter {
             _ => self.reserve(px.0, px.1)?,
         };
         self.upload(slot, rgba);
+        Some(slot)
+    }
+
+    /// A live window's frame (`thumbnails.live`): from memory, no file, made
+    /// the size it is drawn at. Several versions asked for while one was being
+    /// made are one: what is kept is always the last, so the rest find it drawn.
+    fn load_frame(&mut self, name: &str, size: (u32, u32), px: (u32, u32), into: Option<AtlasSlot>) -> Option<AtlasSlot> {
+        let frame = crate::platform::thumbnail_frame(name)?;
+        let key = (name.to_owned(), size);
+        let slot = match into {
+            Some(s) if (s.width, s.height) == px => s,
+            _ => self.reserve(px.0, px.1)?,
+        };
+        let place = |s: AtlasSlot| (s.x, s.y, s.width, s.height);
+        if self.frames.get(&key).is_some_and(|&(v, s)| v == frame.version && place(s) == place(slot)) {
+            return Some(slot);
+        }
+        self.upload(slot, fit_frame(&frame, px));
+        self.frames.insert(key, (frame.version, slot));
         Some(slot)
     }
 
@@ -723,6 +749,54 @@ fn fit(img: image::RgbaImage, px: (u32, u32)) -> Vec<u8> {
     }).collect()
 }
 
+/// A window's frame —premultiplied BGRA, as the compositor copies it— to
+/// premultiplied RGBA at exactly `px`, fitted like `fit`. Made smaller by
+/// averaging each box of pixels: it reads every pixel once, whatever the size
+/// (a frame is megabytes, and comes again many times a second). Made bigger,
+/// a window smaller than where it is drawn, it is filtered like any image.
+fn fit_frame(f: &crate::platform::ThumbnailFrame, px: (u32, u32)) -> Vec<u8> {
+    let (fw, fh) = (f.width.max(1), f.height.max(1));
+    let k = (px.0 as f32 / fw as f32).min(px.1 as f32 / fh as f32);
+    let (w, h) = (((fw as f32 * k).round() as u32).clamp(1, px.0), ((fh as f32 * k).round() as u32).clamp(1, px.1));
+    let rgba = |i: usize| {
+        let p = &f.pixels[i..i + 4];
+        [p[2], p[1], p[0], if f.opaque { 255 } else { p[3] }]
+    };
+    let reduced: Vec<u8> = if w <= fw && h <= fh {
+        let mut out = Vec::with_capacity(w as usize * h as usize * 4);
+        for y in 0..h {
+            let (y0, y1) = ((y * fh / h), ((y + 1) * fh / h).max(y * fh / h + 1));
+            for x in 0..w {
+                let (x0, x1) = ((x * fw / w), ((x + 1) * fw / w).max(x * fw / w + 1));
+                let mut sum = [0u32; 4];
+                for sy in y0..y1 {
+                    for sx in x0..x1 {
+                        let p = rgba((sy as usize * fw as usize + sx as usize) * 4);
+                        for c in 0..4 {
+                            sum[c] += p[c] as u32;
+                        }
+                    }
+                }
+                let n = (y1 - y0) * (x1 - x0);
+                out.extend(sum.map(|c| ((c + n / 2) / n) as u8));
+            }
+        }
+        out
+    } else {
+        let full: Vec<u8> = (0..fw as usize * fh as usize).flat_map(|i| rgba(i * 4)).collect();
+        let Some(img) = image::RgbaImage::from_raw(fw, fh, full) else { return vec![0; px.0 as usize * px.1 as usize * 4] };
+        // Already premultiplied: filtered as it is, and not multiplied again.
+        image::imageops::resize(&img, w, h, image::imageops::FilterType::Triangle).into_raw()
+    };
+    let mut canvas = vec![0; px.0 as usize * px.1 as usize * 4];
+    let (dx, dy) = (((px.0 - w) / 2) as usize, ((px.1 - h) / 2) as usize);
+    for (y, row) in reduced.chunks_exact(w as usize * 4).enumerate() {
+        let start = ((dy + y) * px.0 as usize + dx) * 4;
+        canvas[start..start + row.len()].copy_from_slice(row);
+    }
+    canvas
+}
+
 /// Premultiplied RGBA, at exactly `px`, fitted without distorting.
 fn rasterize_image(path: &std::path::Path, px: (u32, u32)) -> Option<Vec<u8>> {
     let data = std::fs::read(path).ok()?;
@@ -742,6 +816,25 @@ fn rasterize_image(path: &std::path::Path, px: (u32, u32)) -> Option<Vec<u8>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn frame(width: u32, height: u32, bgra: [u8; 4], opaque: bool) -> crate::platform::ThumbnailFrame {
+        crate::platform::ThumbnailFrame { version: 1, width, height, pixels: bgra.repeat((width * height) as usize), opaque }
+    }
+
+    #[test]
+    fn a_live_frame_is_fitted_like_any_image_and_turned_to_rgba() {
+        // Wider than the place: fitted to its width, centred, the rest left clear.
+        let out = fit_frame(&frame(40, 10, [10, 20, 30, 0], true), (20, 20));
+        let at = |x: usize, y: usize| &out[(y * 20 + x) * 4..(y * 20 + x) * 4 + 4];
+        assert_eq!(at(10, 10), [30, 20, 10, 255], "BGRA to RGBA, and XRGB is opaque whatever its alpha byte says");
+        assert_eq!(at(10, 0), [0, 0, 0, 0], "outside the fitted frame, clear");
+        // See-through, premultiplied: kept as it is, not multiplied again.
+        let out = fit_frame(&frame(8, 8, [0, 0, 64, 128], false), (4, 4));
+        assert_eq!(&out[0..4], [64, 0, 0, 128]);
+        // Smaller than its place: made bigger, filled.
+        let out = fit_frame(&frame(2, 2, [1, 2, 3, 255], false), (8, 8));
+        assert_eq!(&out[(4 * 8 + 4) * 4..(4 * 8 + 4) * 4 + 4], [3, 2, 1, 255]);
+    }
 
     fn spanish() -> LayoutKey {
         LayoutKey::new("Hoy · Nada todavía. Captura de pantalla copiada.", &Style::new(14.0, crate::scene::color(1.0, 1.0, 1.0)), None)
