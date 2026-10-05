@@ -16,6 +16,7 @@ whole scene and compiles: `./run-tests.sh` checks them.
 - [Reacting to a number changing](#reacting-to-a-number-changing)
 - [How far into the song](#how-far-into-the-song)
 - [Every window, with its picture](#every-window-with-its-picture)
+- [Only for whoever sits there](#only-for-whoever-sits-there)
 
 ## A list of thousands
 
@@ -488,3 +489,38 @@ would say only the page shown):
 sys.call("thumbnails.want", "all")
 ```
 
+
+## Only for whoever sits there
+
+A mark that must be seen on the monitor but not in what is captured of it: that
+the desktop is being used from elsewhere, a reminder you do not want in a
+screen share. `captures: hidden` leaves the surface out of screenshots,
+recordings, shared screens and remote desktops (pleamar-wm does it; other
+compositors show it in captures too). Put it on a surface of its own, and let
+it take no clicks: whoever sees the screen from elsewhere does not see it, and
+would press it by mistake.
+
+```plm
+language 0.2
+scene Mark {
+    fact remote = true
+    prop shown = 0 ~900ms
+    follow shown = remote
+    surface { size: full, 40; anchor: top }
+    text "the bar" { at: 20, 20; anchor: left center; size: 13; color: #e6e6e6 }
+
+    surface mark {
+        size: full, full
+        anchor: top_left
+        level: overlay
+        screens: each
+        captures: hidden
+        open: shown > 0.001
+        group {
+            opacity: shown
+            box { from: 2, 2; size: mark.width - 4, mark.height - 4; corner: 16; stroke: 2; color: #e8c26a }
+            text "In use from elsewhere" { at: 24, mark.height - 24; anchor: left center; size: 12; color: #e8c26a }
+        }
+    }
+}
+```
