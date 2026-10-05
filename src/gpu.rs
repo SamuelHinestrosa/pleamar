@@ -89,6 +89,9 @@ pub struct DrawList {
     /// Where each window was drawn this frame: its slot, its box and what it
     /// lives under. It is what a click on it is measured against.
     pub windows_drawn: Vec<(usize, [f32; 4], Affine)>,
+    /// All window images, including view-only copies: they repaint when their
+    /// pixels change even though those copies never receive window input.
+    pub window_regions: Vec<(usize, [f32; 4], Affine)>,
     /// Something is shown that moves without its elements changing —particles,
     /// a shader that reads the time, an image that moves—: comparing elements
     /// cannot say where the frame changed, so it is painted whole.
@@ -738,6 +741,7 @@ impl DrawList {
         self.wake_at = None;
         self.glass_regions.clear();
         self.windows_drawn.clear();
+        self.window_regions.clear();
         self.timed = false;
         let ComposeScratch { mut asleep, mut clips, mut transforms, mut opacity_groups } = std::mem::take(&mut self.scratch);
         clips.clear();
@@ -1160,6 +1164,7 @@ impl DrawList {
                     let fit = |box_: f32, asked: f32, real: f32| if asked < 0.0 { box_ / real.max(1.0) } else if asked < 0.5 { 1.0 } else { box_ / asked };
                     let (sx, sy) = (fit(b[2], ax, g[2]), fit(b[3], ay, g[3]));
                     let d = [b[0], b[1], (g[2] * sx).max(1.0), (g[3] * sy).max(1.0)];
+                    self.window_regions.push((*slot, d, affine));
                     // (A picture is not where the mouse reaches the window: the copy
                     // that lays it out is.)
                     if !picture {
@@ -2869,6 +2874,27 @@ mod tests {
         let mut draw = DrawList::default();
         draw.compose(instrs, Ctx { props: &[], facts: &[] }, &[], &mut text, None, (2048.0, 120.0), false);
         draw
+    }
+
+    #[test]
+    fn window_previews_repaint_without_becoming_input_targets() {
+        let (tx, _rx) = std::sync::mpsc::channel();
+        let mut text = Texts::open(tx);
+        let mut draw = DrawList::default();
+        draw.window_tex.push(Some(WindowTex { geometry: [0.0,0.0,400.0,300.0],
+            pieces: vec![(0,[0.0,0.0,1.0,1.0],[0.0,0.0,400.0,300.0],true)] }));
+        let window = |x:f32, ask:f32| Instr::Window { slot:0,
+            target:(x.into(),20.0.into(),200.0.into(),150.0.into()), alpha:1.0.into(),
+            ask:(ask.into(),ask.into()) };
+        let instrs=[window(10.0,-1.0),window(240.0,0.0)];
+        draw.compose(&instrs, Ctx {props:&[],facts:&[]}, &[], &mut text, None, (800.0,400.0), false);
+        assert_eq!(draw.window_regions.len(),2);
+        assert_eq!(draw.window_regions[0].1,[10.0,20.0,200.0,150.0]);
+        assert_eq!(draw.windows_drawn.len(),1);
+        assert_eq!(draw.windows_drawn[0].1[0],240.0);
+        draw.compose(&[], Ctx {props:&[],facts:&[]}, &[], &mut text, None, (800.0,400.0), false);
+        assert!(draw.window_regions.is_empty());
+        assert!(draw.windows_drawn.is_empty());
     }
 
     #[test]

@@ -3026,7 +3026,7 @@ pub fn run(
         let all_changed = !previous.changed_rects(&draw, &mut changed) || op.hud || finger_light > 0.0 || ripple.is_some();
         // A window that drew something new changes what its box covers, and nothing else.
         for slot in std::mem::take(&mut nest_changed) {
-            changed.extend(draw.windows_drawn.iter().filter(|w| w.0 == slot).map(|(_, d, affine)| {
+            changed.extend(draw.window_regions.iter().filter(|w| w.0 == slot).map(|(_, d, affine)| {
                 let b = affine.bounds([d[0], d[1], d[0] + d[2], d[1] + d[3]]);
                 [b[0] - 1.0, b[1] - 1.0, b[2] + 1.0, b[3] + 1.0]
             }));
@@ -3037,7 +3037,7 @@ pub fn run(
         // ended up holding a dead window's pixels, a monitor's worth each.
         if !nest_closed.is_empty() {
             nest_closed.retain(|slot| {
-                if draw.windows_drawn.iter().any(|w| w.0 == *slot) {
+                if draw.window_regions.iter().any(|w| w.0 == *slot) {
                     return true;
                 }
                 if let Some(w) = nest_windows.get_mut(*slot) {
