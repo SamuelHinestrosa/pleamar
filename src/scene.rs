@@ -1077,6 +1077,9 @@ pub enum Instr {
     Particles(Box<Particles>),
     /// What the next `Text` does besides being written: see `TextFx`.
     TextFx(Box<TextFx>),
+    /// The next `Text` can be selected with the mouse and copied
+    /// (`selectable: true`); what is selected is painted behind it in this colour.
+    Selectable(Color),
     /// Like `Opacity(Some(..))`, but what is inside is painted apart WITH
     /// effects applied when it is blended: blur, glow, colour, mask, how it
     /// blends. It always wants a layer of its own. `Opacity(None)` closes it.

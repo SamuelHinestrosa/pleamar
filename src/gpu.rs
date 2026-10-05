@@ -40,6 +40,11 @@ pub struct DrawList {
     pub measurements: Vec<(PropId, f32)>,
     /// The text fields, as they ended up: to know where a click falls.
     pub fields: Vec<PlacedField>,
+    /// The texts that can be selected (`selectable: true`), as they ended up
+    /// this frame, in the order they were painted.
+    pub selectable: Vec<PlacedText>,
+    /// What is selected of one of them: its instruction and the bytes from and to.
+    pub selected: Option<(usize, usize, usize)>,
     /// Groups painted separately: which elements, and on which layer.
     pub offscreen_groups: Vec<(Range<u32>, usize)>,
     /// The pieces of the scene that some open popup is showing.
@@ -188,6 +193,38 @@ pub struct FieldView {
     pub anchor: usize,
     /// The cursor blinks.
     pub visible: bool,
+}
+
+/// A text that can be selected, where it was painted: what it said, how it
+/// was laid out, its corner and the transform it was under, and the box that
+/// clipped it (what is outside is not seen, and so not pressed).
+pub struct PlacedText {
+    pub at: usize,
+    pub text: String,
+    pub layout: std::sync::Arc<crate::text::Layout>,
+    pub origin: (f32, f32),
+    pub affine: Affine,
+    pub limit: Option<[f32; 4]>,
+}
+
+impl PlacedText {
+    /// A point of the scene in the text's own place, from its corner.
+    pub fn local(&self, x: f32, y: f32) -> (f32, f32) {
+        let (x, y) = self.affine.inverse().apply(x, y);
+        (x - self.origin.0, y - self.origin.1)
+    }
+
+    /// Whether a point of the scene falls on its letters.
+    pub fn contains(&self, x: f32, y: f32) -> bool {
+        if self.limit.is_some_and(|b| x < b[0] || y < b[1] || x > b[2] || y > b[3]) {
+            return false;
+        }
+        let (lx, ly) = self.local(x, y);
+        self.layout.lines.iter().any(|l| {
+            let (a, b) = (l.cursors.first().map_or(0.0, |c| c.1), l.cursors.last().map_or(0.0, |c| c.1));
+            ly >= l.top && ly < l.bottom && lx >= a.min(b) - 4.0 && lx <= a.max(b) + 4.0
+        })
+    }
 }
 
 pub struct PlacedField {
@@ -698,6 +735,7 @@ impl DrawList {
         tip.begin_frame();
         self.measurements.clear();
         self.fields.clear();
+        self.selectable.clear();
         self.size = size;
         self.own_size = (size.0, size.1 - if hud { HUD_HEIGHT } else { 0.0 });
         self.shapes.clear();
@@ -706,6 +744,7 @@ impl DrawList {
         let mut placed_stops: Vec<f32> = Vec::new();
         // A text's effects, waiting for the text they belong to.
         let mut text_fx: Option<&TextFx> = None;
+        let mut text_select: Option<&Color> = None;
         self.offscreen_groups.clear();
         self.particle_marks.clear();
         self.blend_marks.clear();
@@ -1306,8 +1345,10 @@ impl DrawList {
                     clips.pop();
                 }
                 Instr::TextFx(fx) => text_fx = Some(fx),
+                Instr::Selectable(col) => text_select = Some(col),
                 Instr::Text { content, at, anchor, width, style, alpha, measure } => {
                     let fx = text_fx.take();
+                    let select = text_select.take();
                     let text = content_text(content, c, texts);
                     let text: &str = &text;
                     // It is ordered even if not visible: so that when it appears, it is already there.
@@ -1326,6 +1367,25 @@ impl DrawList {
                     let s = tip_scale;
                     let x0 = ((at.0.eval(c) - m.size.0 * anchor.0) * s).round() / s;
                     let y0 = ((at.1.eval(c) - m.size.1 * anchor.1) * s).round() / s;
+                    if let Some(sel) = select {
+                        let limit = clips.iter().map(|k| k.1).reduce(|a, b| [a[0].max(b[0]), a[1].max(b[1]), a[2].min(b[2]), a[3].min(b[3])]);
+                        // What is selected of it, behind its letters.
+                        if let Some((_, from, to)) = self.selected.filter(|k| k.0 == idx) {
+                            let sel = color(sel);
+                            for b in m.spans(from.min(to), to.max(from)) {
+                                let rect = crate::shapes::FlatShape { kind: 1, cx: x0 + (b[0] + b[2]) * 0.5, cy: y0 + (b[1] + b[3]) * 0.5, mx: (b[2] - b[0]) * 0.5, my: (b[3] - b[1]) * 0.5, radius: 2.0, rotation: 0.0, ex: 1.0, ey: 1.0, stroke: 0.0, affine };
+                                let (kf, bounds) = (self.push_shape(rect, 0.0), rect.bounds().unwrap_or([0.0; 4]));
+                                self.element(0.0, bounds, &clips, |e| {
+                                    affine.encode(&mut e[44..52]);
+                                    e[1] = kf as f32;
+                                    e[2] = 1.0;
+                                    e[3] = a * 0.85;
+                                    e[8..11].copy_from_slice(&sel);
+                                });
+                            }
+                        }
+                        self.selectable.push(PlacedText { at: idx, text: text.to_owned(), layout: m.clone(), origin: (x0, y0), affine, limit });
+                    }
                     let Some(fx) = fx else {
                         for g in &m.glyphs {
                             let d = [x0 + g.rect[0], y0 + g.rect[1], g.rect[2], g.rect[3]];
