@@ -78,7 +78,8 @@ command -v c++ > /dev/null || command -v g++ > /dev/null || command -v clang++ >
 # PipeWire's bindings (pleamar-wm shares the screen) are made with libclang.
 command -v clang > /dev/null || missing="$missing clang"
 if command -v pkg-config > /dev/null; then
-    for lib in libinput libseat libudev gbm xkbcommon libpipewire-0.3; do
+    # openssl: pleamar-wm remote's direct way (WebRTC) encrypts with it.
+    for lib in libinput libseat libudev gbm xkbcommon libpipewire-0.3 openssl; do
         pkg-config --exists "$lib" || missing="$missing $lib"
     done
 else
@@ -87,13 +88,13 @@ fi
 if [ -n "$missing" ]; then
     say "to build it, this is missing:$missing"
     if command -v pacman > /dev/null; then
-        hint="sudo pacman -S --needed git rust base-devel pkgconf clang libinput seatd libxkbcommon mesa vulkan-icd-loader xorg-xwayland pipewire"
+        hint="sudo pacman -S --needed git rust base-devel pkgconf clang libinput seatd libxkbcommon mesa vulkan-icd-loader xorg-xwayland pipewire openssl"
     elif command -v apt > /dev/null; then
-        hint="sudo apt install git cargo build-essential pkg-config clang libclang-dev libinput-dev libseat-dev libudev-dev libgbm-dev libxkbcommon-dev libvulkan1 xwayland libpipewire-0.3-dev"
+        hint="sudo apt install git cargo build-essential pkg-config clang libclang-dev libinput-dev libseat-dev libudev-dev libgbm-dev libxkbcommon-dev libvulkan1 xwayland libpipewire-0.3-dev libssl-dev"
     elif command -v dnf > /dev/null; then
-        hint="sudo dnf install git cargo gcc-c++ pkgconf clang-devel libinput-devel libseat-devel systemd-devel mesa-libgbm-devel libxkbcommon-devel vulkan-loader xorg-x11-server-Xwayland pipewire-devel"
+        hint="sudo dnf install git cargo gcc-c++ pkgconf clang-devel libinput-devel libseat-devel systemd-devel mesa-libgbm-devel libxkbcommon-devel vulkan-loader xorg-x11-server-Xwayland pipewire-devel openssl-devel"
     elif command -v zypper > /dev/null; then
-        hint="sudo zypper install git cargo gcc-c++ pkgconf libinput-devel libseat-devel systemd-devel libgbm-devel libxkbcommon-devel libvulkan1 xwayland"
+        hint="sudo zypper install git cargo gcc-c++ pkgconf libinput-devel libseat-devel systemd-devel libgbm-devel libxkbcommon-devel libvulkan1 xwayland libopenssl-devel"
     else
         hint="your distribution's packages for:$missing"
     fi
