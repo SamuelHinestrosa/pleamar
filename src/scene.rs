@@ -2209,6 +2209,9 @@ pub struct DmabufPlane {
 #[derive(Debug)]
 pub enum ToNest {
     Size(i32, i32),
+    /// Window images needed by open scene surfaces, including view-only copies.
+    /// This is resource demand, not an input target or native window placement.
+    Visible(Vec<usize>),
     /// A program pinned to the dock (true) or unpinned: by its name.
     Pin(String, bool),
     Pointer { slot: usize, x: f64, y: f64 },

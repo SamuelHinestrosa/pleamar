@@ -92,6 +92,8 @@ pub struct DrawList {
     /// All window images, including view-only copies: they repaint when their
     /// pixels change even though those copies never receive window input.
     pub window_regions: Vec<(usize, [f32; 4], Affine)>,
+    /// Images the scene needs, even before their first frame has arrived.
+    pub window_requests: Vec<(usize, [f32; 4])>,
     /// Something is shown that moves without its elements changing —particles,
     /// a shader that reads the time, an image that moves—: comparing elements
     /// cannot say where the frame changed, so it is painted whole.
@@ -742,6 +744,7 @@ impl DrawList {
         self.glass_regions.clear();
         self.windows_drawn.clear();
         self.window_regions.clear();
+        self.window_requests.clear();
         self.timed = false;
         let ComposeScratch { mut asleep, mut clips, mut transforms, mut opacity_groups } = std::mem::take(&mut self.scratch);
         clips.clear();
@@ -1151,11 +1154,16 @@ impl DrawList {
                     if a <= 0.001 {
                         continue;
                     }
+                    let b = [target.0.eval(c), target.1.eval(c), target.2.eval(c).max(1.0), target.3.eval(c).max(1.0)];
+                    let mut request=affine.bounds([b[0],b[1],b[0]+b[2],b[1]+b[3]]);
+                    for (_,clip) in &clips {
+                        request=[request[0].max(clip[0]),request[1].max(clip[1]),request[2].min(clip[2]),request[3].min(clip[3])];
+                    }
+                    if request[2]>request[0] && request[3]>request[1] { self.window_requests.push((*slot,request)); }
                     let Some(Some(tex)) = self.window_tex.get(*slot).cloned() else { continue };
                     // Scaled as much as its box is from the size it was asked to
                     // have, from its corner: a window that could not be that
                     // small —a minimum of its own— comes out cut, not squashed.
-                    let b = [target.0.eval(c), target.1.eval(c), target.2.eval(c).max(1.0), target.3.eval(c).max(1.0)];
                     // Asked for nothing (`ask: 0, 0`, the size it chooses): as it is.
                     // A picture of it (`ask: -1, -1`): the whole of it, into its box.
                     let g = tex.geometry;
@@ -2877,6 +2885,19 @@ mod tests {
     }
 
     #[test]
+    fn window_demand_exists_before_pixels_and_respects_hidden_content() {
+        let window=||Instr::Window {slot:3,target:(10.0.into(),20.0.into(),200.0.into(),150.0.into()),
+            alpha:1.0.into(),ask:((-1.0).into(),(-1.0).into())};
+        let draw=draw_instructions(&[window()]);
+        assert_eq!(draw.window_requests,vec![(3,[10.0,20.0,210.0,170.0])]);
+        assert!(draw.window_regions.is_empty());assert!(draw.windows_drawn.is_empty());
+        let hidden=draw_instructions(&[Instr::Opacity(Some(0.0.into())),window(),Instr::Opacity(None)]);
+        assert!(hidden.window_requests.is_empty());
+        let outside=draw_instructions(&[Instr::Clip(Some((Shape::circle((500.0.into(),500.0.into()),10.0),1.0))),window(),Instr::Clip(None)]);
+        assert!(outside.window_requests.is_empty());
+    }
+
+    #[test]
     fn window_previews_repaint_without_becoming_input_targets() {
         let (tx, _rx) = std::sync::mpsc::channel();
         let mut text = Texts::open(tx);
@@ -2895,6 +2916,7 @@ mod tests {
         draw.compose(&[], Ctx {props:&[],facts:&[]}, &[], &mut text, None, (800.0,400.0), false);
         assert!(draw.window_regions.is_empty());
         assert!(draw.windows_drawn.is_empty());
+        assert!(draw.window_requests.is_empty());
     }
 
     #[test]

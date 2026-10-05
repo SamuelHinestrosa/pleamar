@@ -598,6 +598,7 @@ pub fn run(
     let mut last_card_ask = Instant::now();
     // Where each window was last told to be seen.
     let mut nest_shown: std::collections::HashMap<usize, (String, [i32; 4])> = Default::default();
+    let mut nest_visible: Option<Vec<usize>> = None;
     // Programs' buffers already destroyed that a window is still showing.
     #[cfg(target_os = "linux")]
     let mut nest_doomed: Vec<u64> = Vec::new();
@@ -817,6 +818,7 @@ pub fn run(
                             w.ask = None;
                         }
                         nest_size = (0, 0);
+                        nest_visible = None;
                     }
                     // A window's zone is named like it: `win.3`, with the copy's mark if it has one.
                     nest_zones = scene
@@ -3059,6 +3061,17 @@ pub fn run(
         // Where each window is seen, for the compositor: on which monitor and its
         // box there (the last one drawn, which is the one on top).
         if let Some(send) = &nest {
+            // A provider can suspend expensive capture outside the current page.
+            // Unlike input placement, demand also includes pictures without a frame.
+            let mut needed:Vec<_>=draw.window_requests.iter().filter(|(_,r)|sheets.iter().any(|l| {
+                let open=scene.surfaces.get(l.view.surface).is_none_or(|s|s.open.as_ref().is_none_or(|e|e.is_true(c)));
+                let v=l.view.bounds();
+                open && r[0]<v[2] && r[2]>v[0] && r[1]<v[3] && r[3]>v[1]
+            })).map(|(slot,_)|*slot).collect();
+            needed.sort_unstable();needed.dedup();
+            if nest_visible.as_ref()!=Some(&needed) {
+                send(ToNest::Visible(needed.clone()));nest_visible=Some(needed);
+            }
             let mut seen: Vec<usize> = Vec::new();
             for (slot, d, affine) in draw.windows_drawn.iter().rev() {
                 if seen.contains(slot) {
