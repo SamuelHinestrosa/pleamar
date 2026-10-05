@@ -608,6 +608,8 @@ pub trait PlatformWindow: Send {
     /// Grab or release the keyboard with the scene running: a launcher wants it
     /// entirely while it's open, and not at all when it isn't.
     fn keyboard(&self, t: crate::scene::Keyboard);
+    /// Update capture visibility where the native window system supports it.
+    fn capture_visibility(&self, _hidden: bool) {}
     /// That the system report (`ToRender::Frame`) when it wants the frame after
     /// the one about to be presented. Where that's unknown, it doesn't report, and the clock sets the pace.
     fn request_frame(&self) {}

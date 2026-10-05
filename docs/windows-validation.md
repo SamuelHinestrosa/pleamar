@@ -1,8 +1,26 @@
 # Native Windows port: validation and remaining work
 
-This draft is based on pleamar `8bb920f0` (0.2.6). The accompanying Marea
-profile is based on `a5891891`, including the newly published Deriva source.
-It is an initial native Windows port, not a claim of complete desktop parity.
+This draft incorporates pleamar `da89436` (0.2.17). The accompanying Marea
+profile incorporates `a6566c2`, including Deriva and the Pi-based AI chat.
+It is a native Windows preview, not a claim of complete desktop parity.
+
+## October 5 upstream refresh
+
+The native default-Luau release build, 149 ordinary library tests and 235 language/documentation checks
+passed after the 0.2.17 merge. `captures: hidden` now maps to Windows capture
+affinity. `scripts/windows-capture-visibility.py` passed all six stages on
+non-primary DISPLAY2: real canvas/input HWND readback, popup inheritance,
+shown/hidden hot reload and popup recreation. DX12 presented the scene at 125%
+scale; the foreground window was unchanged. This test sent no physical input
+and did not inspect capture pixels or third-party recorder output.
+
+Prior-head Windows/Ubuntu engine CI (`cd3e4c3`) and Marea logic/installer CI
+(`57b6ef0`) passed. Marea's full installer lifecycle includes isolated signed-out
+SDK startup, update failure/recovery, Unicode paths, startup and uninstall/state
+preservation. The newer refresh needs CI at its own commit. Native AI window
+capture/identity/cancellation checks passed, while positive input, real account
+login and model conversations remain unverified. Detailed earlier evidence
+below applies only to its stated revisions.
 
 ## Original PR review
 

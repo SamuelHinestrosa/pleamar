@@ -2,6 +2,21 @@ use super::read_with;
 use crate::scene::{Animated, Ctx};
 
 #[test]
+fn capture_visibility_belongs_to_each_surface_and_its_monitor_copies() {
+    let path = std::env::current_dir().unwrap().join("capture-visibility.plm");
+    let source = r#"scene Captures {
+        surface { size: 100, 100 }
+        surface private { size: 80, 80; captures: hidden; screens: each max 2 }
+        surface shared { size: 80, 80; captures: shown }
+    }"#;
+    let scene = read_with(path.to_str().unwrap(), vec![(path.clone(), source.into())]).unwrap().0;
+    assert_eq!(scene.surfaces.iter().filter(|s| s.name == "private").count(), 2);
+    for surface in &scene.surfaces {
+        assert_eq!(surface.hidden_from_captures, surface.name == "private");
+    }
+}
+
+#[test]
 fn component_size_and_list_content_share_each_copys_actual_measure() {
     use crate::scene::{Behavior, Instr};
     let path = std::env::current_dir().unwrap().join("tests/component-own-measure.plm");

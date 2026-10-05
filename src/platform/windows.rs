@@ -90,6 +90,7 @@ struct WindowState {
     mouse_inside: AtomicBool,
     mouse_buttons: AtomicU8,
     right_click_quits: bool,
+    hidden_from_captures: AtomicBool,
     is_window: bool,
     placement: Mutex<Option<Placement>>,
     appbar: AtomicBool,
@@ -161,6 +162,14 @@ impl Drop for WindowsWindow {
 
 impl PlatformWindow for WindowsWindow {
     fn has_frame_callbacks(&self) -> bool { false }
+
+    fn capture_visibility(&self, hidden: bool) {
+        let previous = self.0.hidden_from_captures.load(Ordering::Relaxed);
+        if previous == hidden { return; }
+        if let Err(error) = set_capture_visibility(&self.0, hidden) {
+            eprintln!("windows · cannot update capture visibility: {error}");
+        }
+    }
 
     fn update_input_region(&self, boxes: &[[i32; 4]]) {
         *self.0.boxes.lock().unwrap() = boxes.to_vec();
@@ -277,6 +286,16 @@ pub(super) fn on_ui_thread(task: Box<dyn FnOnce() + Send>) -> Result<(), String>
         tasks.pop();
         return Err(error.to_string());
     }
+    Ok(())
+}
+
+fn set_capture_visibility(state: &WindowState, hidden: bool) -> Result<(), String> {
+    let affinity = if hidden { WDA_EXCLUDEFROMCAPTURE } else { WDA_NONE };
+    for hwnd in [state.hwnd(), state.input()] {
+        unsafe { SetWindowDisplayAffinity(hwnd, affinity) }
+            .map_err(|error| format!("Windows refused captures: {}: {error}", if hidden { "hidden" } else { "shown" }))?;
+    }
+    state.hidden_from_captures.store(hidden, Ordering::Relaxed);
     Ok(())
 }
 
@@ -1100,6 +1119,7 @@ fn create(
         mouse_inside: AtomicBool::new(false),
         mouse_buttons: AtomicU8::new(0),
         right_click_quits: p.right_click_quits,
+        hidden_from_captures: AtomicBool::new(false),
         is_window,
         placement: Mutex::new(placement),
         appbar: AtomicBool::new(false),
@@ -1186,6 +1206,12 @@ fn create(
         Ok(())
         };
         if let Err(error) = initialize() {
+            unsafe { remove_appbar(&state); let _ = DestroyWindow(hwnd); }
+            return Err(error);
+        }
+    }
+    if p.hidden_from_captures {
+        if let Err(error) = set_capture_visibility(&state, true) {
             unsafe { remove_appbar(&state); let _ = DestroyWindow(hwnd); }
             return Err(error);
         }
@@ -1328,7 +1354,7 @@ fn run_event_loop_with_monitors(
                 let mut corner = POINT { x: px(x, scale), y: px(y, scale) };
                 unsafe { let _ = ClientToScreen(parent.hwnd(), &mut corner); }
                 let monitor = Monitor { rect: RECT { left: corner.x, top: corner.y, right: corner.x + px(w, scale), bottom: corner.y + px(h, scale) }, name: parent.monitor_name.clone(), scale, mhz: 0 };
-                let spec = Surface { width: w.max(1) as u32, height: h.max(1) as u32, origin, anchor: SurfaceAnchor::TopLeft, right_click_quits: false, keyboard: Keyboard::OnDemand, ..Surface::default() };
+                let spec = Surface { width: w.max(1) as u32, height: h.max(1) as u32, origin, anchor: SurfaceAnchor::TopLeft, right_click_quits: false, keyboard: Keyboard::OnDemand, hidden_from_captures: parent.hidden_from_captures.load(Ordering::Relaxed), ..Surface::default() };
                 match create(&spec, parent.which, &monitor, 0, next_id, module, &instance, &to_render, 0, Some((k, parent.hwnd()))) {
                     Ok(v) => { live.push(v); next_id += 1; }
                     Err(e) => { eprintln!("popup · {e}"); let _ = to_render.send(ToRender::PopupClosed(k)); }

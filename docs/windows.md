@@ -23,6 +23,21 @@ Physical bounds use [DWM frame coordinates](https://learn.microsoft.com/en-us/wi
 and a per-monitor-DPI-aware worker; [GDI BitBlt](https://learn.microsoft.com/en-us/windows/win32/api/wingdi/nf-wingdi-bitblt)
 provides the pixels before region selection begins.
 
+`surface { captures: hidden }` uses native
+[SetWindowDisplayAffinity](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-setwindowdisplayaffinity)
+with `WDA_EXCLUDEFROMCAPTURE` on the drawing window and its input proxy. Popups
+inherit their parent's setting, including after a hot reload. Failure to apply
+the initial setting prevents that surface from opening and reports the Windows
+error. Windows 10 version 2004 or newer supports exclusion; older releases may
+leave an empty window in captures. This covers compatible OS capture APIs, not
+every third-party recorder, and is not a security boundary.
+
+`python scripts/windows-capture-visibility.py --binary target/release/pleamar.exe
+--output <new-directory>` opens only owned panels on active non-primary DISPLAY2.
+It checks native affinity on both HWNDs, popup inheritance and hot reload without
+injecting input or capturing the desktop. Capture pixels and third-party
+recording/remote clients require separate validation.
+
 ## Requirements and PowerShell build
 
 - Windows 10/11 x64 with a desktop session and a working DX12 graphics driver.

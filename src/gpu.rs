@@ -2835,6 +2835,10 @@ impl Sheet {
     pub fn keyboard(&self, t: Keyboard) {
         self.window.keyboard(t);
     }
+
+    pub fn capture_visibility(&self, hidden: bool) {
+        self.window.capture_visibility(hidden);
+    }
 }
 
 /// Header, frame history and, at the end, the lens: whether there is a background to show.

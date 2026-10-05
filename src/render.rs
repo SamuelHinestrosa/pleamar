@@ -752,10 +752,11 @@ pub fn run(
                     facts = fresh.facts.iter().map(|(n, initial)| scene.facts.iter().position(|h| h.0 == *n).map_or(*initial, |k| facts[k])).collect();
                     // A reload can introduce/reorder measured properties while
                     // the native windows keep their size and send no resize.
-                    for sheet in sheets.iter().filter(|s| s.view.popup.is_none()) {
+                    for sheet in &sheets {
                         if let Some(old) = scene.surfaces.get(sheet.view.surface) {
                             if let Some(surface) = fresh.surfaces.iter().find(|s| s.name == old.name && s.instance == old.instance) {
-                                publish_surface_size(surface, &mut props, sheet.view.size);
+                                if sheet.view.popup.is_none() { publish_surface_size(surface, &mut props, sheet.view.size); }
+                                sheet.capture_visibility(surface.hidden_from_captures);
                             }
                         }
                     }
@@ -833,6 +834,9 @@ pub fn run(
                     }
                 }
                 ToRender::Sheet(n) => {
+                    if let Some(surface) = scene.surfaces.get(n.view.surface) {
+                        n.window.capture_visibility(surface.hidden_from_captures);
+                    }
                     // The CPU may already have composed the scene while no GPU
                     // surface existed. Its cached list has never been uploaded.
                     compose_memo = None;
