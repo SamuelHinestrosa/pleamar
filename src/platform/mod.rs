@@ -831,6 +831,8 @@ mod windows_backdrop;
 #[cfg(target_os = "windows")]
 mod windows_capture;
 #[cfg(target_os = "windows")]
+mod windows_media_paths;
+#[cfg(target_os = "windows")]
 mod windows_capture_winrt;
 #[cfg(target_os = "windows")]
 mod windows_recording;

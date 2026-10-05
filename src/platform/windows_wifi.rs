@@ -27,7 +27,7 @@ fn personal_profile(ssid: &str, password: &str, secure: bool) -> Result<(String,
     if ssid.is_empty() || ssid.len() > 64 || ssid.len() % 2 != 0 || !ssid.bytes().all(|b| b.is_ascii_hexdigit()) {
         return Err("Invalid Wi-Fi network identifier".into());
     }
-    let profile = format!("Marea-{}", ssid.to_ascii_uppercase());
+    let profile = format!("Pleamar-{}", ssid.to_ascii_uppercase());
     let (authentication, encryption, key) = if secure {
         let kind = if password.len() == 64 && password.bytes().all(|b| b.is_ascii_hexdigit()) { "networkKey" }
             else if (8..=63).contains(&password.len()) && password.bytes().all(|b| (32..=126).contains(&b)) { "passPhrase" }
@@ -256,16 +256,16 @@ mod tests {
             ..Default::default()
         };
         state.wlanAssociationAttributes.dot11Ssid = DOT11_SSID { uSSIDLength: 2, ucSSID: [0xAB; 32] };
-        let name: Vec<u16> = "Marea-ABAB".encode_utf16().collect();
+        let name: Vec<u16> = "Pleamar-ABAB".encode_utf16().collect();
         state.strProfileName[..name.len()].copy_from_slice(&name);
-        assert!(authenticated_temporary(&state, "abab", "Marea-ABAB"));
-        assert!(!authenticated_temporary(&state, "ABAC", "Marea-ABAB"));
+        assert!(authenticated_temporary(&state, "abab", "Pleamar-ABAB"));
+        assert!(!authenticated_temporary(&state, "ABAC", "Pleamar-ABAB"));
         assert!(!authenticated_temporary(&state, "ABAB", "another profile"));
         state.isState = wlan_interface_state_authenticating;
-        assert!(!authenticated_temporary(&state, "ABAB", "Marea-ABAB"));
+        assert!(!authenticated_temporary(&state, "ABAB", "Pleamar-ABAB"));
         state.isState = wlan_interface_state_connected;
         state.wlanConnectionMode = wlan_connection_mode_profile;
-        assert!(!authenticated_temporary(&state, "ABAB", "Marea-ABAB"));
+        assert!(!authenticated_temporary(&state, "ABAB", "Pleamar-ABAB"));
     }
     #[test]
     fn invalid_wifi_commands_do_not_touch_a_radio() {
@@ -276,7 +276,7 @@ mod tests {
     #[test]
     fn wlan_profiles_escape_keys_and_encode_ssids_without_xml_injection() {
         let (name, xml) = personal_profile("45535041C39141", "<&>\"'abc", true).unwrap();
-        assert_eq!(name, "Marea-45535041C39141");
+        assert_eq!(name, "Pleamar-45535041C39141");
         assert!(xml.contains("<keyMaterial>&lt;&amp;&gt;&quot;&apos;abc</keyMaterial>"));
         assert!(personal_profile("</hex>", "", false).is_err());
         assert!(personal_profile("01", "short", true).is_err());

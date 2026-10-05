@@ -2,7 +2,7 @@
 //! on the render thread; a reload closes the selector and drops its pixels.
 use super::SysValue;
 use std::{cell::{Cell, RefCell}, path::{Path, PathBuf}, sync::{Arc, Mutex, OnceLock, atomic::{AtomicBool, AtomicU32, Ordering}}, time::{Duration, Instant}};
-use windows::{core::w, Win32::{Foundation::*, Graphics::{Dwm::*, Gdi::*}, System::{Com::CoTaskMemFree, LibraryLoader::GetModuleHandleW}, UI::{HiDpi::*, Input::KeyboardAndMouse::*, Shell::*, WindowsAndMessaging::*}}};
+use windows::{core::w, Win32::{Foundation::*, Graphics::{Dwm::*, Gdi::*}, System::LibraryLoader::GetModuleHandleW, UI::{HiDpi::*, Input::KeyboardAndMouse::*, Shell::*, WindowsAndMessaging::*}}};
 
 thread_local! {
     static FROZEN: RefCell<Option<Frame>> = const { RefCell::new(None) };
@@ -69,18 +69,16 @@ fn crop(frame: &Frame, rect: RECT) -> Result<image::RgbaImage, String> {
     }
     image::RgbaImage::from_raw(w as u32, h as u32, rgba).ok_or("invalid screenshot dimensions".into())
 }
-fn pictures() -> Result<PathBuf, String> { unsafe {
-    let raw = SHGetKnownFolderPath(&FOLDERID_Pictures, KF_FLAG_DEFAULT, None).map_err(|e| e.to_string())?;
-    let path = raw.to_string().map_err(|e| e.to_string());
-    CoTaskMemFree(Some(raw.0 as _));
-    Ok(PathBuf::from(path?).join("Marea"))
-} }
+fn pictures() -> Result<PathBuf, String> {
+    super::windows_media_paths::folder(&FOLDERID_Pictures).map_err(|e| e.to_string())
+}
 fn write_png(directory: &Path, image: &image::RgbaImage) -> Result<PathBuf, String> {
+    let prefix = super::windows_media_paths::name().map_err(|e| e.to_string())?.to_lowercase();
     std::fs::create_dir_all(directory).map_err(|e| e.to_string())?;
     // Create-new prevents a repeated shot or another instance overwriting a photo.
     let stamp = chrono::Local::now().format("%Y%m%d-%H%M%S-%3f").to_string();
     for index in 0..100 {
-        let path = directory.join(format!("marea-{stamp}-{index}.png"));
+        let path = directory.join(format!("{prefix}-{stamp}-{index}.png"));
         let file = match std::fs::OpenOptions::new().write(true).create_new(true).open(&path) {
             Ok(file) => file,
             Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
@@ -213,7 +211,7 @@ fn select_region(frame: &Frame) -> Result<Option<RECT>, String> {
     let state = Selection { frame, start: Cell::new(None), end: Cell::new(POINT::default()), result: Cell::new(None), done: Cell::new(false), started: Instant::now(), hint };
     unsafe {
         let discoverable = if std::env::var_os("PLEAMAR_TEST_WINDOWS").is_some() { WS_EX_APPWINDOW } else { WS_EX_TOOLWINDOW };
-        let hwnd = CreateWindowExW(WS_EX_TOPMOST | discoverable, w!("pleamar-screenshot"), w!("Marea screenshot selection"), WS_POPUP,
+        let hwnd = CreateWindowExW(WS_EX_TOPMOST | discoverable, w!("pleamar-screenshot"), w!("Screenshot selection"), WS_POPUP,
             frame.bounds.left, frame.bounds.top, width, height, None, None, Some(instance.into()), Some(&state as *const _ as _)).map_err(|e| e.to_string())?;
         // Only this worker owns the selector. Always release the HWND before the
         // borrowed frame/state disappear, including failures in the message loop.

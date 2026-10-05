@@ -259,7 +259,7 @@ pub fn query(name: &str, args: &[SysValue]) -> Result<SysValue, String> {
     match name {
         "tray.list" if args.is_empty() => read().map_err(|e| e.to_string()),
         "tray.state" if args.is_empty() => state().map_err(|e| e.to_string()),
-        // Windows applications own their context menus. The common Marea
+        // Windows applications own their context menus. The common scene
         // contract falls back to tray.context when no menu tree is available.
         "tray.menu" => { identity(args)?; Ok(SysValue::List(Vec::new())) },
         _ => Err(format!("Windows cannot answer '{name}'")),

@@ -35,7 +35,7 @@ fn keyboard_ready(entry: &Entry) -> Result<(), String> { unsafe {
     if GetForegroundWindow() != entry.identity.window() {
         let mut foreground_pid = 0;
         GetWindowThreadProcessId(GetForegroundWindow(), Some(&mut foreground_pid));
-        // Clicking Marea's approval card may activate Marea. Return focus to
+        // Clicking the scene's approval card may activate its window. Return focus to
         // the explicitly approved target, but never steal it from a different
         // application the user has switched to while the model was thinking.
         if foreground_pid != GetCurrentProcessId() || !SetForegroundWindow(entry.identity.window()).as_bool()

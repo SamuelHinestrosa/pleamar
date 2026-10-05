@@ -150,7 +150,7 @@ mod tests {
     use super::*;
     #[test]
     fn publisher_identity_and_literal_xml() {
-        assert_eq!(identity_for(Path::new("C:/Marea ñ/bin/pleamar.exe")), identity_for(Path::new("c:\\marea ñ\\bin\\PLEAMAR.EXE")));
+        assert_eq!(identity_for(Path::new("C:/Pleamar ñ/bin/pleamar.exe")), identity_for(Path::new("c:\\pleamar ñ\\bin\\PLEAMAR.EXE")));
         assert_ne!(identity_for(Path::new("C:/one/pleamar.exe")), identity_for(Path::new("C:/two/pleamar.exe")));
         assert!(!valid_text("bad\0text", 256));
         assert!(!valid_text(&"x".repeat(257), 256));

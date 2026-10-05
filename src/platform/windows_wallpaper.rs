@@ -101,6 +101,7 @@ fn image_file(path: &Path) -> bool {
 }
 fn catalog(current: &str) -> Vec<String> {
     use std::os::windows::fs::MetadataExt;
+    let media_name = super::windows_media_paths::name().ok().map(|name| name.to_lowercase());
     let mut roots = VecDeque::new();
     if let Ok(pictures) = unsafe { SHGetKnownFolderPath(&FOLDERID_Pictures, KF_FLAG_DEFAULT, None).and_then(|p| {
         let result = p.to_string(); CoTaskMemFree(Some(p.0 as _)); Ok(result?)
@@ -119,7 +120,11 @@ fn catalog(current: &str) -> Vec<String> {
             if meta.file_attributes() & 0x400 != 0 { continue; }
             let path = entry.path();
             if meta.is_dir() && depth < 2 {
-                if !matches!(entry.file_name().to_string_lossy().as_ref(), "Marea" | "Screenshots" | "Capturas") { roots.push_back((path, depth + 1)); }
+                let name = entry.file_name().to_string_lossy().to_lowercase();
+                if !matches!(name.as_str(), "screenshots" | "capturas")
+                    && media_name.as_ref() != Some(&name) {
+                    roots.push_back((path, depth + 1));
+                }
             } else if meta.is_file() && image_file(&path) {
                 paths.push(path.to_string_lossy().into_owned());
             }

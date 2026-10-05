@@ -11,12 +11,9 @@ pub fn clock() -> Result<i64> { unsafe {
     QueryPerformanceFrequency(&mut frequency)?;
     Ok((counter as i128 * 10_000_000 / frequency as i128) as i64)
 } }
-pub fn folder() -> Result<PathBuf> { unsafe {
-    let raw = SHGetKnownFolderPath(&FOLDERID_Videos, KF_FLAG_DEFAULT, None)?;
-    let result = raw.to_string();
-    CoTaskMemFree(Some(raw.0 as _));
-    Ok(PathBuf::from(result?).join("Marea"))
-} }
+pub fn folder() -> Result<PathBuf> {
+    super::super::windows_media_paths::folder(&FOLDERID_Videos)
+}
 
 pub struct Writer { sink: IMFSinkWriter, stream: IMFByteStream, video: u32, audio: u32, pub path: PathBuf, finalized: bool }
 fn video_type(width: u32, height: u32, subtype: &windows::core::GUID) -> Result<IMFMediaType> { unsafe {
@@ -43,11 +40,12 @@ fn audio_type(subtype: &windows::core::GUID) -> Result<IMFMediaType> { unsafe {
 
 impl Writer {
     pub fn new(device: &ID3D11Device, width: u32, height: u32, directory: &Path) -> Result<Self> { unsafe {
+        let prefix = super::super::windows_media_paths::name()?.to_lowercase();
         std::fs::create_dir_all(directory).map_err(windows::core::Error::from)?;
         let stamp = chrono::Local::now().format("%Y%m%d-%H%M%S-%3f");
         let mut created = None;
         for index in 0..100 {
-            let path = directory.join(format!("marea-{stamp}-{index}.mp4"));
+            let path = directory.join(format!("{prefix}-{stamp}-{index}.mp4"));
             let wide: Vec<u16> = path.as_os_str().encode_wide().chain([0]).collect();
             match MFCreateFile(MF_ACCESSMODE_WRITE, MF_OPENMODE_FAIL_IF_EXIST, MF_FILEFLAGS_NONE, PCWSTR(wide.as_ptr())) {
                 Ok(stream) => { created = Some((path, stream)); break; }

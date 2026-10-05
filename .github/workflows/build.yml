@@ -32,6 +32,15 @@ jobs:
           ./scripts/test-windows-runtime.ps1 -Archive $archive
       - name: Unit tests with Luau
         run: cargo test --locked
+      - name: Windows media paths and Unicode filenames
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $messages = cargo test --locked --lib --no-run --message-format=json | ForEach-Object { $_ | ConvertFrom-Json }
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $tests = @($messages | Where-Object { $_.reason -eq 'compiler-artifact' -and $_.profile.test -and $_.target.kind -contains 'lib' -and $_.executable })
+          if ($tests.Count -ne 1) { throw 'Expected one pleamar library test executable' }
+          python scripts/test-windows-media-paths.py --tests $tests[0].executable
       - name: Windows-key hook ownership on an isolated private desktop
         if: runner.os == 'Windows'
         run: cargo test --locked --lib native_layer_private_desktop -- --ignored --nocapture

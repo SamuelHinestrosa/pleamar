@@ -11,7 +11,7 @@ same service worker. Scopes are `region`, `display` (pointer's monitor) and
 `active_window` (visible DWM frame bounds). Declare `screenshot.*` permission.
 `finish` returns `{path, width, height, clipboard, clipboard_error}` or
 `{cancelled = true}`. PNG files are created without overwriting existing photos
-in the Pictures known folder's `Marea` directory. `screenshot.cancel` discards
+in the Pictures known folder's `Pleamar` directory. `screenshot.cancel` discards
 an unused identifier. A worker retains at most one frozen image; a new freeze
 replaces it and worker shutdown drops it. Finishing a frame older than one
 minute fails. Reload/exit cancels an active selector through its worker lifetime.
@@ -333,7 +333,7 @@ for `recording`, `finalizing`, `saved`, `cancelled` or `error`. Only `saved` mea
 the MP4 index was finalized. `recording.stop` signals cancellation even during
 codec startup. State includes the path, dimensions, encoded frame count, duration,
 audio frame/nonzero counts and audio discontinuities. `recording.folder` returns
-the actual Windows Videos known folder plus `Marea`. Files are created exclusively,
+the actual Windows Videos known folder plus `Pleamar`. Files are created exclusively,
 without overwriting an existing recording; errors can retain a partial-file path.
 One recording can run per process. Reload cancels the scene's owned recording;
 normal exit waits for finalization. Forced termination cannot make that guarantee.
@@ -355,7 +355,7 @@ python scripts/windows-recording-smoke.py --binary target/release/pleamar.exe --
 ```
 
 Use `--stop reload`, `--stop exit`, `--stop timed`, or `--stop cancel` for lifecycle checks. The
-quiet test tone is optional. Clips stay in Videos/Marea and are never uploaded.
+quiet test tone is optional. Clips stay in Videos/Pleamar by default and are never uploaded.
 The decoder can also inspect an existing clip without capturing the desktop.
 
 See Microsoft's [WGC free-threaded frame pool](https://learn.microsoft.com/en-us/uwp/api/windows.graphics.capture.direct3d11captureframepool.createfreethreaded),
@@ -596,3 +596,15 @@ written by someone else. The separate `pleamar-desktop` skill and `--agent`
 installer option require pleamar-wm and an independent Wayland seat. They are
 Linux-only; the Windows package does not install or advertise that desktop-control
 capability. No Windows equivalent or additional pleamar-wm port is claimed.
+
+
+### Media folder name
+
+On Windows, `PLEAMAR_MEDIA_NAME` selects the child folder used under the native
+Pictures and Videos known folders and the lowercase filename prefix. It defaults
+to `Pleamar`; a host application can set its own name in its launcher. For example,
+`$env:PLEAMAR_MEDIA_NAME = 'My captures'` keeps screenshots in
+`Pictures/My captures` and recordings in `Videos/My captures`. This is one folder
+name, not a path: device names, path separators, trailing dots/spaces and names
+longer than 80 UTF-16 units are rejected before writing. The wallpaper catalog
+excludes this folder. Existing media is not renamed or moved.
