@@ -1,0 +1,18 @@
+// expect: ok
+language 0.2
+// A mark only for whoever sits in front of the monitor: it is seen there, and left out
+// of what is captured of it (a screenshot, a shared screen, a remote desktop).
+scene RemoteMark {
+    fact remote = true
+    surface { size: full, 40; anchor: top }
+    text "the bar" { at: 20, 20; anchor: left center; size: 13; color: #f5f7f5 }
+
+    surface mark {
+        size: full, full
+        anchor: top_left
+        level: overlay
+        captures: hidden
+        open: remote
+        box { from: 2, 2; size: mark.width - 4, mark.height - 4; corner: 16; stroke: 2; color: #f0b35e }
+    }
+}

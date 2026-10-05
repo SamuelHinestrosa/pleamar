@@ -3742,6 +3742,10 @@ impl<'a> Compiler<'a> {
             }
         }
         // `rate: 60`: at most, that many frames per second, on any monitor.
+        // `captures: hidden`: on the monitor, not in what is captured of it.
+        if let Some(c) = p.get_mut("captures") {
+            s.hidden_from_captures = c.one_of(vocab::CAPTURES, "what it does in captures")? == "hidden";
+        }
         if let Some(c) = p.get_mut("rate") {
             let r = c.num()?;
             c.expect_end()?;
