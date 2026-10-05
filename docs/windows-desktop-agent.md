@@ -18,6 +18,14 @@ focus, minimized state and known owner (`dialogof`). Monitor numbers refer to
 the current list, sorted by device name. Disconnected monitors are not usable.
 The catalog lives with the service worker; refresh it at the start of a turn.
 
+Each screenshot closes its WGC session, frame pool and GPU readback resources.
+The loaded Windows capture module is pinned once until process exit because
+Windows 11 can otherwise unload it before internal callbacks finish when the
+last capture worker exits. This retains the library code, not screenshots,
+COM apartments or capture devices. See Microsoft's
+[GetModuleHandleExW pin semantics](https://learn.microsoft.com/en-us/windows/win32/api/libloaderapi/nf-libloaderapi-getmodulehandleexw).
+
+
 Commands use `sys.call_async` and report OS errors in their callbacks. Their
 first two arguments are the catalog epoch and window id:
 
@@ -25,6 +33,7 @@ first two arguments are the catalog epoch and window id:
 | --- | --- |
 | `desktop.click` | `x, y, "left"/"right"/"middle", count` (1–3) |
 | `desktop.type` | text (up to 4000 Unicode characters; no NUL) |
+| `desktop.type_secret` | a name saved through the [scene credential service](windows-credentials.md); no value is returned to Luau |
 | `desktop.key` | enter, tab, escape, backspace, space, arrows, delete, home, end, pageup, pagedown, f1–f12 |
 | `desktop.hotkey` | e.g. `ctrl+shift+t`; ctrl, alt and shift modifiers |
 | `desktop.scroll` | `x, y, direction, steps` (1–30) |

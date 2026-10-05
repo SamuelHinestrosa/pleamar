@@ -270,6 +270,14 @@ fn check_epoch(epoch: u64) -> Result<(), String> {
     if epoch != EPOCH.load(Ordering::Acquire) { Err("desktop action cancelled; list windows before continuing".into()) } else { Ok(()) }
 }
 
+pub fn type_secret(owner: &str, args: &[SysValue]) -> Result<(), String> {
+    let [epoch, window, SysValue::Text(name)] = args else { return Err("desktop.type_secret takes epoch, window id and saved name".into()); };
+    let _dpi = prepare()?;
+    let epoch = id(epoch)?.parse::<u64>().map_err(|_| "invalid desktop epoch")?;
+    check_epoch(epoch)?;
+    super::windows_credentials::with_secret(owner, name, |value| input::type_secret(window, value, epoch))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -287,3 +295,7 @@ mod native_tests;
 #[cfg(test)]
 #[path = "windows_scene_capture_tests.rs"]
 mod scene_tests;
+
+#[cfg(test)]
+#[path = "windows_capture_tests.rs"]
+mod capture_tests;

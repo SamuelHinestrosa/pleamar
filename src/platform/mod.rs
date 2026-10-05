@@ -153,6 +153,10 @@ fn start_service(from: &str, name: &str, notify: Box<dyn Fn(SysValue) + Send>) -
 
 /// Ask a service to do something: `workspaces.focus`, 3.
 pub fn command(from: &str, name: &str, args: &[SysValue]) -> Result<(), String> {
+    #[cfg(target_os = "windows")]
+    if name.starts_with("credentials.") { return windows_credentials::command(from, name, args); }
+    #[cfg(target_os = "windows")]
+    if name == "desktop.type_secret" { return windows_desktop::type_secret(from, args); }
     if name.starts_with("files.") {
         return files::command(from, name, args);
     }
@@ -237,6 +241,8 @@ pub fn config_dir() -> std::path::PathBuf {
 /// It can take a while —there's another application on the other side—, and
 /// that's why it's up to the logic, which can wait without it showing.
 pub fn query(from: &str, name: &str, args: &[SysValue]) -> Result<SysValue, String> {
+    #[cfg(target_os = "windows")]
+    if name.starts_with("credentials.") { return windows_credentials::query(from, name, args); }
     if name.starts_with("files.") {
         return files::query(from, name, args);
     }
@@ -807,6 +813,8 @@ mod windows_windows;
 #[cfg(target_os = "windows")]
 mod windows_desktop;
 #[cfg(target_os = "windows")]
+mod windows_credentials;
+#[cfg(target_os = "windows")]
 mod windows_search;
 #[cfg(target_os = "windows")]
 mod windows_hotkeys;
@@ -929,4 +937,20 @@ pub use windows_shell::icon;
 #[cfg(not(any(target_os = "linux", target_os = "windows")))]
 pub fn icon(_: &str) -> Option<std::path::PathBuf> {
     None
+}
+
+/// CPU time used by the calling thread, excluding waits, in milliseconds.
+pub(crate) fn thread_cpu_ms() -> f64 {
+    #[cfg(target_os = "windows")]
+    { return windows_diagnostics::thread_cpu_ms().unwrap_or(0.0); }
+    #[cfg(target_os = "linux")]
+    {
+        let mut t = libc::timespec { tv_sec: 0, tv_nsec: 0 };
+        // SAFETY: a valid clock and a timespec of our own to fill.
+        if unsafe { libc::clock_gettime(libc::CLOCK_THREAD_CPUTIME_ID, &mut t) } == 0 {
+            return t.tv_sec as f64 * 1000.0 + t.tv_nsec as f64 / 1e6;
+        }
+    }
+    #[cfg(not(target_os = "windows"))]
+    { 0.0 }
 }

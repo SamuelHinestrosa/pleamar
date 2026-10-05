@@ -139,6 +139,18 @@ fn send(inputs: &[INPUT]) -> Result<(), String> {
     Err(format!("Windows inserted {sent}/{} input events; the action may be partial (protected/elevated windows can reject input). Look again before retrying.", inputs.len()))
 }
 pub(super) fn command(name: &str, args: &[SysValue], epoch: u64) -> Result<(), String> {
+    input_command(name, args, epoch, None)
+}
+pub(super) fn type_secret(window: &SysValue, value: &str, epoch: u64) -> Result<(), String> {
+    input_command("desktop.type_secret", std::slice::from_ref(window), epoch, Some(value))
+}
+struct InputBuffer(Vec<INPUT>);
+impl std::ops::Deref for InputBuffer { type Target = Vec<INPUT>; fn deref(&self) -> &Self::Target { &self.0 } }
+impl std::ops::DerefMut for InputBuffer { fn deref_mut(&mut self) -> &mut Self::Target { &mut self.0 } }
+impl Drop for InputBuffer { fn drop(&mut self) {
+    for input in &mut self.0 { unsafe { std::ptr::write_volatile(input, INPUT::default()); } }
+} }
+fn input_command(name: &str, args: &[SysValue], epoch: u64, secret: Option<&str>) -> Result<(), String> {
     let (value, args) = args.split_first().ok_or("desktop action needs a catalog window id")?;
     let id = super::id(value)?;
     if name == "desktop.focus" && args.is_empty() {
@@ -172,7 +184,7 @@ pub(super) fn command(name: &str, args: &[SysValue], epoch: u64) -> Result<(), S
         return Err("the application did not move to the requested monitor".into());
     }
     fresh(&id, &entry)?;
-    let mut inputs = Vec::new();
+    let mut inputs = InputBuffer(Vec::new());
     let mut points = Vec::new();
     match (name, args) {
         ("desktop.type", [text]) => {
@@ -181,7 +193,11 @@ pub(super) fn command(name: &str, args: &[SysValue], epoch: u64) -> Result<(), S
             for c in text.encode_utf16() { inputs.extend([key(VIRTUAL_KEY(0), false, Some(c)), key(VIRTUAL_KEY(0), true, Some(c))]); }
         }
         ("desktop.key", [name]) => { let k = named_key(string(name)?).ok_or("unknown key")?; inputs.extend([key(k, false, None), key(k, true, None)]); }
-        ("desktop.hotkey", [keys]) => inputs = hotkey(string(keys)?)?,
+        ("desktop.type_secret", []) if secret.is_some() => {
+            inputs.reserve(secret.unwrap().encode_utf16().count() * 2);
+            for c in secret.unwrap().encode_utf16() { inputs.extend([key(VIRTUAL_KEY(0), false, Some(c)), key(VIRTUAL_KEY(0), true, Some(c))]); }
+        }
+        ("desktop.hotkey", [keys]) => inputs.0 = hotkey(string(keys)?)?,
         ("desktop.click", [x, y, button, count]) => {
             let p = point(x, y, entry.rect)?;
             points.push(p);

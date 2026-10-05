@@ -2,6 +2,7 @@
 //! walks through them at the screen's cadence and, when everything is still, stops
 //! painting altogether.
 
+use crate::platform::thread_cpu_ms;
 use crate::scene::*;
 use crate::gpu::{DrawList, Gpu, Sheet, HUD_HEIGHT, N_UNIFORMS};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -736,6 +737,8 @@ pub fn run(
                     }
                 }
                 ToRender::Scene(fresh) => {
+                    selection = None;
+                    draw.selectable.clear();
                     // Constant geometry can change while every fact and property stays equal.
                     compose_memo = None;
                     composition = None;
@@ -1743,6 +1746,7 @@ pub fn run(
                     let keeps = hovered.and_then(|k| scene.zones.get(k)).is_some_and(|z| z.cursor == Cursor::Hand || z.carries.is_some() || draw.fields.iter().any(|f| f.zone == z.id));
                     let on_text = if keeps { None } else { pointer.and_then(|p| draw.selectable.iter().rev().find(|t| t.contains(p.0, p.1)).map(|t| (t, p))) };
                     if let Some((t, p)) = on_text {
+                        editing = None;
                         let (lx, ly) = t.local(p.0, p.1);
                         let b = t.layout.byte_at(lx, ly).min(t.text.len());
                         let again = now.duration_since(clicks.0) < Duration::from_millis(450) && (p.0 - clicks.1 .0).hypot(p.1 - clicks.1 .1) < 5.0;
@@ -3033,9 +3037,7 @@ pub fn run(
         let same_scene = !draw.timed
             && !draw.particles_alive
             && draw.wake_at.is_none()
-            && compose_memo.as_ref().is_some_and(|m: &ComposeMemo| {
-                m.size == size && m.view == view && m.selected == draw.selected && m.views == draw.views && m.facts == facts && m.texts == texts && m.window_tex == draw.window_tex && m.props.len() == props.len() && m.props.iter().zip(&props).all(|(a, b)| *a == b.x)
-            });
+            && compose_memo.as_ref().is_some_and(|m| m.matches(size, view, &draw, &facts, &texts, &props));
         if !same_scene {
             draw.compose_prepared(to_paint, composition, c, &texts, &mut letters, view, size, op.hud);
             let memo = compose_memo.get_or_insert_with(ComposeMemo::default);
@@ -4194,30 +4196,6 @@ impl Playback {
     }
 }
 
-/// The CPU this thread has used, in milliseconds (the wall clock also counts
-/// what it spends waiting).
-fn thread_cpu_ms() -> f64 {
-    #[cfg(target_os = "windows")]
-    {
-        use windows::Win32::Foundation::FILETIME;
-        use windows::Win32::System::Threading::{GetCurrentThread, GetThreadTimes};
-        let (mut created, mut exited, mut kernel, mut user) = (FILETIME::default(), FILETIME::default(), FILETIME::default(), FILETIME::default());
-        if unsafe { GetThreadTimes(GetCurrentThread(), &mut created, &mut exited, &mut kernel, &mut user) }.is_ok() {
-            let ticks = |t: FILETIME| ((t.dwHighDateTime as u64) << 32) | t.dwLowDateTime as u64;
-            return (ticks(kernel) + ticks(user)) as f64 / 10_000.0;
-        }
-    }
-    #[cfg(target_os = "linux")]
-    {
-        let mut t = libc::timespec { tv_sec: 0, tv_nsec: 0 };
-        // SAFETY: a valid clock and a timespec of our own to fill.
-        if unsafe { libc::clock_gettime(libc::CLOCK_THREAD_CPUTIME_ID, &mut t) } == 0 {
-            return t.tv_sec as f64 * 1000.0 + t.tv_nsec as f64 / 1e6;
-        }
-    }
-    0.0
-}
-
 /// The `follow`s and `bind`s of a scene, remembered: each one is worked out
 /// again only if something it reads —a fact, or a property's value or speed—
 /// is not what it was when it was last worked out. A scene of windows has
@@ -4286,6 +4264,15 @@ struct ComposeMemo {
     texts: Vec<String>,
     window_tex: Vec<Option<crate::gpu::WindowTex>>,
     props: Vec<f32>,
+}
+
+impl ComposeMemo {
+    fn matches(&self, size: (f32, f32), view: Option<crate::gpu::FieldView>, draw: &crate::gpu::DrawList,
+        facts: &[f32], texts: &[String], props: &[Animated]) -> bool {
+        self.size == size && self.view == view && self.selected == draw.selected && self.views == draw.views
+            && self.facts == facts && self.texts == texts && self.window_tex == draw.window_tex
+            && self.props.len() == props.len() && self.props.iter().zip(props).all(|(a, b)| *a == b.x)
+    }
 }
 
 #[cfg(test)]
@@ -4366,6 +4353,22 @@ mod input_tests {
 #[cfg(test)]
 mod selection_tests {
     use super::*;
+
+    #[test]
+    fn selecting_and_clearing_static_text_recompose_without_a_scene_change() {
+        let mut memo = ComposeMemo { size: (640.0, 320.0), texts: vec!["Café · 日本語".into()], ..Default::default() };
+        let mut draw = crate::gpu::DrawList::default();
+        let matches = |memo: &ComposeMemo, draw: &crate::gpu::DrawList| memo.matches((640.0, 320.0), None, draw, &[], &["Café · 日本語".into()], &[]);
+        assert!(matches(&memo, &draw));
+        draw.selected = Some((1, 0, "Café".len()));
+        assert!(!matches(&memo, &draw), "mouse-only selection must invalidate the static frame");
+        memo.selected = draw.selected;
+        assert!(matches(&memo, &draw));
+        draw.selected = Some((1, 0, "Café · 日本語".len()));
+        assert!(!matches(&memo, &draw));
+        draw.selected = None;
+        assert!(!matches(&memo, &draw), "clearing must repaint the old highlight");
+    }
 
     #[test]
     fn a_double_click_takes_the_word() {

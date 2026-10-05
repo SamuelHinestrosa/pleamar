@@ -50,6 +50,12 @@ jobs:
       - name: Windows CLI smoke
         if: runner.os == 'Windows'
         run: python scripts/windows-smoke.py --binary target/release/pleamar.exe
+      - name: Isolated Windows dummy credentials (no user secrets)
+        if: runner.os == 'Windows'
+        run: cargo test --locked --lib platform::windows_credentials::tests::native_scoped_credential_roundtrip -- --ignored --exact
+      - name: Windows credential service through default Luau
+        if: runner.os == 'Windows'
+        run: python scripts/windows-credentials.py --binary target/release/pleamar.exe --output "${{ runner.temp }}/credential service ñ"
       - name: Windows service and Luau reloads without a display
         if: runner.os == 'Windows'
         run: python scripts/windows-service-reload.py --binary target/release/pleamar.exe --output "${{ runner.temp }}/service reload ñ"
