@@ -3001,6 +3001,26 @@ impl<'a> Compiler<'a> {
         if gradient.is_some() || outline.is_some() || shadow.is_some() || letter_move.is_some() || letter_opacity.is_some() || letter_scale.is_some() {
             self.e.paint(Instr::TextFx(Box::new(TextFx { gradient, outline, shadow, letter_move, letter_opacity, letter_scale })));
         }
+        // `selectable: true`: the mouse selects it and Ctrl+C copies it.
+        let selectable = match p.get_mut("selectable") {
+            Some(c) => {
+                let v = c.id("true or false")?;
+                c.expect_end()?;
+                match v.as_str() {
+                    "true" => true,
+                    "false" => false,
+                    _ => return c.error("`selectable` is true or false"),
+                }
+            }
+            None => false,
+        };
+        let selection = match p.get_mut("selection") {
+            Some(c) => self.color(c)?,
+            None => color(0.25, 0.42, 0.62),
+        };
+        if selectable {
+            self.e.paint(Instr::Selectable(selection));
+        }
         self.e.paint(Instr::Text { content, at, anchor, width, style, alpha, measure });
         Ok(())
     }

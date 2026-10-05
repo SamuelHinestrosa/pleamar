@@ -527,6 +527,10 @@ pub fn run(
     // catcher, a copy on each monitor) the compositor says «gone» and «here»
     // in a row; forgetting the field there left it on another one.
     let mut parked: Option<Editing> = None;
+    // What is selected of a text that can be (`selectable: true`), and the
+    // clicks in a row on it: a second one takes a word, a third the whole text.
+    let mut selection: Option<TextSelection> = None;
+    let mut clicks: (Instant, (f32, f32), u32) = (Instant::now(), (0.0, 0.0), 0);
     // The zone a drag out was tried from, until the button is let go.
     let mut carry_tried: Option<usize> = None;
     let mut repeat: Option<(String, Option<String>, Mods, Instant)> = None;
@@ -1561,6 +1565,17 @@ pub fn run(
         }
         let mut submitted: Vec<usize> = Vec::new();
         for (name, typed, mods, code) in key_presses {
+            // Ctrl+C with something of a text selected copies it, unless the
+            // field being typed into has a selection of its own.
+            if mods.ctrl && !mods.alt && !mods.logo && name == "c" && editing.as_ref().is_none_or(|e| e.cursor == e.anchor) {
+                if let Some(s) = selection.as_ref().filter(|s| s.anchor != s.cursor) {
+                    if let Some(t) = draw.selectable.iter().find(|t| t.at == s.at) {
+                        let (a, b) = s.bytes(&t.text);
+                        crate::platform::clipboard_write(&t.text[a..b]);
+                    }
+                    continue;
+                }
+            }
             // The field first: whatever is typing belongs to it. The rest —Escape, a
             // shortcut— goes on to the rules and to the logic.
             if let Some(ed) = &mut editing {
@@ -1722,6 +1737,25 @@ pub fn run(
         for (button, down) in &buttons {
             match (*button, *down) {
                 (0, true) => {
+                    // On the letters of a text that can be selected, the press
+                    // selects —unless a button, a field or something to carry
+                    // out is on top of them: that one keeps its click—.
+                    let keeps = hovered.and_then(|k| scene.zones.get(k)).is_some_and(|z| z.cursor == Cursor::Hand || z.carries.is_some() || draw.fields.iter().any(|f| f.zone == z.id));
+                    let on_text = if keeps { None } else { pointer.and_then(|p| draw.selectable.iter().rev().find(|t| t.contains(p.0, p.1)).map(|t| (t, p))) };
+                    if let Some((t, p)) = on_text {
+                        let (lx, ly) = t.local(p.0, p.1);
+                        let b = t.layout.byte_at(lx, ly).min(t.text.len());
+                        let again = now.duration_since(clicks.0) < Duration::from_millis(450) && (p.0 - clicks.1 .0).hypot(p.1 - clicks.1 .1) < 5.0;
+                        clicks = (now, p, if again { clicks.2 % 3 + 1 } else { 1 });
+                        let (anchor, cursor) = match clicks.2 {
+                            1 => (b, b),
+                            2 => word_around(&t.text, b),
+                            _ => (0, t.text.len()),
+                        };
+                        selection = Some(TextSelection { at: t.at, anchor, cursor, dragging: clicks.2 == 1 });
+                        continue;
+                    }
+                    selection = None;
                     pressed = hovered;
                     if let (Some(k), Some(p)) = (hovered, pointer) {
                         // Clicking a field focuses it, with the cursor where the click landed.
@@ -1739,6 +1773,9 @@ pub fn run(
                     }
                 }
                 (0, false) => {
+                    if let Some(s) = &mut selection {
+                        s.dragging = false;
+                    }
                     if let Some((k, _, _)) = drag.take() {
                         released = Some(k);
                         if let Some(z) = scene.zones.get(k) {
@@ -1776,6 +1813,13 @@ pub fn run(
         }
         if drag.is_none() {
             carry_tried = None;
+        }
+        // Selecting: the end follows the mouse, even off the text.
+        if let (Some(s), Some(p)) = (selection.as_mut().filter(|s| s.dragging), pointer) {
+            if let Some(t) = draw.selectable.iter().find(|t| t.at == s.at) {
+                let (lx, ly) = t.local(p.0, p.1);
+                s.cursor = t.layout.byte_at(lx, ly).min(t.text.len());
+            }
         }
         let dragged = match (drag, pointer) {
             (Some((k, _, _)), Some(p)) if last_pointer != Some(p) => Some(k),
@@ -2044,6 +2088,14 @@ pub fn run(
 
         // The cursor, the one of the zone it is over.
         let wanted = drag.map(|a| a.0).or(hovered).and_then(|k| scene.zones.get(k)).map_or(Cursor::Normal, |z| z.cursor);
+        // Over letters that can be selected, or selecting them, the text one.
+        let wanted = if selection.as_ref().is_some_and(|s| s.dragging)
+            || (wanted == Cursor::Normal && drag.is_none() && pointer.is_some_and(|p| draw.selectable.iter().any(|t| t.contains(p.0, p.1))))
+        {
+            Cursor::Text
+        } else {
+            wanted
+        };
         // Over a window, the one the window asks for.
         let wanted = if nest_pointer.is_some() { nest_cursor } else { wanted };
         if wanted != cursor_set {
@@ -2814,6 +2866,11 @@ pub fn run(
         draw.skip.clear();
         draw.skip.extend(asleep.iter().map(|t| t.instrs.clone()));
         let composition = composition.get_or_insert_with(|| crate::gpu::composition::Composition::new(to_paint, arrangement.map(|a| a.order.as_slice())));
+        // A selection whose text was not painted last frame (closed, gone) is forgotten.
+        if selection.as_ref().is_some_and(|s| !draw.selectable.iter().any(|t| t.at == s.at)) {
+            selection = None;
+        }
+        draw.selected = selection.as_ref().map(|s| (s.at, s.anchor, s.cursor));
         draw.clock = t_total;
         draw.reduced_motion = op.reduced_motion;
         if draw.signal_times.len() != scene.signals.len() {
@@ -2977,13 +3034,14 @@ pub fn run(
             && !draw.particles_alive
             && draw.wake_at.is_none()
             && compose_memo.as_ref().is_some_and(|m: &ComposeMemo| {
-                m.size == size && m.view == view && m.views == draw.views && m.facts == facts && m.texts == texts && m.window_tex == draw.window_tex && m.props.len() == props.len() && m.props.iter().zip(&props).all(|(a, b)| *a == b.x)
+                m.size == size && m.view == view && m.selected == draw.selected && m.views == draw.views && m.facts == facts && m.texts == texts && m.window_tex == draw.window_tex && m.props.len() == props.len() && m.props.iter().zip(&props).all(|(a, b)| *a == b.x)
             });
         if !same_scene {
             draw.compose_prepared(to_paint, composition, c, &texts, &mut letters, view, size, op.hud);
             let memo = compose_memo.get_or_insert_with(ComposeMemo::default);
             memo.size = size;
             memo.view = view;
+            memo.selected = draw.selected;
             memo.views.clone_from(&draw.views);
             memo.facts.clone_from(&facts);
             // An animation usually moves properties while all the labels stay
@@ -3892,6 +3950,44 @@ fn assign_pace(g: &Gpu, sheets: &mut [Sheet], size: (f32, f32), no_vsync: bool) 
     }
 }
 
+/// What is selected of a text that can be: its instruction, and the bytes
+/// where it was started and where it goes now. While the button is held, the
+/// second follows the mouse.
+struct TextSelection {
+    at: usize,
+    anchor: usize,
+    cursor: usize,
+    dragging: bool,
+}
+
+impl TextSelection {
+    /// From and to, in order and on letter boundaries of the text as it is now.
+    fn bytes(&self, t: &str) -> (usize, usize) {
+        let fit = |b: usize| {
+            let mut b = b.min(t.len());
+            while !t.is_char_boundary(b) {
+                b -= 1;
+            }
+            b
+        };
+        (fit(self.anchor.min(self.cursor)), fit(self.anchor.max(self.cursor)))
+    }
+}
+
+/// The word around a byte: letters, digits and what joins them. On anything
+/// else, just that character.
+fn word_around(t: &str, b: usize) -> (usize, usize) {
+    let is_word = |c: char| c.is_alphanumeric() || c == '_' || c == '\'' || c == '’';
+    let b = (0..=b.min(t.len())).rev().find(|k| t.is_char_boundary(*k)).unwrap_or(0);
+    let Some(here) = t[b..].chars().next() else { return (b, b) };
+    if !is_word(here) {
+        return (b, b + here.len_utf8());
+    }
+    let start = t[..b].char_indices().rev().take_while(|(_, c)| is_word(*c)).last().map_or(b, |(k, _)| k);
+    let end = t[b..].char_indices().find(|(_, c)| !is_word(*c)).map_or(t.len(), |(k, _)| b + k);
+    (start, end)
+}
+
 /// The field being typed into: which text, where the cursor is and from where it was
 /// selected. In bytes, always on the boundary of a letter.
 struct Editing {
@@ -4182,6 +4278,7 @@ impl Follows {
 struct ComposeMemo {
     size: (f32, f32),
     view: Option<crate::gpu::FieldView>,
+    selected: Option<(usize, usize, usize)>,
     /// What falls on no sheet is left out of the list: a sheet that comes
     /// (a lock screen, after its `open:` had already been read) makes it again.
     views: Vec<[f32; 4]>,
@@ -4263,5 +4360,35 @@ mod input_tests {
         assert_eq!(value, "España ñ世界 🚀");
         assert_eq!(editing.cursor, value.len());
         assert_eq!(editing.anchor, value.len());
+    }
+}
+
+#[cfg(test)]
+mod selection_tests {
+    use super::*;
+
+    #[test]
+    fn a_double_click_takes_the_word() {
+        let t = "Hola, ¿qué tal? it's fine_ok";
+        assert_eq!(&t[word_around(t, 1).0..word_around(t, 1).1], "Hola");
+        let q = t.find("qué").unwrap() + 2; // inside the «é»: still that word
+        let (a, b) = word_around(t, q);
+        assert_eq!(&t[a..b], "qué");
+        let (a, b) = word_around(t, t.find("it's").unwrap());
+        assert_eq!(&t[a..b], "it's");
+        let (a, b) = word_around(t, t.find("fine").unwrap());
+        assert_eq!(&t[a..b], "fine_ok");
+        // On a space or a sign, just that.
+        let (a, b) = word_around(t, 4);
+        assert_eq!(&t[a..b], ",");
+        assert_eq!(word_around(t, t.len()), (t.len(), t.len()));
+    }
+
+    #[test]
+    fn a_selection_stays_inside_a_text_that_shrank() {
+        let s = TextSelection { at: 0, anchor: 40, cursor: 2, dragging: false };
+        assert_eq!(s.bytes("ñandú"), (2, "ñandú".len()));
+        let s = TextSelection { at: 0, anchor: 1, cursor: 3, dragging: false };
+        assert_eq!(s.bytes("ñandú"), (0, 3));
     }
 }

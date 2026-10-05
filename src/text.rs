@@ -47,6 +47,17 @@ pub struct Layout {
     /// Where the text cursor falls before each letter: (byte, x). Only for the
     /// first line: it is what a field to type into needs.
     pub cursors: Vec<(usize, f32)>,
+    /// The same for every line, with where the line is: what selecting a
+    /// text with the mouse needs.
+    pub lines: Vec<TextLine>,
+}
+
+/// A line of a laid-out text: its top and bottom, and where the cursor falls
+/// before each letter of it (byte of the whole text, x), the end included.
+pub struct TextLine {
+    pub top: f32,
+    pub bottom: f32,
+    pub cursors: Vec<(usize, f32)>,
 }
 
 impl Layout {
@@ -58,6 +69,38 @@ impl Layout {
     /// The byte closest to an x: where a click falls.
     pub fn byte_at_x(&self, x: f32) -> usize {
         self.cursors.iter().min_by(|a, b| (a.1 - x).abs().total_cmp(&(b.1 - x).abs())).map_or(0, |c| c.0)
+    }
+
+    /// The byte closest to a point, on any line: above the first one is the
+    /// start, below the last one the end.
+    pub fn byte_at(&self, x: f32, y: f32) -> usize {
+        let Some(first) = self.lines.first() else { return 0 };
+        if y < first.top {
+            return first.cursors.first().map_or(0, |c| c.0);
+        }
+        let line = self.lines.iter().find(|l| y < l.bottom).unwrap_or_else(|| self.lines.last().unwrap());
+        if y >= line.bottom {
+            return line.cursors.last().map_or(0, |c| c.0);
+        }
+        line.cursors.iter().min_by(|a, b| (a.1 - x).abs().total_cmp(&(b.1 - x).abs())).map_or(0, |c| c.0)
+    }
+
+    /// The boxes (x0, y0, x1, y1) that cover the bytes from `a` to `b`, one
+    /// per line they touch.
+    pub fn spans(&self, a: usize, b: usize) -> Vec<[f32; 4]> {
+        let at = |l: &TextLine, k: usize| l.cursors.iter().rev().find(|c| c.0 <= k).or(l.cursors.first()).map_or(0.0, |c| c.1);
+        let mut out = Vec::new();
+        for l in &self.lines {
+            let (Some(s), Some(e)) = (l.cursors.first(), l.cursors.last()) else { continue };
+            if b <= s.0 || a > e.0 || (a == e.0 && e.0 > s.0) {
+                continue;
+            }
+            let (x0, x1) = (at(l, a.max(s.0)), at(l, b.min(e.0)));
+            if x1 > x0 {
+                out.push([x0, l.top, x1, l.bottom]);
+            }
+        }
+        out
     }
 }
 
@@ -175,7 +218,17 @@ impl Typesetter {
         let (mut w, mut h) = (0f32, 0f32);
         let mut full = false;
         let mut cursors: Vec<(usize, f32)> = Vec::new();
+        let mut lines: Vec<TextLine> = Vec::new();
+        // A letter's place counts from the start of its paragraph: where each
+        // one starts in the whole text, split as the buffer split it.
+        let starts: Vec<usize> = cosmic_text::LineIter::new(&c.text).map(|(r, _)| r.start).collect();
         for run in buffer.layout_runs() {
+            let from = starts.get(run.line_i).copied().unwrap_or(0);
+            let mut line: Vec<(usize, f32)> = run.glyphs.iter().map(|g| (from + g.start, g.x)).collect();
+            let end = run.glyphs.iter().map(|g| (from + g.end, g.x + g.w)).max_by_key(|e| e.0);
+            line.push(end.unwrap_or((from, 0.0)));
+            line.sort_by_key(|k| k.0);
+            lines.push(TextLine { top: run.line_top, bottom: run.line_top + run.line_height, cursors: line });
             if run.line_i == 0 && cursors.is_empty() {
                 cursors = run.glyphs.iter().map(|g| (g.start, g.x)).collect();
                 cursors.push((c.text.len(), run.line_w));
@@ -196,7 +249,7 @@ impl Typesetter {
         if cursors.is_empty() {
             cursors.push((0, 0.0));
         }
-        Layout { glyphs, size: (width.unwrap_or(w), h), cursors }
+        Layout { glyphs, size: (width.unwrap_or(w), h), cursors, lines }
     }
 
     fn glyph(&mut self, key: CacheKey, full: &mut bool) -> Option<(AtlasSlot, i32, i32, bool)> {
@@ -758,6 +811,27 @@ mod tests {
         assert!(t.lay_out(&key).glyphs.is_empty());
         t.shelves = Shelves::new();
         assert_eq!(t.lay_out(&key).glyphs.len(), expected, "atlas exhaustion must not cache letters as nonexistent");
+    }
+
+    #[test]
+    fn every_line_knows_its_bytes_for_selecting() {
+        let mut t = Typesetter::new();
+        // Two paragraphs, the second wrapped: bytes count from the start of the whole text.
+        let text = "Primera línea\nuna segunda bastante más larga que se parte en dos";
+        let m = t.lay_out(&LayoutKey::new(text, &Style::new(14.0, crate::scene::color(1.0, 1.0, 1.0)), Some(180.0)));
+        assert!(m.lines.len() >= 3, "the second paragraph should wrap: {} lines", m.lines.len());
+        let second = text.find("una").unwrap();
+        assert_eq!(m.lines[1].cursors.first().unwrap().0, second);
+        assert_eq!(m.lines.last().unwrap().cursors.last().unwrap().0, text.len());
+        // A point on the second line falls there; above everything is the start, below the end.
+        let l = &m.lines[1];
+        assert_eq!(m.byte_at(0.0, (l.top + l.bottom) / 2.0), second);
+        assert_eq!(m.byte_at(50.0, -20.0), 0);
+        assert_eq!(m.byte_at(0.0, 1000.0), text.len());
+        // Selecting across the paragraph break covers both lines, each in its own box.
+        let spans = m.spans(2, second + 3);
+        assert_eq!(spans.len(), 2);
+        assert!(spans[0][1] < spans[1][1]);
     }
 
     #[test]
