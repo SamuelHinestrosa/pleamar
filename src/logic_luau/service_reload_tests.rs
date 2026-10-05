@@ -5,16 +5,17 @@ struct Running {
     script: LuauScript,
     context: Context,
     events: Receiver<Event>,
+    rendered: Receiver<ToRender>,
 }
 
 impl Running {
     fn new(name: &str) -> Self {
-        let (tx, _render) = mpsc::channel();
+        let (tx, rendered) = mpsc::channel();
         let (sender, events) = mpsc::channel();
         let blocked = Arc::default();
         let context = Context::for_plugin(tx.clone(), Arc::clone(&blocked));
         let script = LuauScript::new(&format!("service-reload-{name}.plm"), "", tx, sender, blocked);
-        Self { script, context, events }
+        Self { script, context, events, rendered }
     }
 
     fn reload(&mut self, body: &str) {
@@ -102,6 +103,42 @@ fn removing_and_restoring_a_service_replays_without_accepting_stale_data() {
     assert_eq!(running.value("now.second"), -1.0, "the removed subscription became valid again");
     running.deliver(running.events.try_recv().expect("a restored quiet service needs its snapshot"));
     assert!(running.value("now.second") >= 0.0);
+}
+
+#[test]
+fn restored_quiet_fields_reach_the_renderer_even_when_the_value_is_unchanged() {
+    let mut running = Running::new("restore-render");
+    let declaration = r#"permissions { services: "clock" }
+        service clock as now { second: number = -1; time: text = "" }"#;
+    running.reload(declaration);
+    let initial = running.next();
+    let Event::ServiceData(_, _, value) = initial.clone() else { panic!("clock snapshot") };
+    running.deliver(initial);
+    running.rendered.try_iter().for_each(drop);
+    running.reload("");
+    running.reload(declaration);
+    let Event::ServiceData(alias, live, _) = running.next() else { panic!("restored snapshot") };
+    // Freeze the value across removal, irrespective of the wall-clock minute.
+    running.deliver(Event::ServiceData(alias, live, value));
+    let rendered: Vec<_> = running.rendered.try_iter().collect();
+    assert!(rendered.iter().any(|e| matches!(e, ToRender::Fact("now.second", n) if *n >= 0.0)),
+        "the renderer recreated the numeric field at its default but received no snapshot");
+    assert!(rendered.iter().any(|e| matches!(e, ToRender::Text("now.time", s) if !s.is_empty())),
+        "the renderer recreated the text field at its default but received no snapshot");
+}
+
+#[test]
+fn reload_preserves_retained_fields_and_retires_removed_ones() {
+    let mut running = Running::new("field-lifetime");
+    running.reload("fact kept = 1; fact removed = 2; text label = \"initial\"; text gone = \"old\"");
+    running.deliver(Event::Fact("kept", 42.0));
+    running.deliver(Event::Text("label", "current".into()));
+    running.reload("fact kept = 0; text label = \"default\"");
+    let state = running.script.c.lock().unwrap();
+    assert_eq!(state.facts["kept"], 42.0);
+    assert_eq!(state.texts["label"], "current");
+    assert!(!state.facts.contains_key("removed"));
+    assert!(!state.texts.contains_key("gone"));
 }
 
 #[test]

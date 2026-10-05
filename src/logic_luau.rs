@@ -1811,6 +1811,13 @@ impl Script for LuauScript {
                     println!("logic  · permissions now: {}", describe(&permissions));
                     c.permissions = permissions;
                 }
+                // Match the renderer's lifetime: a removed field loses its
+                // value. Otherwise an unchanged service snapshot is suppressed
+                // when the field returns, leaving its new drawing at default.
+                let declared: std::collections::HashSet<_> = facts.iter().map(|(n, _)| *n).collect();
+                c.facts.retain(|n, _| declared.contains(n.as_str()));
+                let declared: std::collections::HashSet<_> = texts.iter().map(|(n, _)| *n).collect();
+                c.texts.retain(|n, _| declared.contains(n.as_str()));
                 for (n, v) in facts {
                     c.facts.entry(n.to_owned()).or_insert(v as f64);
                 }

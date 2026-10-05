@@ -67,7 +67,9 @@ impl Watching {
     fn updates(&self) -> f64 { self.script.c.lock().unwrap().facts[&qualified(&self.script.prefix, "updates")] }
 
     fn permissions(&mut self, services: Vec<String>) {
-        self.deliver(Event::NewScene(vec![], vec![], crate::scene::Permissions { commands: vec![], services },
+        let facts = ["updates", "late"].into_iter().map(|name| (intern(&qualified(&self.script.prefix, name)), 0.0)).collect();
+        let texts = vec![(intern(&qualified(&self.script.prefix, "result")), String::new())];
+        self.deliver(Event::NewScene(facts, texts, crate::scene::Permissions { commands: vec![], services },
             vec![], vec![], vec![], vec![], vec![], vec![]));
     }
 }

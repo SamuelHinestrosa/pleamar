@@ -133,7 +133,9 @@ fn a_queued_query_reply_cannot_disclose_data_after_permission_revocation() {
     running.write("private");
     running.exec(ASK);
     let reply = running.next();
-    running.deliver(Event::NewScene(vec![], vec![], Default::default(), vec![], vec![], vec![], vec![], vec![], vec![]));
+    // Revoke permissions while keeping the fields used by the reply handler.
+    running.deliver(Event::NewScene(vec![("answers", 0.0)], vec![("result", String::new())],
+        Default::default(), vec![], vec![], vec![], vec![], vec![], vec![]));
     running.deliver(reply);
     assert_eq!(running.result(), "denied", "the revoked query's private result reached Luau");
     assert_eq!(running.answers(), 1.0, "the caller must still receive its failure callback");
