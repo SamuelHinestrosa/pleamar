@@ -632,7 +632,7 @@ without publishing a toast. The new action path still requires actual
 notification-center button acceptance and current installer CI; neither is
 established by COM invocation or the earlier informational-publisher tests.
 
-Current validation (October 6, 2026): the default-Luau release build and 192
+Current validation (October 6, 2026): the default-Luau release build and 193
 ordinary library tests pass locally. Starting the windowless helper directly
 also passes the cross-process activation and expiry checks. Automatic startup
 through its per-user registration currently fails locally with
@@ -641,6 +641,9 @@ readback; ASCII and Unicode install paths both reproduce it. The isolated
 `scripts/windows-toast-broker.py` CI check deliberately requires automatic
 startup and must pass before this path is accepted. No toast was published or
 clicked in that diagnostic, and it does not establish notification UI parity.
+The ordinary tests also cover a replaced publication finishing late: cleanup
+addresses its physical toast/token generation and preserves the replacement's
+pending action, even when both publications use the same logical scene tag.
 
 Opt-in native publishing validation (creates/removes only its own shortcut and
 toast): `cargo test --locked native_publisher_roundtrip -- --ignored --nocapture`.

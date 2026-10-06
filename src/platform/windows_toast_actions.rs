@@ -10,7 +10,7 @@ const EXPIRY:Duration=Duration::from_secs(6*60*60);
 struct Owner { name:String, lifetime:Option<Arc<AtomicBool>> }
 impl Owner {fn live(&self)->bool {self.lifetime.as_ref().is_none_or(|v|v.load(Ordering::Acquire))}}
 struct Notice { owner:Owner, tag:String, physical:String, tokens:Vec<(String,String)>, until:Instant, delivered:Arc<AtomicBool> }
-struct Event { owner:Owner, tag:String, action:String, until:Instant }
+struct Event { owner:Owner, tag:String, physical:String, action:String, until:Instant }
 #[derive(Default)]
 struct Store { notices:HashMap<String,Notice>, events:VecDeque<Event>, removals:Vec<String> }
 impl Store {
@@ -22,14 +22,18 @@ impl Store {
         self.notices.retain(|_,n| {let keep=n.owner.name!=owner || tag.is_some_and(|t|t!=n.tag);if !keep {self.removals.push(n.physical.clone());}keep});
         self.events.retain(|e|e.owner.name!=owner || tag.is_some_and(|t|t!=e.tag));
     }
+    fn cancel_publication(&mut self,physical:&str) {
+        self.notices.remove(physical);
+        self.events.retain(|e|e.physical!=physical);
+    }
     fn activate(&mut self,token:&str,now:Instant)->bool {
         self.prune(now);
         let found=self.notices.iter().find_map(|(id,n)|n.tokens.iter().find(|(t,_)|t==token).map(|(_,a)|(id.clone(),a.clone())));
         let Some((id,action))=found else {return false;};
         let n=self.notices.remove(&id).unwrap();
         n.delivered.store(true,Ordering::Release);
-        self.removals.push(n.physical);
-        self.events.push_back(Event{owner:n.owner,tag:n.tag,action,until:n.until});
+        self.removals.push(n.physical.clone());
+        self.events.push_back(Event{owner:n.owner,tag:n.tag,physical:n.physical,action,until:n.until});
         true
     }
     fn drain(&mut self,owner:&str,now:Instant)->SysValue {
@@ -50,7 +54,7 @@ impl Store {
         for id in checked {
             if present.contains(id) {continue;}
             if let Some(n)=self.notices.remove(id) {
-                self.events.push_back(Event{owner:n.owner,tag:n.tag,action:"dismissed".into(),until:n.until});
+                self.events.push_back(Event{owner:n.owner,tag:n.tag,physical:n.physical,action:"dismissed".into(),until:n.until});
             }
         }
     }
@@ -157,7 +161,12 @@ pub(super) fn publish(owner:&str,args:&[SysValue])->Result<(),String> {
         s.notices.insert(physical.clone(),Notice{owner:owner.clone(),tag:tag.clone(),physical:physical.clone(),tokens,until:Instant::now()+EXPIRY,delivered:delivered.clone()});}
     let result=toasts::deliver(&id,&physical,doc,Some(&delivered));
     if result.is_ok() {delivered.store(true,Ordering::Release);}
-    if result.is_err() || !owner.live() {c.store.lock().unwrap().cancel(&owner.name,Some(&tag));}
+    let remove={let mut s=c.store.lock().unwrap();
+        if result.is_err() || !owner.live() {s.cancel_publication(&physical);}
+        !s.notices.contains_key(&physical)};
+    // A replaced request may finish after its queued removal already ran. Retire
+    // that physical toast again without cancelling the newer logical tag.
+    if remove {toasts::remove(&id.to_string(),&physical);}
     result
 }
 pub(super) fn query(owner:&str,args:&[SysValue])->Result<SysValue,String> {
@@ -242,6 +251,17 @@ mod tests {
         assert!(s.activate("b-now",now));s.cancel("two",Some("b"));assert!(s.events.is_empty());
         s.notices.insert("c".into(),notice("two","c",active.clone(),now+EXPIRY));assert!(s.activate("c-now",now));
         active.store(false,Ordering::Release);assert_eq!(s.drain("two",now),SysValue::List(vec![]));
+    }
+    #[test]
+    fn late_publication_failure_preserves_the_replacement_action() {
+        let active=Arc::new(AtomicBool::new(true));let now=Instant::now();let mut s=Store::default();
+        let mut old=notice("one","same",active.clone(),now+EXPIRY);old.physical="old".into();old.tokens=vec![("old-token".into(),"now".into())];
+        s.notices.insert("old".into(),old);assert!(s.activate("old-token",now));
+        let mut new=notice("one","same",active,now+EXPIRY);new.physical="new".into();new.tokens=vec![("new-token".into(),"now".into())];
+        s.notices.insert("new".into(),new);
+        s.cancel_publication("old");assert!(s.events.is_empty());assert!(s.notices.contains_key("new"));
+        assert!(s.activate("new-token",now));s.cancel_publication("old");
+        assert_eq!(s.events.len(),1);assert_eq!(s.events[0].physical,"new");
     }
     #[test]
     fn validates_button_contract_before_starting_native_services() {
