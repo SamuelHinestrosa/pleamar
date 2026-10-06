@@ -38,6 +38,8 @@ pub enum Role {
     Field,
     List,
     Region,
+    /// Another program's window, held by the scene (`windows`).
+    Window,
     /// Words drawn outside every zone: a title, a status line.
     Text,
 }
@@ -54,6 +56,7 @@ impl Role {
             Role::Field => "field",
             Role::List => "list",
             Role::Region => "region",
+            Role::Window => "window",
             Role::Text => "text",
         }
     }
@@ -110,6 +113,9 @@ pub fn role_of(scene: &Scene, k: usize, z: &Zone) -> Role {
     }
     if field_of(scene, z).is_some() {
         return Role::Field;
+    }
+    if matches!(scene.instrs.get(z.at), Some(Instr::Window { .. })) {
+        return Role::Window;
     }
     if z.scrolls.is_some() {
         return Role::List;
@@ -270,7 +276,16 @@ pub fn describe(scene: &Scene, c: Ctx, texts: &[String], sight: &Sight) -> Vec<P
                 (Some(l), _) => content_text(l, c, texts).into_owned(),
                 (None, Some((text, placeholder, _))) if texts.get(text).is_none_or(|t| t.is_empty()) => content_text(placeholder, c, texts).into_owned(),
                 (None, Some(_)) => String::new(),
-                (None, None) => words.iter().map(|t| t.text.trim()).collect::<Vec<_>>().join(" "),
+                (None, None) => {
+                    let said = words.iter().map(|t| t.text.trim()).collect::<Vec<_>>().join(" ");
+                    // Nothing drawn in it: what its own `.title` says, if the scene
+                    // has one (another program's window, `win.3.title`).
+                    let own = format!("{}.title", z.id.split('#').next().unwrap_or(z.id));
+                    match scene.texts.iter().position(|t| t.0 == own) {
+                        Some(k) if said.is_empty() => texts.get(k).cloned().unwrap_or_default(),
+                        _ => said,
+                    }
+                }
             };
             let told = z.told.as_deref();
             let value = match (field, told.and_then(|t| t.value.as_ref())) {

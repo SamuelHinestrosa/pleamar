@@ -3239,6 +3239,14 @@ pub fn run(
                     rank: zone_rank.as_deref(),
                 };
                 let parts = crate::agent::describe(&scene, c, &texts, &sight);
+                if std::env::var_os("PLEAMAR_DEBUG_DESCRIBE").is_some() {
+                    let there = scene.zones.iter().filter(|z| !gone(z.at)).count();
+                    let active = scene.zones.iter().filter(|z| !gone(z.at) && z.active.is_true(c)).count();
+                    eprintln!("describe · {} zones, {there} there, {active} active · {} texts seen · shown {:?}", scene.zones.len(), draw.texts_seen.len(), sight.shown.iter().map(|s| (s.surface, s.bounds)).collect::<Vec<_>>());
+                    for z in scene.zones.iter().filter(|z| !gone(z.at) && z.active.is_true(c)).take(12) {
+                        eprintln!("describe ·   {} {:?}", z.id, z.bounds(c));
+                    }
+                }
                 // By the name it was written with: `hit`, not each copy's `hit#r3`.
                 for name in crate::agent::unnamed(&parts) {
                     let written = name.split('#').next().unwrap_or(name);
