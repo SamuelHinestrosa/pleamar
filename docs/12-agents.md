@@ -144,7 +144,7 @@ A zone with `agent: no` is described (an agent knows it is there and can tell th
 
 Implemented (step 5, 6 Oct 2026).
 
-- A scene answers **`hello`** with who it is: `pleamar 0.2.24 · scene notes · pid 4521 · language 0.2`. pleamar-wm asks every socket in its programs' folder (`PLEAMAR_SOCKETS`) and so knows which window is which scene.
+- A scene answers **`hello`** with who it is: `pleamar 0.2.25 · scene notes · pid 4521 · language 0.3`. pleamar-wm asks every socket in its programs' folder (`PLEAMAR_SOCKETS`) and so knows which window is which scene.
 - **`pleamar-wm agent windows`** marks them: `· pleamar scene notes: tree, press`.
 - By the window's PID, as everything else in `agent`: **`tree PID [json]`**, **`press PID NAME`**, **`wait PID CONDITION`**, **`watch PID [SECONDS]`**, and **`say PID ORDER`** for the rest (`type`, `drag`, `hold`, `wheel`, `key`). The agent does not need to know what the scene is called.
 - **The press is seen, and the cursor is never behind it**: the scene's hand itself, before it goes down, glides the session's agent cursor (the mint one with «agent» beside it) to the point it will press, in 60 to 180 ms by how far, and waits for it to arrive (300 ms at most); in a drag the cursor goes with each step. So it happens however the press was asked —`pleamar-wm agent press`, `pleamar --say … press`—, and if the user has pressed «Stop» the press is refused: `? the user stopped the agent`.
