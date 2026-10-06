@@ -694,6 +694,22 @@ mod tray;
 mod compositor;
 #[cfg(target_os = "linux")]
 mod thumbnails;
+/// A live window's last frame (`thumbnails.live`), by the `picture` that
+/// names it, for the image that draws it.
+#[cfg(target_os = "linux")]
+pub use thumbnails::{frame as thumbnail_frame, Frame as ThumbnailFrame};
+#[cfg(not(target_os = "linux"))]
+pub struct ThumbnailFrame {
+    pub version: u64,
+    pub width: u32,
+    pub height: u32,
+    pub pixels: Vec<u8>,
+    pub opaque: bool,
+}
+#[cfg(not(target_os = "linux"))]
+pub fn thumbnail_frame(_: &str) -> Option<std::sync::Arc<ThumbnailFrame>> {
+    None
+}
 mod files;
 
 /// JSON to what the logic sees, and back: `json.decode` and `json.encode`.

@@ -16,6 +16,13 @@
 //! path with a version (`…/3.png?12`), which `image … = from` paints and
 //! reloads as it changes.
 //!
+//! `thumbnails.live` asks the same of the windows an overview shows moving:
+//! their frames skip the file. Each one is kept here, in memory, as it came,
+//! and `picture` names it (`thumbnails:3?12`); `image … = from` takes it from
+//! here and makes it the size it is drawn at. Up to `LIVE_EVERY` a second,
+//! and still only when the pixels change. A window no longer asked for live
+//! gives its frame back as a file, so a whole frame is never held for nobody.
+//!
 //! A window the compositor stops copying keeps its last picture, and `stale`
 //! says it. Only the compositor can say so (the session `stopped`): a frame
 //! that does not come is the same, from here, whether the window did not
@@ -47,6 +54,37 @@ use wayland_protocols::ext::image_copy_capture::v1::client::{
 const SIDE: u32 = 400;
 /// A window's pictures, at most this often.
 const EVERY: Duration = Duration::from_millis(300);
+/// A live window's, at most this often: Hyprland fills every frame waiting on
+/// a monitor each time anything on it redraws, so without a pace a 144 Hz
+/// monitor would have every live window read and compared 144 times a second.
+const LIVE_EVERY: Duration = Duration::from_millis(33);
+
+/// A live window's last frame, as the compositor left it.
+pub struct Frame {
+    /// Bumped each time it changes: whoever drew the last one can tell this is the same.
+    pub version: u64,
+    pub width: u32,
+    pub height: u32,
+    /// Blue, green, red and alpha, premultiplied, `width * 4` bytes a row.
+    pub pixels: Vec<u8>,
+    /// XRGB: the alpha byte is not to be read.
+    pub opaque: bool,
+}
+
+/// Every live window's last frame, by the number in its `picture`.
+static FRAMES: Mutex<Option<HashMap<u64, Arc<Frame>>>> = Mutex::new(None);
+
+/// The frame a `picture` names (`thumbnails:3`, without its version), if it is one.
+pub fn frame(name: &str) -> Option<Arc<Frame>> {
+    let seq: u64 = name.strip_prefix("thumbnails:")?.parse().ok()?;
+    FRAMES.lock().unwrap().as_ref()?.get(&seq).cloned()
+}
+
+fn forget_frame(seq: u64) {
+    if let Some(f) = FRAMES.lock().unwrap().as_mut() {
+        f.remove(&seq);
+    }
+}
 
 /// Which windows to copy.
 #[derive(Default, Clone, PartialEq)]
@@ -55,6 +93,16 @@ enum Wanted {
     None,
     All,
     These(HashSet<String>),
+}
+
+impl Wanted {
+    fn has(&self, w: &Window) -> bool {
+        match self {
+            Wanted::None => false,
+            Wanted::All => true,
+            Wanted::These(ids) => ids.contains(&w.id),
+        }
+    }
 }
 
 /// A memory buffer the compositor copies a window into.
@@ -143,6 +191,8 @@ struct Window {
     version: u64,
     /// The pixels of the last picture, to tell a new one from the same again.
     pixels: u64,
+    /// Whether `picture` names a frame in memory (`thumbnails.live`) or a file.
+    live: bool,
     stale: bool,
     capture: Option<Capture>,
 }
@@ -156,6 +206,8 @@ struct State {
     windows: HashMap<u32, Window>,
     seq: u64,
     wanted: Wanted,
+    /// Which windows to copy live, to the renderer and not to a file.
+    live: Wanted,
     /// Everyone listening (the scene's `service thumbnails`, the logic's `sys.watch`…).
     dispatch: Vec<Box<dyn Fn(SysValue) + Send>>,
     last: Option<Vec<u8>>,
@@ -200,11 +252,46 @@ impl State {
     }
 
     fn wants(&self, w: &Window) -> bool {
-        match &self.wanted {
-            Wanted::None => false,
-            Wanted::All => true,
-            Wanted::These(ids) => ids.contains(&w.id),
+        self.wanted.has(w) || self.lives(w)
+    }
+
+    fn lives(&self, w: &Window) -> bool {
+        self.live.has(w)
+    }
+
+    /// A window no longer live keeps its picture, but as a file like any
+    /// other: the whole frame is not held for nobody, and a window that does
+    /// not change again would never come back through `taken`.
+    fn settle(&mut self, k: u32) {
+        let Some(w) = self.windows.get_mut(&k) else { return };
+        let frame = FRAMES.lock().unwrap().as_mut().and_then(|f| f.remove(&w.seq));
+        w.live = false;
+        let Some(f) = frame else {
+            w.picture.clear();
+            self.report();
+            return;
+        };
+        match write_png(&self.dir, w.seq, &f.pixels, (f.width, f.height), f.opaque) {
+            Some(path) => {
+                w.version += 1;
+                w.picture = format!("{}?{}", path.display(), w.version);
+            }
+            None => w.picture.clear(),
         }
+        self.report();
+    }
+
+    /// How long the loop may sleep: until the soonest copy is due, and never
+    /// more than a tenth of a second (what the logic wants is looked at on
+    /// the way round).
+    fn wait(&self) -> i32 {
+        let now = Instant::now();
+        self.windows
+            .values()
+            .filter_map(|w| w.capture.as_ref())
+            .filter(|c| c.frame.is_none() && c.size.is_some())
+            .map(|c| c.next.saturating_duration_since(now).as_millis() as i32)
+            .fold(100, i32::min)
     }
 
     /// Each round: copies started and stopped as wanted, and frames asked for
@@ -213,6 +300,9 @@ impl State {
         let (Some(sources), Some(copies), Some(shm)) = (self.sources.clone(), self.copies.clone(), self.shm.clone()) else { return };
         let keys: Vec<u32> = self.windows.keys().copied().collect();
         for k in keys {
+            if self.windows[&k].live && !self.lives(&self.windows[&k]) {
+                self.settle(k);
+            }
             let want = { let w = &self.windows[&k]; !w.id.is_empty() && self.wants(w) };
             let w = self.windows.get_mut(&k).unwrap();
             if !want {
@@ -248,20 +338,27 @@ impl State {
         }
     }
 
-    /// A frame came: made small, written, and told.
+    /// A frame came: kept for the renderer if the window is live; if not,
+    /// made small, written. And told.
     fn taken(&mut self, k: u32) {
+        let live = match self.windows.get(&k) {
+            Some(w) => self.lives(w),
+            None => return,
+        };
         let Some(w) = self.windows.get_mut(&k) else { return };
         let Some(c) = &mut w.capture else { return };
         if let Some(f) = c.frame.take() {
             f.destroy();
         }
-        c.next = Instant::now() + EVERY;
+        c.next = Instant::now() + if live { LIVE_EVERY } else { EVERY };
         let Some(s) = &c.shm else { return };
         let (pw, ph) = s.size;
         // SAFETY: our own mapping, `len` bytes, filled by the compositor before `ready`.
         let px = unsafe { std::slice::from_raw_parts(s.map, s.len) };
         let pixels = fingerprint(px, s.size);
-        if pixels == w.pixels && w.version > 0 {
+        // The same pixels, kept the same way, are nothing new. Kept the other
+        // way —the window went live, or stopped being live—, they are.
+        if pixels == w.pixels && w.version > 0 && w.live == live {
             // The same picture again: nothing to write, and only `stale` to undo.
             if w.stale {
                 w.stale = false;
@@ -270,23 +367,28 @@ impl State {
             return;
         }
         let opaque = s.format == wl_shm::Format::Xrgb8888;
-        // BGRA premultiplied (ARGB8888 in memory) to RGBA as a PNG wants it.
-        let mut rgba = Vec::with_capacity(px.len());
-        for p in px.chunks_exact(4) {
-            let a = if opaque { 255 } else { p[3] };
-            let un = |c: u8| if a == 0 || a == 255 { c } else { ((c as u32 * 255 + a as u32 / 2) / a as u32).min(255) as u8 };
-            rgba.extend_from_slice(&[un(p[2]), un(p[1]), un(p[0]), a]);
-        }
-        let Some(full) = image::RgbaImage::from_raw(pw, ph, rgba) else { return };
-        let k_side = (SIDE as f32 / pw.max(ph) as f32).min(1.0);
-        let (tw, th) = (((pw as f32 * k_side).round() as u32).max(1), ((ph as f32 * k_side).round() as u32).max(1));
-        let small = if (tw, th) == (pw, ph) { full } else { image::imageops::thumbnail(&full, tw, th) };
-        let path = self.dir.join(format!("{}.png", w.seq));
-        let tmp = self.dir.join(format!("{}.png.new", w.seq));
-        if small.save_with_format(&tmp, image::ImageFormat::Png).is_err() || std::fs::rename(&tmp, &path).is_err() {
+        if live {
+            // One copy, out of the buffer the compositor fills again next time;
+            // made small where it is drawn, to the size it is drawn at.
+            w.version += 1;
+            let frame = Frame { version: w.version, width: pw, height: ph, pixels: px.to_vec(), opaque };
+            FRAMES.lock().unwrap().get_or_insert_with(HashMap::new).insert(w.seq, Arc::new(frame));
+            if !w.live {
+                let _ = std::fs::remove_file(self.dir.join(format!("{}.png", w.seq)));
+            }
+            w.live = true;
+            w.pixels = pixels;
+            w.picture = format!("thumbnails:{}?{}", w.seq, w.version);
+            w.stale = false;
+            self.report();
             return;
         }
+        let Some(path) = write_png(&self.dir, w.seq, px, s.size, opaque) else { return };
         w.version += 1;
+        if w.live {
+            forget_frame(w.seq);
+        }
+        w.live = false;
         w.pixels = pixels;
         w.picture = format!("{}?{}", path.display(), w.version);
         w.stale = false;
@@ -308,6 +410,27 @@ fn fingerprint(px: &[u8], (w, h): (u32, u32)) -> u64 {
     f
 }
 
+/// A frame, made small (`SIDE` at most) and written as `<seq>.png` in `dir`:
+/// BGRA premultiplied (ARGB8888 in memory) to RGBA as a PNG wants it.
+fn write_png(dir: &std::path::Path, seq: u64, px: &[u8], (pw, ph): (u32, u32), opaque: bool) -> Option<std::path::PathBuf> {
+    let mut rgba = Vec::with_capacity(px.len());
+    for p in px.chunks_exact(4) {
+        let a = if opaque { 255 } else { p[3] };
+        let un = |c: u8| if a == 0 || a == 255 { c } else { ((c as u32 * 255 + a as u32 / 2) / a as u32).min(255) as u8 };
+        rgba.extend_from_slice(&[un(p[2]), un(p[1]), un(p[0]), a]);
+    }
+    let full = image::RgbaImage::from_raw(pw, ph, rgba)?;
+    let k_side = (SIDE as f32 / pw.max(ph) as f32).min(1.0);
+    let (tw, th) = (((pw as f32 * k_side).round() as u32).max(1), ((ph as f32 * k_side).round() as u32).max(1));
+    let small = if (tw, th) == (pw, ph) { full } else { image::imageops::thumbnail(&full, tw, th) };
+    let path = dir.join(format!("{seq}.png"));
+    let tmp = dir.join(format!("{seq}.png.new"));
+    if small.save_with_format(&tmp, image::ImageFormat::Png).is_err() || std::fs::rename(&tmp, &path).is_err() {
+        return None;
+    }
+    Some(path)
+}
+
 static CONTROL: OnceLock<(Connection, Arc<Mutex<State>>)> = OnceLock::new();
 
 /// Starts listing the windows (once), and tells `dispatch` the list each time it changes.
@@ -321,20 +444,26 @@ pub fn service(dispatch: Box<dyn Fn(SysValue) + Send>) -> bool {
     true
 }
 
-/// `thumbnails.want`: which windows to copy, by their `id`s (a list), `"all"`, or none.
+/// `thumbnails.want`: which windows to copy, by their `id`s (a list), `"all"`,
+/// or none. `thumbnails.live`, the same, for the ones to copy live.
 pub fn command(name: &str, args: &[SysValue]) -> Result<(), String> {
-    if name != "thumbnails.want" {
-        return Err(format!("the thumbnails cannot do '{name}': only thumbnails.want"));
+    if name != "thumbnails.want" && name != "thumbnails.live" {
+        return Err(format!("the thumbnails cannot do '{name}': only thumbnails.want and thumbnails.live"));
     }
     let wanted = match args {
         [] | [SysValue::Null] => Wanted::None,
         [SysValue::Text(t)] if t == "all" => Wanted::All,
         [SysValue::Text(t)] => Wanted::These(HashSet::from([t.clone()])),
         [SysValue::List(ids)] => Wanted::These(ids.iter().filter_map(|v| if let SysValue::Text(t) = v { Some(t.clone()) } else { None }).collect()),
-        _ => return Err("thumbnails.want takes a list of window ids, \"all\", or nothing".into()),
+        _ => return Err(format!("{name} takes a list of window ids, \"all\", or nothing")),
     };
     let state = start().ok_or("this compositor does not list its windows (ext-foreign-toplevel-list)")?;
-    state.lock().unwrap().wanted = wanted;
+    let mut e = state.lock().unwrap();
+    if name == "thumbnails.live" {
+        e.live = wanted;
+    } else {
+        e.wanted = wanted;
+    }
     Ok(())
 }
 
@@ -371,22 +500,22 @@ fn start() -> Option<Arc<Mutex<State>>> {
     std::thread::Builder::new()
         .name("thumbnails".into())
         .spawn(move || loop {
-            {
+            let wait = {
                 let mut e = shared.lock().unwrap();
                 if queue.dispatch_pending(&mut e).is_err() {
                     return;
                 }
                 e.tick(&qh);
-            }
+                e.wait()
+            };
             let _ = connection.flush();
             let Some(guard) = queue.prepare_read() else { continue };
             {
                 use std::os::fd::AsRawFd;
                 let mut fd = libc::pollfd { fd: guard.connection_fd().as_raw_fd(), events: libc::POLLIN, revents: 0 };
-                // A tenth of a second at most: what the logic wants, and the
-                // frames' times, are looked at on the way round.
+                // Until the next copy is due, a tenth of a second at most.
                 // SAFETY: one pollfd of our own, for as long as the call.
-                unsafe { libc::poll(&mut fd, 1, 100) };
+                unsafe { libc::poll(&mut fd, 1, wait) };
             }
             match guard.read() {
                 Ok(_) => {}
@@ -416,7 +545,7 @@ impl Dispatch<ExtForeignToplevelListV1, ()> for State {
     fn event(e: &mut Self, _: &ExtForeignToplevelListV1, ev: toplevel_list::Event, _: &(), _: &Connection, _: &QueueHandle<Self>) {
         if let toplevel_list::Event::Toplevel { toplevel } = ev {
             e.seq += 1;
-            e.windows.insert(key(&toplevel), Window { handle: toplevel, seq: e.seq, id: String::new(), title: String::new(), app: String::new(), picture: String::new(), version: 0, pixels: 0, stale: false, capture: None });
+            e.windows.insert(key(&toplevel), Window { handle: toplevel, seq: e.seq, id: String::new(), title: String::new(), app: String::new(), picture: String::new(), version: 0, pixels: 0, live: false, stale: false, capture: None });
         }
     }
 
@@ -448,6 +577,7 @@ impl Dispatch<ExtForeignToplevelHandleV1, ()> for State {
             toplevel::Event::Closed => {
                 if let Some(w) = e.windows.remove(&k) {
                     let _ = std::fs::remove_file(e.dir.join(format!("{}.png", w.seq)));
+                    forget_frame(w.seq);
                     w.handle.destroy();
                 }
                 e.report();
