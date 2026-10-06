@@ -152,8 +152,28 @@ fn pair(id: &str) -> std::result::Result<(), String> {
     if !device.fAuthenticated.as_bool() { return Err("Windows has not confirmed Bluetooth pairing".into()); }
     Ok(())
 }
+fn forget(id: &str) -> std::result::Result<(), String> {
+    if let Some(id) = id.strip_prefix("ble:") { return le::forget(id); }
+    let address = address(id)?;
+    let mut device = BLUETOOTH_DEVICE_INFO { dwSize: size_of::<BLUETOOTH_DEVICE_INFO>() as u32, ..Default::default() };
+    device.Address.Anonymous.ullLong = address;
+    let status = unsafe { BluetoothGetDeviceInfo(None, &mut device) };
+    if status != ERROR_SUCCESS.0 { return Err(windows::core::Error::from(WIN32_ERROR(status)).to_string()); }
+    // An audio container GUID identifies profiles, not a physical pairing.
+    // Only a stack-validated classic address or LE association may be removed.
+    let status = unsafe { BluetoothRemoveDevice(&device.Address) };
+    if status != ERROR_SUCCESS.0 { return Err(windows::core::Error::from(WIN32_ERROR(status)).to_string()); }
+    let status = unsafe { BluetoothGetDeviceInfo(None, &mut device) };
+    if status == windows::Win32::Foundation::ERROR_NOT_FOUND.0 { return Ok(()); }
+    if status != ERROR_SUCCESS.0 { return Err(windows::core::Error::from(WIN32_ERROR(status)).to_string()); }
+    if device.fAuthenticated.as_bool() || device.fRemembered.as_bool() {
+        return Err("Windows has not confirmed removal of this Bluetooth pairing".into());
+    }
+    Ok(())
+}
 pub fn command(name: &str, args: &[SysValue]) -> std::result::Result<(), String> {
     if let ("bluetooth.pair", [SysValue::Text(id)]) = (name, args) { return pair(id); }
+    if let ("bluetooth.forget", [SysValue::Text(id)]) = (name, args) { return forget(id); }
     if let ("bluetooth.connect", [SysValue::Text(id), SysValue::Bool(connect)]) = (name, args) {
         return super::windows_audio::bluetooth_connect(id, *connect);
     }
@@ -178,6 +198,7 @@ mod tests {
         assert_eq!(address("001122AaBbCc").unwrap(), 0x0011_22AA_BBCC);
         for id in ["Headphones", "{00112233-4455-6677-8899-aabbccddeeff}", "00:11:22:33:44:55", "000000000000", "FFFFFFFFFFFF", "00112233445G"] {
             assert!(command("bluetooth.pair", &[SysValue::Text(id.into())]).is_err());
+            assert!(command("bluetooth.forget", &[SysValue::Text(id.into())]).is_err());
         }
     }
     #[test]

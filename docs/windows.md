@@ -344,6 +344,44 @@ reported as a partial failure. The confirmation wait is bounded to 30 seconds;
 timeout does not forcibly disconnect a connection another application may have
 started. Wrong-password retry and profile persistence need Wi-Fi hardware tests.
 
+Windows also exposes these explicit, asynchronous radio operations:
+
+- `network.forget(interface_id, profile_name)` deletes the exact saved WLAN
+  profile and verifies its absence. It does not resolve profiles by display name
+  or disconnect another adapter.
+- `sys.ask_async("network.share", {interface_id, profile_name}, callback)` reads
+  the currently connected profile and returns `name`, `password`, `open` and
+  `qr` (a local PNG path). It checks the connection before and after reading.
+  Personal WPA/WPA2/WPA3-SAE and open profiles are supported; enterprise,
+  binary/control-character SSIDs and encrypted keys returned without plaintext
+  permission produce errors. This query must only follow a user's share action,
+  never a subscription or background poll.
+- `network.unshare()` closes the temporary QR file on that scene's network
+  worker. Use `call_async` on the same worker that handled `ask_async`; mixing
+  synchronous and asynchronous calls would use different thread-local owners.
+  Clear the scene's password and image when closing sharing. The PNG uses a
+  unique name and Windows delete-on-close, including worker retirement/process
+  exit. Credentials are not put in command lines, logs or persistent profile
+  exports. Permission denial from
+  [WlanGetProfile](https://learn.microsoft.com/en-us/windows/win32/api/wlanapi/nf-wlanapi-wlangetprofile)
+  can return an encrypted key with a successful status, so `protected` is
+  checked rather than treating that value as a password.
+- `bluetooth.forget(id)` accepts a known classic address or an enumerated LE
+  association ID. It uses the native stack's removal result and checks remaining
+  pairing state when the endpoint survives. An audio container GUID cannot be
+  used to remove a physical pairing.
+
+Validation on 2026-10-06: `cargo test --release --locked --lib --
+--test-threads=2` passed 177 tests, with 39 opt-in tests ignored in the local
+validation checkout (including two unpublished input fixtures). New QR tests
+decode the generated pixels with an independent decoder, cover Unicode and
+escaped credentials, reject encrypted/enterprise/changed profiles, and verify
+that actual temporary PNGs disappear on close and worker exit. Bluetooth tests
+reject fabricated identities and unsuccessful unpairing statuses. These tests
+do **not** establish hardware Wi-Fi sharing/deletion or Bluetooth unpairing;
+those operations still require identified test hardware. No saved user profile
+or pairing was deleted during this validation.
+
 `bluetooth.state` and the `bluetooth` subscription expose `present`, `enabled`,
 `devices`, `le_ready`, `error` and `warning`. LE rows use an opaque `ble:` ID;
 classic addresses and audio container IDs retain their own namespaces. Pass the

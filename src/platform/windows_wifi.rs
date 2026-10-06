@@ -5,6 +5,8 @@ use windows::core::{GUID, HRESULT, PCWSTR};
 use windows::Win32::{Foundation::{HANDLE, ERROR_INVALID_STATE}, NetworkManagement::WiFi::*};
 
 static DISCOVERY: AtomicBool = AtomicBool::new(false);
+#[path = "windows_wifi_share.rs"]
+mod sharing;
 struct Client(HANDLE);
 impl Drop for Client { fn drop(&mut self) { unsafe { WlanCloseHandle(self.0, None); } } }
 struct Allocation(*mut c_void);
@@ -19,6 +21,9 @@ fn checked(code: u32) -> Result<(), String> {
     }
 }
 fn wide_text(v: &[u16]) -> String { String::from_utf16_lossy(&v[..v.iter().position(|c| *c == 0).unwrap_or(v.len())]) }
+fn valid_profile(profile: &str) -> bool {
+    !profile.is_empty() && profile.encode_utf16().count() < 256 && !profile.contains('\0')
+}
 fn hex_ssid(ssid: &DOT11_SSID) -> String {
     ssid.ucSSID[..(ssid.uSSIDLength as usize).min(32)].iter().map(|v| format!("{v:02X}")).collect()
 }
@@ -184,9 +189,10 @@ pub fn read() -> windows::core::Result<SysValue> {
 }
 
 pub fn command(name: &str, args: &[SysValue]) -> Result<(), String> {
+    if name == "network.unshare" && args.is_empty() { sharing::clear(); return Ok(()); }
     match (name, args) {
         ("network.scan", []) | ("network.radio", [SysValue::Bool(_)]) => {},
-        ("network.connect", [SysValue::Text(interface), SysValue::Text(profile)]) if !interface.is_empty() && !profile.is_empty() && !profile.contains('\0') => {},
+        ("network.connect" | "network.forget", [SysValue::Text(interface), SysValue::Text(profile)]) if !interface.is_empty() && valid_profile(profile) => {},
         ("network.join", [SysValue::Text(_), SysValue::Text(ssid), SysValue::Text(password)]) => {
             // Reject malformed identifiers before opening WLAN. Security mode
             // itself is determined from the adapter's current scan below.
@@ -220,6 +226,19 @@ pub fn command(name: &str, args: &[SysValue]) -> Result<(), String> {
     }
     let SysValue::Text(id) = &args[0] else { unreachable!() };
     let interface = interfaces.iter().find(|i| format!("{:?}", i.InterfaceGuid) == *id).ok_or("The Wi-Fi adapter was removed")?;
+    if name == "network.forget" {
+        let SysValue::Text(profile) = &args[1] else { unreachable!() };
+        let wide: Vec<u16> = profile.encode_utf16().chain([0]).collect();
+        checked(unsafe { WlanDeleteProfile(client.0, &interface.InterfaceGuid, PCWSTR(wide.as_ptr()), None) })?;
+        // Deletion is synchronous; re-read the exact profile before reporting
+        // success. Never disconnect a different interface or delete by SSID.
+        let mut xml = windows::core::PWSTR::null();
+        let status = unsafe { WlanGetProfile(client.0, &interface.InterfaceGuid, PCWSTR(wide.as_ptr()), None, &mut xml, None, None) };
+        let _allocation = Allocation(xml.0.cast());
+        return if status == windows::Win32::Foundation::ERROR_NOT_FOUND.0 { Ok(()) }
+            else if status == 0 { Err("Windows still reports the saved Wi-Fi profile".into()) }
+            else { checked(status) };
+    }
     if name == "network.disconnect" { return checked(unsafe { WlanDisconnect(client.0, &interface.InterfaceGuid, None) }); }
     if name == "network.join" {
         let (SysValue::Text(ssid), SysValue::Text(password)) = (&args[1], &args[2]) else { unreachable!() };
@@ -244,6 +263,8 @@ pub fn command(name: &str, args: &[SysValue]) -> Result<(), String> {
     checked(unsafe { WlanConnect(client.0, &interface.InterfaceGuid, &parameters, None) })
     // Acceptance is not connection success. The next snapshot owns that state.
 }
+
+pub fn share(args: &[SysValue]) -> Result<SysValue, String> { sharing::read(args) }
 
 #[cfg(test)]
 mod tests {
@@ -270,6 +291,10 @@ mod tests {
     #[test]
     fn invalid_wifi_commands_do_not_touch_a_radio() {
         assert!(command("network.connect", &[SysValue::Text("x".into()), SysValue::Text("bad\0profile".into())]).is_err());
+        for profile in [String::new(), "bad\0profile".into(), "x".repeat(256), "海".repeat(256)] {
+            assert!(command("network.forget", &[SysValue::Text("x".into()), SysValue::Text(profile)]).is_err());
+        }
+        assert!(command("network.forget", &[SysValue::Text("network name".into())]).is_err());
         assert!(command("network.radio", &[]).is_err());
         assert!(command("network.scan", &[SysValue::Bool(true)]).is_err());
     }

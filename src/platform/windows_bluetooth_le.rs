@@ -251,13 +251,13 @@ fn pairing_status(status: DevicePairingResultStatus) -> std::result::Result<(), 
     Err(message.into())
 }
 
-pub(super) fn pair(id: &str) -> std::result::Result<(), String> {
-    let known = {
+fn known(id: &str) -> bool {
         let state = state().lock().unwrap();
         state.nearby.get(id).is_some_and(|(_, seen)| seen.elapsed() < NEARBY_LIFETIME)
             || state.paired.as_ref().is_some_and(|watch| watch.catalog.lock().unwrap().devices.contains_key(id))
-    };
-    if !known { return Err("Bluetooth LE device is no longer in the catalog; scan again".into()); }
+}
+pub(super) fn pair(id: &str) -> std::result::Result<(), String> {
+    if !known(id) { return Err("Bluetooth LE device is no longer in the catalog; scan again".into()); }
     let read = || DeviceInformation::CreateFromIdAsyncWithKindAndAdditionalProperties(
         &HSTRING::from(id), &properties(), DeviceInformationKind::AssociationEndpoint)?.join();
     let device = read().map_err(|e| e.to_string())?;
@@ -279,6 +279,28 @@ pub(super) fn pair(id: &str) -> std::result::Result<(), String> {
     Ok(())
 }
 
+fn unpairing_status(status: DeviceUnpairingResultStatus) -> std::result::Result<(), String> {
+    if matches!(status, DeviceUnpairingResultStatus::Unpaired | DeviceUnpairingResultStatus::AlreadyUnpaired) { Ok(()) }
+    else { Err(format!("Windows could not remove the Bluetooth pairing: {status:?}")) }
+}
+pub(super) fn forget(id: &str) -> std::result::Result<(), String> {
+    if !known(id) { return Err("Bluetooth LE device is no longer in the catalog; scan again".into()); }
+    let read = || DeviceInformation::CreateFromIdAsyncWithKindAndAdditionalProperties(
+        &HSTRING::from(id), &properties(), DeviceInformationKind::AssociationEndpoint)?.join();
+    let device = read().map_err(|e| e.to_string())?;
+    let result = device.Pairing().and_then(|p| p.UnpairAsync()).and_then(|op| op.join()).map_err(|e| e.to_string())?;
+    unpairing_status(result.Status().map_err(|e| e.to_string())?)?;
+    // A successful unpair can remove the association endpoint immediately.
+    // Its OS result is authoritative; a readable endpoint must also agree.
+    let row = read().ok().map(|d| Row::from_device(&d)).transpose().map_err(|e| e.to_string())?;
+    if row.as_ref().is_some_and(|row| row.paired) { return Err("Windows still reports this Bluetooth LE device as paired".into()); }
+    let mut state = state().lock().unwrap();
+    if let Some(watch) = &state.paired { watch.catalog.lock().unwrap().devices.remove(id); }
+    state.nearby.remove(id);
+    if let Some(row) = row { state.nearby.insert(id.to_owned(), (row, Instant::now())); }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -291,6 +313,10 @@ mod tests {
     #[test]
     fn fabricated_le_ids_never_open_a_pairing_dialog() {
         assert!(pair("not-a-discovered-device").unwrap_err().contains("scan again"));
+        assert!(forget("not-a-discovered-device").unwrap_err().contains("scan again"));
+        for status in 0..=5 {
+            assert_eq!(unpairing_status(DeviceUnpairingResultStatus(status)).is_ok(), status == 0 || status == 1);
+        }
     }
     #[test]
     fn unnamed_advertisements_keep_distinguishable_native_labels() {

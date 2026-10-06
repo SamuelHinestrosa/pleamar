@@ -47,6 +47,9 @@ cosmic-text = { version = "0.19.0", default-features = false, features = ["fontc
 
 [target.'cfg(target_os = "windows")'.dependencies]
 base64 = "0.22"
+qrcodegen = "1.8"
+roxmltree = "0.21"
+zeroize = "1"
 arboard = { version = "3.6.1", default-features = false, features = ["image-data"] }
 raw-window-handle = "0.6"
 windows-core = "0.62"
@@ -83,6 +86,9 @@ windows = { version = "0.62", features = [
 [features]
 default = ["luau"]
 luau = ["dep:mlua"]
+
+[target.'cfg(target_os = "windows")'.dev-dependencies]
+quircs = "0.10"
 
 [[example]]
 name = "luau-test"
