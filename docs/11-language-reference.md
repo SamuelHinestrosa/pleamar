@@ -257,6 +257,8 @@ scene Watching {
 | `spring bouncy = 170, 12` | A spring of one's own: stiffness, damping. From the house: `lively`, `calm`, `quick`, `slow`, `gentle`, `pose`. Inline: `~spring(170, 12)`, or **`~620ms`**: the spring that gets there in that long without overshooting |
 | `zone box whole { at: …; size: …; active: expr }` | A zone that is not painted |
 
+**The header says what it is; the block, what it holds.** A declaration's header names the thing and gives the few words that shape it: which one it is (`service clock`), what it is called (`as now`), how many fit (`max 8`), how deep it goes (`depth 3`). Its block holds what it contains: **fields** when it describes data —in a `model` or a `service`, `title: text` is a field called `title` that holds text—, **properties** when it sets something up, as in a `surface`, a `state` or a `zone`. So an option never takes the name of a field: a model can have one called `max` or `type`. And `windows win max 6` or `list children max 6 depth 3`, which have no block, say all they need in the header.
+
 **Several windows in one process.** `surface { … }` with no name is the scene's, and draws whatever is loose. With a name, `surface panel { … }` is one of several and **carries inside it what it draws**:
 
 ```
