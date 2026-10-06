@@ -1,6 +1,6 @@
 # Scenes an agent can read — design
 
-**Status:** steps 1 to 5 (`describe`, acting by name, `wait`, `watch`, `label:`, `agent:`, and pleamar-wm's `agent tree/press`) implemented on 6 Oct 2026; the rest is design. Each step is measured with [the agent race](../tools/agent-race/results.md). Agreed with Abel on 6 Oct 2026 as the first step towards pleamar as a way to give **any program** its interface. This note is the first stretch of that road: what the scene already knows, handed to whoever drives it from outside.
+**Status:** steps 1 to 6 (`describe`, acting by name, `wait`, `watch`, `label:`, `agent:`, and pleamar-wm's `agent tree/press`) implemented on 6 Oct 2026; the rest is design. Each step is measured with [the agent race](../tools/agent-race/results.md). Agreed with Abel on 6 Oct 2026 as the first step towards pleamar as a way to give **any program** its interface. This note is the first stretch of that road: what the scene already knows, handed to whoever drives it from outside.
 
 ## 1. Why
 
@@ -137,7 +137,7 @@ A zone with `agent: no` is described (an agent knows it is there and can tell th
 
 **What it is and what it is not.** Through the socket it is a promise the commands keep. It is **not** a wall against a program that runs as the same user: that one could fake input in many ways. What makes it a wall is the compositor:
 
-- **pleamar-wm** gives the agent **its own seat** (`cua-agent`). pleamar learns which seat each press comes from (`wl_seat.name`), and **a press on an `agent: no` zone from an agent's seat is dropped**, and said in `watch`. So clicking its pixels with `pleamar-wm agent click` does not get round it. For that, pleamar-wm has to send its input to pleamar windows through the agent's seat, never through the usual one (today it does that for programs that only hear one seat).
+- **pleamar-wm** gives the agent **its own seat** (`cua-agent`). pleamar listens to the pointer of every seat and knows by its name which is an agent's; pleamar-wm, seeing the program has a pointer on that seat, sends the agent's input through it and not through the user's. **A press on an `agent: no` zone from an agent's seat is not let through**, nor the release after it; the log says so and `watch` writes `kept delete`. So clicking its pixels with `pleamar-wm agent click` does not get round it. Implemented (step 6, 6 Oct 2026), tried live: a click by pixels on «New note» went through, one on «Delete» did not.
 - **Other compositors** have no agent seat: there it is only the promise.
 
 ## 7. In pleamar-wm
@@ -167,7 +167,7 @@ Implemented (step 5, 6 Oct 2026).
 | 3 ✅ | `wait` and `watch` | `a_wait_reads_the_scene_as_it_is`; by hand in a headless pleamar-wm, watching while pressing; the race now saves, which takes 0.8 s |
 | 4 ✅ | `agent: no` and `agent: hidden` over the socket | `a_hand_is_refused_what_a_person_could_not_do_either` |
 | 5 ✅ | `hello`, and pleamar-wm's `agent tree/press/wait/watch/say` | In the live session: `windows` marking the race's window, `tree`, `press` with the cursor gliding there; the race |
-| 6 | The seat: pleamar reads `wl_seat.name`, pleamar-wm uses the agent seat for pleamar windows, the press is dropped | Headless pleamar-wm: `agent click` on an `agent: no` zone does nothing |
+| 6 ✅ | The seat: pleamar hears every seat and reads its name, pleamar-wm then uses the agent's for pleamar windows, the press is not let through | Live: `agent click` on «Delete» left `dirty` as it was, and `watch` said `kept delete`; on «New note» it went through |
 | 7 | `role:`, `value:` | Tests |
 
 Steps 1 to 4 are pleamar alone and work on any compositor. 5 and 6 need both.

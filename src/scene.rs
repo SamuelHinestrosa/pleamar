@@ -2005,6 +2005,9 @@ pub enum ToRender {
     Cursor((f32, f32), Vec<(String, [i32; 4])>),
     /// 0 is the left one, 1 the right one, 2 the middle one.
     Button(u8, bool),
+    /// The same, from an agent's own seat: a press on a zone with `agent: no`
+    /// does not get through.
+    AgentButton(u8, bool),
     /// Wheel notches: positive, upwards.
     Wheel(f32),
     /// The name of the key, what it types if it types anything, and what it was pressed with.

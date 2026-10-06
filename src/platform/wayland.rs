@@ -482,6 +482,10 @@ struct State {
     extra_height: u32,
     placed: Vec<Placed>,
     pointer: Option<wl_pointer::WlPointer>,
+    /// Every pointer it listens to, with its seat: the user's, and an agent's
+    /// own (pleamar-wm's `cua-agent`), whose presses on what a scene keeps for
+    /// a person's hand (`agent: no`) are not let through.
+    pointer_seats: Vec<(wl_pointer::WlPointer, wl_seat::WlSeat)>,
     keyboard: Option<wayland_client::protocol::wl_keyboard::WlKeyboard>,
     cursor_shapes: Option<CursorShapeManager>,
     cursors: Arc<Mutex<Option<WpCursorShapeDeviceV1>>>,
@@ -1173,6 +1177,7 @@ pub fn run_event_loop(wanted: Vec<Surface>, extra_height: u32, instance: wgpu::I
         extra_height,
         placed: Vec::new(),
         pointer: None,
+        pointer_seats: Vec::new(),
         keyboard: None,
         cursor_shapes: CursorShapeManager::bind(&globals, &qh).ok(),
         cursors: Arc::default(),
@@ -1372,7 +1377,9 @@ impl smithay_client_toolkit::session_lock::SessionLockHandler for State {
 }
 
 impl PointerHandler for State {
-    fn pointer_frame(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &wl_pointer::WlPointer, events: &[PointerEvent]) {
+    fn pointer_frame(&mut self, _: &Connection, _: &QueueHandle<Self>, pointer: &wl_pointer::WlPointer, events: &[PointerEvent]) {
+        // An agent's own seat (`cua-agent`, `cua-agent-2`): its presses are said to be its.
+        let from_agent = self.pointer_seats.iter().find(|(p, _)| p == pointer).and_then(|(_, s)| self.seats.info(s)).and_then(|i| i.name).is_some_and(|n| n.starts_with("cua-agent"));
         for e in events {
             let (mut x, mut y) = (e.position.0 as f32, e.position.1 as f32);
             if let Some(pp) = POPUPS.get() {
@@ -1451,7 +1458,7 @@ impl PointerHandler for State {
                         continue;
                     }
                     let _ = self.to_render.send(ToRender::Pointer(Some((x, y))));
-                    let _ = self.to_render.send(ToRender::Button(btn, down));
+                    let _ = self.to_render.send(if from_agent { ToRender::AgentButton(btn, down) } else { ToRender::Button(btn, down) });
                 }
                 PointerEventKind::Axis { vertical, horizontal, .. } => {
                     // Wheel notches, positive upwards. A real wheel sends
@@ -1663,6 +1670,15 @@ impl SeatHandler for State {
             self.pointer = self.seats.get_pointer(qh, &seat).ok();
             if let (Some(p), Some(m)) = (&self.pointer, &self.cursor_shapes) {
                 *self.cursors.lock().unwrap() = Some(m.get_shape_device(p, qh));
+            }
+            if let Some(p) = &self.pointer {
+                self.pointer_seats.push((p.clone(), seat.clone()));
+            }
+        } else if c == Capability::Pointer {
+            // Another seat's pointer: an agent's, which has hands of its own. It
+            // is heard too, so that its presses are known to be its.
+            if let Ok(p) = self.seats.get_pointer(qh, &seat) {
+                self.pointer_seats.push((p, seat.clone()));
             }
         }
         if self.data_device.is_none() {

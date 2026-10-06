@@ -426,6 +426,8 @@ pub fn run(
     let mut acts: std::collections::VecDeque<(crate::agent::Act, std::sync::mpsc::Sender<String>)> = std::collections::VecDeque::new();
     let mut acting: Option<Acting> = None;
     let mut real_pointer: Option<(f32, f32)> = None;
+    // A press of an agent's seat that was not let through, by button: its release is not either.
+    let mut agent_held_back = [false; 3];
     // Who waits for a condition (`wait`), and who watches what happens (`watch`).
     let mut waits: Vec<(crate::agent::Cond, Instant, Instant, std::sync::mpsc::Sender<String>)> = Vec::new();
     let mut watchers: Vec<Watcher> = Vec::new();
@@ -611,6 +613,8 @@ pub fn run(
         let mut block = None;
         // (which button, whether it goes down or up), the wheel notches and the keys of this frame.
         let mut buttons: Vec<(u8, bool)> = Vec::new();
+        // Which of them come from an agent's own seat.
+        let mut buttons_agent: Vec<bool> = Vec::new();
         let mut wheel = 0.0f32;
         let mut keys: Vec<String> = Vec::new();
         let mut key_presses: Vec<(String, Option<String>, Mods, u32)> = Vec::new();
@@ -1106,7 +1110,9 @@ pub fn run(
                     real_pointer = p;
                     last_activity = Instant::now();
                 }
-                ToRender::Button(b, down) => {
+                ToRender::Button(b, down) | ToRender::AgentButton(b, down) => {
+                    buttons_agent.resize(buttons.len(), false);
+                    buttons_agent.push(matches!(m, ToRender::AgentButton(..)));
                     buttons.push((b, down));
                     if b == 0 {
                         finger_down = down;
@@ -1870,6 +1876,30 @@ pub fn run(
                 })
                 .collect();
             eprintln!("zones  · under the pointer: {names:?}");
+        }
+        // An agent's own hand, by its pixels, on what is kept for a person's
+        // (`agent: no`): its press does not get through, nor the release after it.
+        if buttons_agent.iter().any(|a| *a) {
+            buttons_agent.resize(buttons.len(), false);
+            let mut kept = Vec::new();
+            for (&(b, down), &agent) in buttons.iter().zip(&buttons_agent) {
+                let slot = (b as usize).min(2);
+                if agent
+                    && down
+                    && let Some(z) = hovered.and_then(|k| scene.zones.get(k)).filter(|z| z.reach == crate::scene::Reach::Person)
+                {
+                    agent_held_back[slot] = true;
+                    let said = z.id.split("#screen").next().unwrap_or(z.id);
+                    eprintln!("agent  · a press on '{said}' from the agent's hand was not let through: it is for a person's (agent: no)");
+                    heard_events.push(("kept", z.id));
+                    continue;
+                }
+                if agent && !down && std::mem::take(&mut agent_held_back[slot]) {
+                    continue;
+                }
+                kept.push((b, down));
+            }
+            buttons = kept;
         }
         let (mut pressed, mut pressed_with, mut released) = (None, None, None);
         for (button, down) in &buttons {
