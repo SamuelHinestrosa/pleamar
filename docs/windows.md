@@ -5,14 +5,14 @@ enabled by default and is built from source. WSL, Wayland and Unix shell tools
 are not runtime requirements. Native interactive scenes have been validated;
 the limitations below still prevent full desktop-shell parity.
 
-Upstream 0.2.23 (`a506287`) is integrated. Scene `include` parts, module reloads,
+Upstream 0.2.24 (`0efbcd9`) is integrated. Scene `include` parts, module reloads,
 the grid hit-region correction and `PLEAMAR_GPU=high` are shared with Windows.
 Required modules are scoped to their scene and live VM; failed reloads retain
 the previous logic and keep failed dependencies repairable. Retired modules
 stop triggering reloads. The Linux lock-monitor lifecycle, cursor socket and
 PulseAudio changes are preserved.
 
-Validation on Windows x64/MSVC (2026-10-06): `cargo test --release --locked
+Earlier 0.2.23 validation on Windows x64/MSVC (2026-10-06): `cargo test --release --locked
 --lib -- --test-threads=2` passed 173 tests (38 opt-in tests skipped), the release
 executable built with default Luau, and `scripts/run-tests.py --binary
 target/release/pleamar.exe` passed 240 checks including 34 documentation scenes.
@@ -25,6 +25,25 @@ This does not validate the new Marea pages or complete desktop parity:
 and per-session controls were added and validated subsequently, as described
 below. Per-player `media.volume` and pleamar-wm WGC previews are separate
 capabilities.
+
+Asynchronous commands keep at most 16 service threads with bounded serial
+queues. A completed family can give its slot to another; visiting more than
+16 features over time no longer exhausts a scene's worker slots. Threads with
+no queued replies or retained native state retire after 30 seconds of
+inactivity. Frozen screenshots, displayed Wi-Fi QR codes, recording state and
+desktop window identities keep their required thread between calls. Native
+recording and Windows-key ownership belongs to the scene and ends on reload
+or exit, independently of idle command-thread retirement. Pending callbacks
+remain valid until delivery; `kill` accepts spawned processes, not asynchronous
+service request identifiers.
+
+The current 0.2.24 revision passes 182 ordinary Windows library tests (39
+desktop helpers skipped in the local checkout), the release build with default
+Luau and 242 language checks, including 34 documentation scenes. The service
+regression visits 40 different families through real asynchronous error replies,
+verifies idle thread exit, protects pending callbacks and retained native state,
+and checks scene ownership survives retirement but ends on reload/exit.
+No physical hotkey or recording interaction is claimed by these unit tests.
 
 Native screenshots use `sys.ask_async("screenshot.freeze", { scope }, callback)`
 followed by `screenshot.finish` with the returned numeric identifier, on the
@@ -189,7 +208,7 @@ is reported as an error rather than being mistaken for an unplugged monitor.
 | Network | WinRT connection status; native WLAN scan, radio, saved-profile connection/disconnection and new open/WPA2-Personal profiles; no Wi-Fi hardware on the validation host |
 | Bluetooth | WinRT radio, classic and LE catalogs, explicit discovery and pairing, plus audio-driver connection control. Native LE watching/discovery and Marea pagination passed. New-device pairing/PIN/cancellation still need an identified test device; generic non-audio connection control is unavailable |
 | Brightness | DDC/CI change/readback/restore passed earlier on a ViewSonic. The current display exposes no physical monitor interface and reports unavailable with both old and new binaries; this is not a current hardware pass. WMI internal-panel backend is implemented; laptop validation is pending |
-| Media | Native Windows media sessions, Unicode metadata and asynchronous Marea controls. Buttons follow the player's capabilities, including paused sessions; a changed application identity rejects stale commands. Requires a participating player; artwork remains Marea's original gradient |
+| Media | Native Windows media sessions, Unicode metadata, bounded artwork and asynchronous Marea controls. Buttons follow the player's capabilities, including paused sessions; a changed application identity rejects stale commands. Covers require the player or browser to provide a Windows media thumbnail |
 | Applications/files | AppsFolder catalog and launch, lazy Shell icons, asynchronous bounded filename search, native shell open |
 | Global hotkeys | RegisterHotKey, bounded registrations, reported conflicts; Marea search tested from another process |
 | Wallpapers | IDesktopWallpaper state/catalog/change with independent stable confirmation and rollback. Actual Marea card clicks, scrolling, persistence and reload cancellation/retry passed. Full unobstructed tide visuals, physical mixed-monitor coverage and slideshow management remain unverified |
@@ -625,7 +644,13 @@ operations have a two-second deadline and are cancelled when it expires; this
 does not preempt arbitrary synchronous COM calls. Marea suppresses duplicate
 pending actions, re-reads native state after a reply, discards stale callbacks
 and releases its pending state after 4.5 seconds with a visible timeout notice.
-Its media artwork remains upstream's gradient, not a downloaded album image.
+The snapshot includes a cached local `art` image from the player's Windows
+media thumbnail. Input is capped at 4 MiB and 4096 pixels per edge, decoded
+within 64 MiB and reduced to 192 pixels while preserving its aspect ratio.
+Missing, malformed or timed-out covers clear the previous image without
+disabling controls. Marea displays this image when provided, otherwise its
+gradient. This also works with browser media that exposes a thumbnail; it
+does not search the network or read browser history.
 
 The manager is reused across reads; a failed session inventory invalidates it.
 `tests/README.md` describes the owned SMTC fixture and opt-in native test.

@@ -7,6 +7,7 @@ use windows::Win32::{Foundation::{HANDLE, ERROR_INVALID_STATE}, NetworkManagemen
 static DISCOVERY: AtomicBool = AtomicBool::new(false);
 #[path = "windows_wifi_share.rs"]
 mod sharing;
+pub(super) fn has_thread_state() -> bool { sharing::has_thread_state() }
 struct Client(HANDLE);
 impl Drop for Client { fn drop(&mut self) { unsafe { WlanCloseHandle(self.0, None); } } }
 struct Allocation(*mut c_void);

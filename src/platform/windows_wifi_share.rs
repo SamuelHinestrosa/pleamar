@@ -9,6 +9,7 @@ use image::ImageEncoder;
 struct SharedQr { _file: File, path: PathBuf }
 thread_local! { static QR: RefCell<Option<SharedQr>> = const { RefCell::new(None) }; }
 pub(super) fn clear() { QR.with(|qr| { qr.borrow_mut().take(); }); }
+pub(super) fn has_thread_state() -> bool { QR.with(|qr| qr.borrow().is_some()) }
 
 struct Profile { name: String, password: Zeroizing<String>, kind: &'static str, hidden: bool }
 fn field<'a, 'input>(parent: roxmltree::Node<'a, 'input>, name: &str) -> Result<roxmltree::Node<'a, 'input>, String> {
@@ -196,7 +197,9 @@ mod tests {
         let read = image::open(&path).unwrap().into_luma8();
         assert_eq!(decoded(&read), payload(&shared).as_bytes());
         QR.with(|slot| *slot.borrow_mut() = Some(qr));
+        assert!(has_thread_state(), "the displayed credential image must pin its service thread");
         clear();
+        assert!(!has_thread_state());
         assert!(!path.exists(), "closing sharing retained its credential image");
         let dir = directory.clone();
         let path = std::thread::spawn(move || {

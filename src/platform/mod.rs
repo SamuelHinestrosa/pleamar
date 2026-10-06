@@ -921,6 +921,16 @@ mod windows_recording;
 pub(crate) use windows_recording::shutdown as finish_recordings;
 #[cfg(target_os = "windows")]
 pub(crate) use windows_capture::set_service_lifetime;
+
+// An unfinished native interaction can hold thread-local state between calls.
+// Its command thread must survive idle expiry and pressure from other families.
+pub(crate) fn service_has_thread_state() -> bool {
+    #[cfg(target_os = "windows")]
+    { windows_capture::has_thread_state() || windows_wifi::has_thread_state()
+        || windows_recording::has_thread_state() || windows_desktop::has_thread_state() }
+    #[cfg(not(target_os = "windows"))]
+    { false }
+}
 #[cfg(target_os = "windows")]
 mod windows_media;
 #[cfg(target_os = "windows")]

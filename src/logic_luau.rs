@@ -90,9 +90,9 @@ pub fn stop_children() {
 /// How long a handler may take before it gets cut off.
 const PATIENCE: Duration = Duration::from_secs(2);
 const MEMORY: usize = 64 << 20;
-// Marea uses audio, brightness, network, Bluetooth, media, hotkeys, files,
-// shell, wallpaper, screenshots and session workers in the same lifetime.
+// Bound concurrent service families, not every family visited since startup.
 const MAX_SERVICE_WORKERS: usize = 16;
+const SERVICE_IDLE: Duration = Duration::from_secs(30);
 
 // Plugin positions can change while replies are in the shared mailbox.
 // Never recycle a callback identifier within this process.
@@ -120,17 +120,30 @@ struct ServiceRequest {
 struct Callback {
     f: Function,
     query: Option<String>,
+    service: Option<String>,
+}
+
+struct ServiceLifetime(Arc<AtomicBool>);
+
+impl Default for ServiceLifetime {
+    fn default() -> Self { Self(Arc::new(AtomicBool::new(true))) }
+}
+
+impl Drop for ServiceLifetime {
+    fn drop(&mut self) { self.0.store(false, Ordering::Release); }
 }
 
 struct ServiceWorker {
     sender: std::sync::mpsc::SyncSender<ServiceRequest>,
-    active: Arc<AtomicBool>,
+    last_used: Instant,
+    held: Arc<AtomicBool>,
 }
 
 impl ServiceWorker {
-    fn new(owner: String, to_logic: Sender<Event>, state: Weak<Mutex<Shared>>) -> std::io::Result<Self> {
+    fn new(owner: String, to_logic: Sender<Event>, state: Weak<Mutex<Shared>>, active: Arc<AtomicBool>) -> std::io::Result<Self> {
         let (sender, receiver) = std::sync::mpsc::sync_channel::<ServiceRequest>(8);
-        let active = Arc::new(AtomicBool::new(true));
+        let held = Arc::new(AtomicBool::new(false));
+        let thread_state = held.clone();
         let alive = active.clone();
         std::thread::Builder::new().name("service-command".into()).spawn(move || {
             #[cfg(target_os = "windows")]
@@ -158,17 +171,14 @@ impl ServiceWorker {
                     let (error, code) = match result { Ok(()) => (String::new(), 0), Err(e) => (e, -1) };
                     Event::Process(request.id, error, code)
                 };
+                thread_state.store(crate::platform::service_has_thread_state(), Ordering::Release);
                 if alive.load(Ordering::Acquire) {
                     let _ = to_logic.send(reply);
                 }
             }
         })?;
-        Ok(Self { sender, active })
+        Ok(Self { sender, last_used: Instant::now(), held })
     }
-}
-
-impl Drop for ServiceWorker {
-    fn drop(&mut self) { self.active.store(false, Ordering::Release); }
 }
 
 struct WatchHandler {
@@ -182,6 +192,8 @@ struct Shared {
     timers: Vec<Timer>,
     processes: HashMap<u32, Callback>,
     service_workers: HashMap<String, ServiceWorker>,
+    // Recording and keyboard ownership outlive an idle command thread.
+    service_lifetime: ServiceLifetime,
     /// The commands still running: who gets told each line, and how to stop them.
     running: HashMap<u32, (Function, Arc<Mutex<Option<std::process::Child>>>)>,
     /// None reserves a run before its worker starts; reload cancels that reservation.
@@ -232,6 +244,36 @@ fn start_run(state: &Weak<Mutex<Shared>>, id: u32, name: &str, launch: &mut std:
 }
 
 impl Shared {
+    fn service_busy(&self, name: &str) -> bool {
+        self.service_workers.get(name).is_some_and(|worker| worker.held.load(Ordering::Acquire))
+            || self.processes.values().any(|p| p.service.as_deref() == Some(name))
+    }
+
+    fn idle_service_deadline(&self) -> Option<Instant> {
+        self.service_workers.iter().filter(|(name, _)| !self.service_busy(name))
+            .map(|(_, worker)| worker.last_used + SERVICE_IDLE).min()
+    }
+
+    fn retire_idle_services(&mut self, now: Instant, need_slot: bool) {
+        let idle: Vec<_> = self.service_workers.iter()
+            .filter(|(name, worker)| !self.service_busy(name) && worker.last_used + SERVICE_IDLE <= now)
+            .map(|(name, _)| name.clone()).collect();
+        for name in idle { self.service_workers.remove(&name); }
+        if need_slot && self.service_workers.len() >= MAX_SERVICE_WORKERS {
+            let oldest = self.service_workers.iter().filter(|(name, _)| !self.service_busy(name))
+                .min_by_key(|(_, worker)| worker.last_used).map(|(name, _)| name.clone());
+            if let Some(name) = oldest { self.service_workers.remove(&name); }
+        }
+    }
+
+    fn take_callback(&mut self, id: u32) -> Option<Callback> {
+        let callback = self.processes.remove(&id)?;
+        if let Some(worker) = callback.service.as_ref().and_then(|name| self.service_workers.get_mut(name)) {
+            worker.last_used = Instant::now();
+        }
+        Some(callback)
+    }
+
     /// What a new logic starts from: what the scene is, and none of what the
     /// old one left running (its handlers, timers, processes and watchers).
     fn fresh(&self) -> Shared {
@@ -684,8 +726,8 @@ mod lifecycle_tests {
         "#).unwrap();
         script.load_script();
         assert!(script.lua.is_some());
-        let alive: Vec<_> = script.c.lock().unwrap().service_workers.values().map(|w| w.active.clone()).collect();
-        assert_eq!(alive.len(), 16);
+        let alive = script.c.lock().unwrap().service_lifetime.0.clone();
+        assert_eq!(script.c.lock().unwrap().service_workers.len(), 16);
         let mut old = Vec::new();
         for _ in 0..16 { old.push(replies.recv_timeout(Duration::from_secs(5)).unwrap()); }
         script.on_event(old.pop().unwrap(), &mut context);
@@ -696,13 +738,92 @@ mod lifecycle_tests {
         "#).unwrap();
         script.load_script();
         assert!(script.lua.is_some());
-        assert!(alive.iter().all(|active| !active.load(Ordering::Acquire)));
+        assert!(!alive.load(Ordering::Acquire));
         for reply in old { script.on_event(reply, &mut context); }
         assert_eq!(script.c.lock().unwrap().facts["answers"], 100.0);
         script.on_event(replies.recv_timeout(Duration::from_secs(5)).unwrap(), &mut context);
         assert_eq!(script.c.lock().unwrap().facts["answers"], 101.0);
         assert!(script.c.lock().unwrap().processes.is_empty());
         drop(script);
+        std::fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn retired_service_threads_leave_scene_ownership_alive_and_pending_replies_intact() {
+        let path = std::env::temp_dir().join(format!("pleamar-service-retirement-{}.luau", std::process::id()));
+        let (tx, _render) = std::sync::mpsc::channel();
+        let (events, replies) = std::sync::mpsc::channel();
+        let blocked = Arc::new(AtomicBool::new(false));
+        let mut context = Context::for_plugin(tx.clone(), blocked.clone());
+        let mut script = LuauScript::new("retirement.plm", path.to_str().unwrap(), tx, events, blocked);
+        {
+            let mut shared = script.c.lock().unwrap();
+            shared.facts.insert("answers".into(), 0.0);
+            shared.permissions.services = (1..=40)
+                .flat_map(|n| [format!("testservice{n}"), format!("testservice{n}.*")]).collect();
+        }
+        std::fs::write(&path, r#"
+            local function visit(n)
+                if n > 40 then return end
+                local function done()
+                    fact.answers += 1
+                    visit(n + 1)
+                end
+                if n % 2 == 0 then
+                    sys.call_async("testservice" .. n .. ".write", {}, function(error, code)
+                        assert(type(error) == "string" and code == -1)
+                        done()
+                    end)
+                else
+                    sys.ask_async("testservice" .. n .. ".state", {}, function(value, error)
+                        assert(value == nil and type(error) == "string")
+                        done()
+                    end)
+                end
+            end
+            on("again", function()
+                sys.ask_async("testservice1.state", {}, function() fact.answers += 1 end)
+            end)
+            visit(1)
+        "#).unwrap();
+        script.load_script();
+        assert!(script.lua.is_some());
+        let owner = script.c.lock().unwrap().service_lifetime.0.clone();
+        for answered in 1..=40 {
+            script.on_event(replies.recv_timeout(Duration::from_secs(5)).unwrap(), &mut context);
+            let c = script.c.lock().unwrap();
+            assert_eq!(c.facts["answers"], answered as f64);
+            assert!(c.service_workers.len() <= MAX_SERVICE_WORKERS);
+        }
+        assert!(script.next_deadline().is_some());
+        let held = script.c.lock().unwrap().service_workers.values().next().unwrap().held.clone();
+        held.store(true, Ordering::Release);
+        let expire = || Instant::now() - SERVICE_IDLE - Duration::from_secs(1);
+        for worker in script.c.lock().unwrap().service_workers.values_mut() { worker.last_used = expire(); }
+        script.tick(&mut context);
+        assert_eq!(script.c.lock().unwrap().service_workers.len(), 1, "native interaction lost its thread-local state");
+        assert!(script.next_deadline().is_none(), "a pinned interaction introduced an idle timer loop");
+        held.store(false, Ordering::Release);
+        script.tick(&mut context);
+        assert!(script.c.lock().unwrap().service_workers.is_empty());
+        assert!(script.next_deadline().is_none());
+        let retired = Instant::now() + Duration::from_secs(2);
+        while Arc::strong_count(&owner) > 2 && Instant::now() < retired {
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        assert_eq!(Arc::strong_count(&owner), 2, "idle command threads did not exit");
+        assert!(owner.load(Ordering::Acquire), "idle threads revoked scene-owned recording or hotkeys");
+        script.dispatch("again", Value::Nil);
+        let pending = *script.c.lock().unwrap().processes.keys().next().unwrap();
+        assert!(script.lua.as_ref().unwrap().load(format!("kill({pending})")).exec().is_err());
+        for worker in script.c.lock().unwrap().service_workers.values_mut() { worker.last_used = expire(); }
+        script.tick(&mut context);
+        assert_eq!(script.c.lock().unwrap().service_workers.len(), 1, "pending reply lost its worker");
+        script.on_event(replies.recv_timeout(Duration::from_secs(5)).unwrap(), &mut context);
+        assert_eq!(script.c.lock().unwrap().facts["answers"], 41.0);
+        assert!(Arc::ptr_eq(&owner, &script.c.lock().unwrap().service_lifetime.0));
+        drop(script);
+        assert!(!owner.load(Ordering::Acquire), "scene exit retained native ownership");
         std::fs::remove_file(path).unwrap();
     }
 
@@ -855,6 +976,7 @@ impl LuauScript {
         c.handlers.clear();
         c.timers.clear();
         c.processes.clear();
+        c.service_lifetime.0.store(false, Ordering::Release);
         c.service_workers.clear();
         c.watchers.clear();
         c.watched.clear();
@@ -1308,7 +1430,7 @@ impl LuauScript {
                 let mut c = c.lock().unwrap();
                 let id = next_id()?;
                 if let Some(f) = f {
-                    c.processes.insert(id, Callback { f, query: None });
+                    c.processes.insert(id, Callback { f, query: None, service: None });
                 }
                 c.commands.insert(id, None);
                 id
@@ -1435,7 +1557,7 @@ impl LuauScript {
                     c.inputs.insert(id, stdin);
                 }
                 if let Some(end) = on_exit {
-                    c.processes.insert(id, Callback { f: end, query: None });
+                    c.processes.insert(id, Callback { f: end, query: None, service: None });
                 }
             }
             let to_logic = to_logic.clone();
@@ -1509,6 +1631,9 @@ impl LuauScript {
                     }
                 }
                 None => {
+                    if c.processes.get(&id).is_some_and(|callback| callback.service.is_some()) {
+                        return Err(mlua::Error::runtime("kill expects a spawned process, not a service request"));
+                    }
                     c.processes.remove(&id);
                     c.inputs.remove(&id);
                     if let Some((_, child)) = c.running.remove(&id) {
@@ -1563,14 +1688,15 @@ impl LuauScript {
             let service = name.split('.').next().unwrap_or(&name).to_owned();
             let mut state = c.lock().unwrap();
             if !state.service_workers.contains_key(&service) {
+                state.retire_idle_services(Instant::now(), true);
                 if state.service_workers.len() >= MAX_SERVICE_WORKERS {
                     return Err(mlua::Error::runtime("too many asynchronous service workers"));
                 }
-                let worker = ServiceWorker::new(mine.clone(), to_logic.clone(), Arc::downgrade(&c)).map_err(mlua::Error::external)?;
+                let worker = ServiceWorker::new(mine.clone(), to_logic.clone(), Arc::downgrade(&c), state.service_lifetime.0.clone()).map_err(mlua::Error::external)?;
                 state.service_workers.insert(service.clone(), worker);
             }
             let id = next_id()?;
-            let callback = Callback { f: callback, query: query.then(|| name.clone()) };
+            let callback = Callback { f: callback, query: query.then(|| name.clone()), service: Some(service.clone()) };
             state.service_workers[&service].sender.try_send(ServiceRequest { id, name, args, query })
                 .map_err(|_| mlua::Error::runtime("native service command queue is full or closed"))?;
             state.processes.insert(id, callback);
@@ -1855,7 +1981,7 @@ impl Script for LuauScript {
             }
             Event::Data(name, value) => self.dispatch_watch(&name, None, &value),
             Event::Answer(id, result) => {
-                let f = self.c.lock().unwrap().processes.remove(&id);
+                let f = self.c.lock().unwrap().take_callback(id);
                 if let (Some(f), Some(lua)) = (f, &self.lua) {
                     // The query may have completed before permission was removed,
                     // while its reply was still waiting in the logic mailbox.
@@ -1873,7 +1999,7 @@ impl Script for LuauScript {
                 self.c.lock().unwrap().running.remove(&id);
                 self.c.lock().unwrap().commands.remove(&id);
                 self.c.lock().unwrap().inputs.remove(&id);
-                let f = self.c.lock().unwrap().processes.remove(&id);
+                let f = self.c.lock().unwrap().take_callback(id);
                 if let Some(f) = f {
                     self.call_handler(&f.f, (output, code));
                 }
@@ -1883,13 +2009,15 @@ impl Script for LuauScript {
     }
 
     fn next_deadline(&self) -> Option<Instant> {
-        self.c.lock().unwrap().timers.iter().map(|t| t.when).min()
+        let c = self.c.lock().unwrap();
+        c.timers.iter().map(|t| t.when).chain(c.idle_service_deadline()).min()
     }
 
     fn tick(&mut self, _: &mut Context) {
         let now = Instant::now();
         let due: Vec<Function> = {
             let mut c = self.c.lock().unwrap();
+            c.retire_idle_services(now, false);
             let f = c.timers.iter().filter(|t| t.when <= now).map(|t| t.f.clone()).collect();
             for t in &mut c.timers {
                 if t.when <= now {

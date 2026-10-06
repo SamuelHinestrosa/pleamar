@@ -31,6 +31,9 @@ thread_local! {
     static CATALOG: RefCell<Catalog> = RefCell::default();
     static DESTROYED: RefCell<Vec<isize>> = RefCell::default();
 }
+pub(super) fn has_thread_state() -> bool {
+    CATALOG.with(|catalog| { let catalog = catalog.borrow(); !catalog.entries.is_empty() || !catalog.shots.is_empty() })
+}
 struct Dpi(DPI_AWARENESS_CONTEXT);
 impl Dpi {
     fn physical() -> Result<Self, String> {

@@ -11,6 +11,7 @@ struct Running { session: Arc<Session>, thread: std::thread::JoinHandle<()> }
 static RUNNING: Mutex<Option<Running>> = Mutex::new(None);
 static EXITING: AtomicBool = AtomicBool::new(false);
 thread_local! { static OWNED: RefCell<Option<Arc<Session>>> = const { RefCell::new(None) }; }
+pub(super) fn has_thread_state() -> bool { OWNED.with(|v| v.borrow().is_some()) }
 
 impl Session {
     fn stopped(&self) -> bool { self.stop.load(Ordering::Acquire) || !self.owner.load(Ordering::Acquire) || EXITING.load(Ordering::Acquire) }

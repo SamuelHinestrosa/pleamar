@@ -10,6 +10,7 @@ thread_local! {
 }
 pub(crate) fn set_service_lifetime(active: Arc<AtomicBool>) { LIFETIME.with(|v| *v.borrow_mut() = Some(active)); }
 pub(crate) fn service_lifetime() -> Option<Arc<AtomicBool>> { LIFETIME.with(|v| v.borrow().clone()) }
+pub(super) fn has_thread_state() -> bool { FROZEN.with(|v| v.borrow().is_some()) }
 fn active() -> bool { LIFETIME.with(|v| v.borrow().as_ref().is_none_or(|v| v.load(Ordering::Acquire))) }
 struct Dpi(DPI_AWARENESS_CONTEXT);
 impl Dpi { fn physical() -> Result<Self, String> {
@@ -251,6 +252,17 @@ mod tests {
         assert!(super::crop(&frame, RECT { left: 0, top: 0, right: 5, bottom: 2 }).is_err());
         assert!(intersection(frame.bounds, RECT { left: 0, top: 0, right: 4, bottom: 2 }).is_none());
     }
+    #[test]
+    fn frozen_pixels_keep_the_native_service_thread() {
+        assert!(!has_thread_state());
+        FROZEN.with(|slot| *slot.borrow_mut() = Some(Frame { id: 1,
+            bounds: RECT { left: 0, top: 0, right: 1, bottom: 1 }, pixels: vec![0; 4],
+            region: false, created: Instant::now() }));
+        assert!(super::super::service_has_thread_state());
+        FROZEN.with(|slot| slot.borrow_mut().take());
+        assert!(!has_thread_state());
+    }
+
     #[test]
     fn unicode_png_roundtrip_does_not_overwrite_existing_photos() {
         let directory = std::env::temp_dir().join(format!("pleamar capture ñ 空 {}", std::process::id()));
