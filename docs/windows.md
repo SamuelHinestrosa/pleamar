@@ -656,6 +656,13 @@ removed, and foreground focus is unchanged. See
 [`windows-toast-activation-validation.json`](windows-toast-activation-validation.json).
 This fixes the tested activation route without claiming that COM startup or an
 actual notification-center button has been validated on this machine.
+When no notices or removals remain, the receiver waits without an idle timer.
+Publication and shutdown wake it through the same mutex/condition-variable
+contract. An expired client that disconnects during this wait cannot poison the
+next connection. The native fixture exercises two live/replayed activation
+cycles, verifies shutdown, and records the receiver's Windows CPU-cycle counter:
+both 350 ms idle samples measured zero cycles. This is a scoped idle-thread
+measurement, not a whole-application CPU, RAM or sustained-performance claim.
 The ordinary tests also cover a replaced publication finishing late: cleanup
 addresses its physical toast/token generation and preserves the replacement's
 pending action, even when both publications use the same logical scene tag.

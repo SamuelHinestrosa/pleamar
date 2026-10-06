@@ -1,5 +1,5 @@
 """Owned shortcut/activation lifecycle, without sending toasts or desktop input."""
-import argparse,ctypes,hashlib,json,os,shutil,struct,subprocess,time,uuid,winreg
+import argparse,ctypes,hashlib,json,os,re,shutil,struct,subprocess,time,uuid,winreg
 from pathlib import Path
 
 p=argparse.ArgumentParser(description=__doc__)
@@ -99,6 +99,9 @@ try:
         activation=run([tests,'--exact','platform::windows_toast_actions::tests::protocol_activation_child','--ignored','--nocapture'],
             dict(os.environ,PLEAMAR_TEST_TOAST_APP=app,PLEAMAR_TEST_TOAST_ENGINE=str(engine)))
         assert 'protocol_activation_child ... ok' in activation.stdout and '1 passed' in activation.stdout,'Protocol test did not execute'
+        report['idle_receiver_cpu_cycles']=[int(value) for value in re.findall(r'idle receiver cycle [0-9]+: ([0-9]+) CPU cycles during 350 ms',activation.stdout)]
+        assert len(report['idle_receiver_cpu_cycles'])==2,'Both wake/replay/idle cycles must execute'
+        report['idle_receiver_sample_ms']=350
         for bad in [['--activate-notification'],['--activate-notification','https://example.invalid'],['--activate-notification','wrong','extra']]:
             result=subprocess.run([str(broker),*bad],timeout=5,creationflags=subprocess.CREATE_NO_WINDOW|subprocess.BELOW_NORMAL_PRIORITY_CLASS)
             assert result.returncode==1,'Malformed helper arguments must be rejected'

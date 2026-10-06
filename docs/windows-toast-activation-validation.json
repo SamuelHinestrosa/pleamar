@@ -6,8 +6,8 @@
   "native_protocol": {
     "passed": true,
     "command": "python scripts/windows-toast-broker.py --binary <release/pleamar.exe> --tests <paired-library-test.exe> --output <new-owned-directory> --activation protocol",
-    "engine_sha256": "bedafae3fe44a993790450335476a6a1dde0731f2b534dccce35d7b581641b4c",
-    "broker_sha256": "a61bb308e2ecfc5ec5b742764e3a27fbc4b033f9895a3c4177a97f3961d43b13",
+    "engine_sha256": "639eb901e455cd128d17934313809c91d790b81e72ac82a52d45c8675c93fc2b",
+    "broker_sha256": "7a162c1d595155850e4390bb1eb51fdd00e8404f082da496075e388c30041be3",
     "unicode_shortcut_and_exact_handlers": true,
     "real_shell_execute_startup": true,
     "one_live_action_delivered": true,
@@ -19,12 +19,17 @@
     "foreground_unchanged": true,
     "toast_published": false,
     "actual_toast_click": false,
-    "physical_input_sent": false
+    "physical_input_sent": false,
+    "live_then_replayed_activation_cycles": 2,
+    "new_action_after_expired_client_disconnect": true,
+    "idle_receiver_shutdown_verified": true,
+    "idle_receiver_cpu_cycles": [0, 0],
+    "idle_receiver_sample_ms": 350
   },
   "legacy_com": {
     "local_automatic_startup": "REGDB_E_CLASSNOTREG 0x80040154; unresolved",
     "local_running_helper_activation": "passed",
     "windows_server_2022_automatic_startup": "passed at ecabd1e in CI run 37508560180"
   },
-  "limitations": ["Actual notification-center clicks remain pending", "Current installer and combined COM/protocol CI are separate checks", "No full GUI or port parity claim"]
+  "limitations": ["Actual notification-center clicks remain pending", "Current installer and combined COM/protocol CI are separate checks", "Idle samples are not whole-app or sustained-performance measurements", "No full GUI or port parity claim"]
 }
