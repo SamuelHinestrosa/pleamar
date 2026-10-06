@@ -75,28 +75,51 @@ pub(super) fn accept_ready(pipe: &File) -> bool {
     false
 }
 
+fn wait_for_client(pipe: &File) -> Result<(), String> {
+    let handle = HANDLE(pipe.as_raw_handle());
+    // Only accepting is unbounded. Reads and writes keep their nonblocking
+    // handle mode and the existing exchange deadline after a client arrives.
+    unsafe { SetNamedPipeHandleState(handle, Some(&PIPE_WAIT), None, None) }.map_err(|e| e.to_string())?;
+    loop {
+        match unsafe { ConnectNamedPipe(handle, None) } {
+            Ok(()) => break,
+            Err(e) if e.code() == ERROR_PIPE_CONNECTED.to_hresult() => break,
+            Err(e) if e.code() == ERROR_NO_DATA.to_hresult() => {
+                unsafe { DisconnectNamedPipe(handle) }.map_err(|e| e.to_string())?;
+            }
+            Err(e) => return Err(e.to_string()),
+        }
+    }
+    unsafe { SetNamedPipeHandleState(handle, Some(&PIPE_NOWAIT), None, None) }.map_err(|e| e.to_string())
+}
+
+fn serve(mut pipe: File, receive: Box<dyn Fn(String) -> Option<String> + Send>) -> Result<(), String> {
+    loop {
+        wait_for_client(&pipe)?;
+        let handle = HANDLE(pipe.as_raw_handle());
+        let mut quitting = false;
+        if let Ok(line) = read_line(&mut pipe, Instant::now() + DEFAULT_WAIT) {
+            // A quit must be acknowledged before the UI thread exits.
+            quitting = line.split_whitespace().next() == Some("quit");
+            let answer = if quitting { String::new() } else { receive(line.clone()).unwrap_or_default() };
+            let answer = serde_json::to_string(&answer).unwrap();
+            if answer.len() < LIMIT { let _ = writeln!(pipe, "{answer}"); }
+            // Its acknowledgement prevents DisconnectNamedPipe discarding the reply.
+            let _ = read_line(&mut pipe, Instant::now() + DEFAULT_WAIT);
+            if quitting { receive(line); }
+        }
+        unsafe { DisconnectNamedPipe(handle) }.map_err(|e| e.to_string())?;
+        if quitting { return Ok(()); }
+    }
+}
+
 pub fn listen_for_commands(scene: &str, receive: Box<dyn Fn(String) -> Option<String> + Send>) {
-    let mut pipe = match bind(scene) {
+    let pipe = match bind(scene) {
         Ok(p) => p,
         Err(e) => { eprintln!("orders · {e}"); return; }
     };
-    std::thread::spawn(move || loop {
-        let handle = HANDLE(pipe.as_raw_handle());
-        if accept_ready(&pipe) {
-            if let Ok(line) = read_line(&mut pipe, Instant::now() + DEFAULT_WAIT) {
-                // A quit must be acknowledged before the UI thread exits.
-                let quitting = line.split_whitespace().next() == Some("quit");
-                let answer = if quitting { String::new() } else { receive(line.clone()).unwrap_or_default() };
-                let answer = serde_json::to_string(&answer).unwrap();
-                if answer.len() < LIMIT { let _ = writeln!(pipe, "{answer}"); }
-                // Wait until the client reads the reply, with a bounded wait.
-                // Its acknowledgement prevents DisconnectNamedPipe discarding it.
-                let _ = read_line(&mut pipe, Instant::now() + DEFAULT_WAIT);
-                if quitting { receive(line); }
-            }
-            unsafe { let _ = DisconnectNamedPipe(handle); }
-        }
-        std::thread::sleep(Duration::from_millis(5));
+    std::thread::spawn(move || {
+        if let Err(e) = serve(pipe, receive) { eprintln!("orders · {e}"); }
     });
 }
 
@@ -190,6 +213,54 @@ mod tests {
         writeln!(pipe, "\"recovered\"").unwrap();
         let _ = read_line(&mut pipe, until);
         assert_eq!(client.join().unwrap().unwrap(), "recovered");
+    }
+    #[test]
+    fn commands_resume_after_idle_and_quit_releases_endpoint() {
+        #[link(name="kernel32")]
+        unsafe extern "system" { fn QueryThreadCycleTime(thread: HANDLE, cycles: *mut u64) -> i32; }
+        let name = format!("idle commands {}", std::process::id());
+        let path = pipe_path(&name).unwrap();
+        let pipe = bind(&name).unwrap();
+        // A stale connection must also recover when switching to blocking accept.
+        assert!(!accept_ready(&pipe));
+        drop(OpenOptions::new().read(true).write(true).open(&path).unwrap());
+        let (quit, observed) = std::sync::mpsc::channel();
+        let thread = std::thread::spawn(move || serve(pipe, Box::new(move |line| {
+            if line == "quit" { quit.send(()).unwrap(); }
+            Some(format!("reply {line}"))
+        })));
+        for cycle in 0..2 {
+            std::thread::sleep(Duration::from_millis(100));
+            let cycles = || {
+                let mut count = 0;
+                assert_ne!(unsafe { QueryThreadCycleTime(HANDLE(thread.as_raw_handle()), &mut count) }, 0);
+                count
+            };
+            let before = cycles();
+            std::thread::sleep(Duration::from_millis(350));
+            println!("idle command cycle {cycle}: {} CPU cycles during 350 ms", cycles() - before);
+            assert_eq!(ask(&name, "hello 世界", DEFAULT_WAIT).unwrap(), "reply hello 世界");
+            // An accepted client that sends no request must not hold the endpoint.
+            let until = Instant::now() + DEFAULT_WAIT;
+            let abandoned = loop {
+                match OpenOptions::new().read(true).write(true).open(&path) {
+                    Ok(pipe) => break pipe,
+                    Err(e) if Instant::now() >= until => panic!("could not connect idle client: {e}"),
+                    Err(_) => std::thread::sleep(Duration::from_millis(5)),
+                }
+            };
+            drop(abandoned);
+            assert_eq!(ask(&name, "after disconnect", DEFAULT_WAIT).unwrap(), "reply after disconnect");
+        }
+        assert_eq!(ask(&name, "quit", DEFAULT_WAIT).unwrap(), "");
+        observed.recv_timeout(DEFAULT_WAIT).unwrap();
+        let until = Instant::now() + DEFAULT_WAIT;
+        while !thread.is_finished() {
+            assert!(Instant::now() < until, "command listener did not stop after quit");
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        thread.join().unwrap().unwrap();
+        assert!(bind(&name).is_ok(), "quit must release exclusive ownership of the pipe");
     }
     #[test]
     fn rejects_pipe_path_injection() {

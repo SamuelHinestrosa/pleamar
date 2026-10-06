@@ -2,12 +2,17 @@
   "date": "2026-10-06",
   "platform": "Windows 11 x64 MSVC",
   "default_luau": true,
-  "library_tests": {"passed": 194, "failed": 0, "ignored": 41},
+  "library_tests": {
+    "passed": 196,
+    "failed": 0,
+    "ignored": 41,
+    "local_unpublished_ignored_fixtures": 2
+  },
   "native_protocol": {
     "passed": true,
     "command": "python scripts/windows-toast-broker.py --binary <release/pleamar.exe> --tests <paired-library-test.exe> --output <new-owned-directory> --activation protocol",
-    "engine_sha256": "639eb901e455cd128d17934313809c91d790b81e72ac82a52d45c8675c93fc2b",
-    "broker_sha256": "7a162c1d595155850e4390bb1eb51fdd00e8404f082da496075e388c30041be3",
+    "engine_sha256": "14a43071ceb9a071251f0059a6eba3bda35d9331131ee5df1625b757a30986a6",
+    "broker_sha256": "36b3112bbdb3fc802f567c11782c80826f28b7ff015cde4352117676151f8ecf",
     "unicode_shortcut_and_exact_handlers": true,
     "real_shell_execute_startup": true,
     "one_live_action_delivered": true,
@@ -23,13 +28,21 @@
     "live_then_replayed_activation_cycles": 2,
     "new_action_after_expired_client_disconnect": true,
     "idle_receiver_shutdown_verified": true,
-    "idle_receiver_cpu_cycles": [0, 0],
+    "idle_receiver_cpu_cycles": [
+      0,
+      0
+    ],
     "idle_receiver_sample_ms": 350
   },
   "legacy_com": {
     "local_automatic_startup": "REGDB_E_CLASSNOTREG 0x80040154; unresolved",
     "local_running_helper_activation": "passed",
-    "windows_server_2022_automatic_startup": "passed at ecabd1e in CI run 37508560180"
+    "windows_server_2022_automatic_startup": "passed at 407f969 in CI run 37515582416"
   },
-  "limitations": ["Actual notification-center clicks remain pending", "Current installer and combined COM/protocol CI are separate checks", "Idle samples are not whole-app or sustained-performance measurements", "No full GUI or port parity claim"]
+  "limitations": [
+    "Actual notification-center clicks remain pending",
+    "Current installer and combined COM/protocol CI are separate checks",
+    "Idle samples are not whole-app or sustained-performance measurements",
+    "No full GUI or port parity claim"
+  ]
 }

@@ -230,7 +230,11 @@ with Windows Startup is a user choice, not performed by the installer.
 ```
 
 Commands use local named pipes; a second scene cannot take over an existing
-scene name. With multiple running scenes, specify the file stem. Use
+scene name. The listener waits in Windows while idle, instead of polling every
+5 ms. An abandoned client is disconnected before accepting another request;
+`quit` acknowledges the caller and then releases the listener and its pipe.
+Reads and reply acknowledgements retain their bounded waits. With multiple
+running scenes, specify the file stem. Use
 `PLEAMAR_SOCKET_DIR` as an isolated namespace for tests (it is a namespace salt
 on Windows, not a directory of Unix sockets). Sender and receiver must run as
 the same user with access to the pipe. `--screen '\\.\DISPLAY1'` selects a
@@ -239,6 +243,13 @@ If the selected output is absent at startup, the process keeps Luau and IPC
 running and waits for it to appear. `--say ... quit` and `--seconds` still work
 while no window exists. An available output whose native window creation fails
 is reported as an error rather than being mistaken for an unplugged monitor.
+
+`cargo test --release --locked --lib platform::windows_ipc::tests -- --nocapture`
+checks real named-pipe connections, Unicode replies, timeouts, abandoned clients
+and exclusive ownership. The idle test also checks repeated wakeups, acknowledged
+quit and reusing the released name. Five local executions reported zero thread
+CPU cycles in all ten 350 ms idle samples; no windows or desktop input were used.
+This measures the command listener, not whole-application CPU or RAM usage.
 
 ## Capability matrix
 
