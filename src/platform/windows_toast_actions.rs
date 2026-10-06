@@ -120,14 +120,16 @@ fn actions(value:&SysValue)->Result<Vec<(String,String)>,String> {
     }
     Ok(result)
 }
-fn document(title:&str,body:&str,buttons:&[(String,String)],tokens:&[(String,String)])->Result<windows::Data::Xml::Dom::XmlDocument,String> {
+fn document(id:&str,title:&str,body:&str,buttons:&[(String,String)],tokens:&[(String,String)])->Result<windows::Data::Xml::Dom::XmlDocument,String> {
     let doc=toasts::document(title,body).map_err(|e|e.to_string())?;
     let root=doc.DocumentElement().map_err(|e|e.to_string())?;
-    root.SetAttribute(&HSTRING::from("launch"),&HSTRING::from(&tokens[0].0)).map_err(|e|e.to_string())?;
+    root.SetAttribute(&HSTRING::from("activationType"),&HSTRING::from("protocol")).map_err(|e|e.to_string())?;
+    root.SetAttribute(&HSTRING::from("launch"),&HSTRING::from(super::windows_toast_protocol::uri(id,&tokens[0].0))).map_err(|e|e.to_string())?;
     let nodes=doc.CreateElement(&HSTRING::from("actions")).map_err(|e|e.to_string())?;
     for ((_,label),(token,_)) in buttons.iter().zip(tokens.iter().skip(1)) {
         let node=doc.CreateElement(&HSTRING::from("action")).map_err(|e|e.to_string())?;
-        for (name,value) in [("content",label.as_str()),("arguments",token.as_str()),("activationType","background")] {
+        let uri=super::windows_toast_protocol::uri(id,token);
+        for (name,value) in [("content",label.as_str()),("arguments",uri.as_str()),("activationType","protocol")] {
             node.SetAttribute(&HSTRING::from(name),&HSTRING::from(value)).map_err(|e|e.to_string())?;
         }
         nodes.AppendChild(&node).map_err(|e|e.to_string())?;
@@ -153,7 +155,7 @@ pub(super) fn publish(owner:&str,args:&[SysValue])->Result<(),String> {
     for key in std::iter::once("default").chain(buttons.iter().map(|(key,_)|key.as_str())) {
         tokens.push((format!("v1.{}.{}",c.route,activation::random()?),key.to_owned()));
     }
-    let doc=document(&title,&body,&buttons,&tokens)?;
+    let doc=document(&id.to_string(),&title,&body,&buttons,&tokens)?;
     let delivered=Arc::new(AtomicBool::new(false));
     {let mut s=c.store.lock().unwrap();s.prune(Instant::now());s.cancel(&owner.name,Some(&tag));
         if s.notices.len()+s.events.len()+s.removals.len()>=LIMIT {return Err("too many outstanding notification actions".into());}
@@ -227,6 +229,35 @@ mod tests {
         assert!(status.success());
         assert!(matches!(result,SysValue::List(v) if v==vec![SysValue::Map(vec![("tag".into(),SysValue::Text("logical".into())),("action".into(),SysValue::Text("now".into()))])]),"one native action must survive a duplicate COM activation");
     }
+    #[test]
+    #[ignore = "requires an owned installed protocol and paired native broker; sends no toast or input"]
+    fn protocol_activation_child() {
+        use windows::{core::PCWSTR, Win32::{Foundation::CloseHandle, System::Threading::{WaitForSingleObject,GetExitCodeProcess}, UI::Shell::*}};
+        let id=std::env::var("PLEAMAR_TEST_TOAST_APP").unwrap();
+        let engine=std::path::PathBuf::from(std::env::var_os("PLEAMAR_TEST_TOAST_ENGINE").unwrap());
+        assert!(activation::ready(&engine,&id));
+        let _apartment=super::super::windows_system::Apartment::new().unwrap();
+        let c=start(&id).unwrap();
+        let token=format!("v1.{}.{}",c.route,activation::random().unwrap());
+        let physical=activation::random().unwrap()[..16].to_owned();
+        let mut n=notice("owned protocol test","logical",Arc::new(AtomicBool::new(true)),Instant::now()+EXPIRY);
+        n.physical=physical.clone();n.tokens=vec![(token.clone(),"now".into())];
+        c.store.lock().unwrap().notices.insert(physical,n);
+        let uri=super::super::windows_toast_protocol::uri(&id,&token).encode_utf16().chain([0]).collect::<Vec<_>>();
+        // ShellExecute must start the registered GUI-subsystem helper. It may
+        // forward only the first token; the second launch must remain inert.
+        for _ in 0..2 {unsafe {
+            let mut info=SHELLEXECUTEINFOW{cbSize:std::mem::size_of::<SHELLEXECUTEINFOW>() as u32,
+                fMask:SEE_MASK_NOCLOSEPROCESS|SEE_MASK_NOASYNC|SEE_MASK_FLAG_NO_UI,
+                lpFile:PCWSTR(uri.as_ptr()),nShow:0,..Default::default()};
+            ShellExecuteExW(&mut info).unwrap();assert!(!info.hProcess.is_invalid());
+            let waited=WaitForSingleObject(info.hProcess,5000);
+            let mut code=1;let result=GetExitCodeProcess(info.hProcess,&mut code);let _=CloseHandle(info.hProcess);
+            assert_eq!(waited,windows::Win32::Foundation::WAIT_OBJECT_0);result.unwrap();assert_eq!(code,0);
+        }}
+        let result=query("owned protocol test",&[]).unwrap();shutdown();
+        assert_eq!(result,SysValue::List(vec![SysValue::Map(vec![("tag".into(),SysValue::Text("logical".into())),("action".into(),SysValue::Text("now".into()))])]));
+    }
     fn notice(owner:&str,tag:&str,active:Arc<AtomicBool>,until:Instant)->Notice {
         Notice{owner:Owner{name:owner.into(),lifetime:Some(active)},tag:tag.into(),physical:tag.into(),
             tokens:vec![(format!("{tag}-now"),"now".into()),(format!("{tag}-skip"),"skip".into())],until,delivered:Arc::new(AtomicBool::new(false))}
@@ -276,12 +307,15 @@ mod tests {
         let _apartment=super::super::windows_system::Apartment::new().unwrap();
         let label="Hacerlo · 海 & <action/> \" '";
         let tokens=vec![("v1.default".into(),"default".into()),("v1.button".into(),"now".into())];
-        let doc=document("<title>","España & 🚀",&[("now".into(),label.into())],&tokens).unwrap();
+        let doc=document("owned","<title>","España & 🚀",&[("now".into(),label.into())],&tokens).unwrap();
         let nodes=doc.GetElementsByTagName(&HSTRING::from("action")).unwrap();assert_eq!(nodes.Length().unwrap(),1);
         let attrs=nodes.Item(0).unwrap().Attributes().unwrap();
         assert_eq!(attrs.GetNamedItem(&HSTRING::from("content")).unwrap().InnerText().unwrap(),label);
-        assert_eq!(attrs.GetNamedItem(&HSTRING::from("arguments")).unwrap().InnerText().unwrap(),"v1.button");
-        assert_eq!(doc.DocumentElement().unwrap().GetAttribute(&HSTRING::from("launch")).unwrap(),"v1.default");
+        assert_eq!(attrs.GetNamedItem(&HSTRING::from("arguments")).unwrap().InnerText().unwrap(),super::super::windows_toast_protocol::uri("owned","v1.button"));
+        assert_eq!(attrs.GetNamedItem(&HSTRING::from("activationType")).unwrap().InnerText().unwrap(),"protocol");
+        let root=doc.DocumentElement().unwrap();
+        assert_eq!(root.GetAttribute(&HSTRING::from("launch")).unwrap(),super::super::windows_toast_protocol::uri("owned","v1.default"));
+        assert_eq!(root.GetAttribute(&HSTRING::from("activationType")).unwrap(),"protocol");
     }
     #[test]
     fn os_dismissal_retires_only_notices_in_the_confirmed_snapshot() {

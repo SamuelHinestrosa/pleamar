@@ -1,0 +1,30 @@
+{
+  "date": "2026-10-06",
+  "platform": "Windows 11 x64 MSVC",
+  "default_luau": true,
+  "library_tests": {"passed": 194, "failed": 0, "ignored": 41},
+  "native_protocol": {
+    "passed": true,
+    "command": "python scripts/windows-toast-broker.py --binary <release/pleamar.exe> --tests <paired-library-test.exe> --output <new-owned-directory> --activation protocol",
+    "engine_sha256": "bedafae3fe44a993790450335476a6a1dde0731f2b534dccce35d7b581641b4c",
+    "broker_sha256": "a61bb308e2ecfc5ec5b742764e3a27fbc4b033f9895a3c4177a97f3961d43b13",
+    "unicode_shortcut_and_exact_handlers": true,
+    "real_shell_execute_startup": true,
+    "one_live_action_delivered": true,
+    "duplicate_rejected": true,
+    "malformed_arguments_rejected": true,
+    "helper_exited": true,
+    "replacement_handler_and_unrelated_values_preserved": true,
+    "own_registrations_removed": true,
+    "foreground_unchanged": true,
+    "toast_published": false,
+    "actual_toast_click": false,
+    "physical_input_sent": false
+  },
+  "legacy_com": {
+    "local_automatic_startup": "REGDB_E_CLASSNOTREG 0x80040154; unresolved",
+    "local_running_helper_activation": "passed",
+    "windows_server_2022_automatic_startup": "passed at ecabd1e in CI run 37508560180"
+  },
+  "limitations": ["Actual notification-center clicks remain pending", "Current installer and combined COM/protocol CI are separate checks", "No full GUI or port parity claim"]
+}

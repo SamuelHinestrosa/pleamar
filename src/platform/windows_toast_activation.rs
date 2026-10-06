@@ -31,6 +31,7 @@ fn registered(id:&str) -> Result<Option<String>,String> { unsafe {
 pub(super) fn ready(engine:&Path,id:&str)->bool {
     engine.with_file_name("pleamar-notifications.exe").is_file()
         && broker(engine).ok().is_some_and(|want|registered(id).ok().flatten().as_ref()==Some(&want))
+        && super::windows_toast_protocol::ready(engine,id)
 }
 pub(super) fn register(engine:&Path,id:&str)->Result<(),String> {
     if !engine.with_file_name("pleamar-notifications.exe").is_file() {return Err("the package is missing pleamar-notifications.exe".into());}
@@ -38,9 +39,11 @@ pub(super) fn register(engine:&Path,id:&str)->Result<(),String> {
     if registered(id)?.is_some_and(|old|old!=value) {return Err("another server owns the notification registration".into());}
     let key=wide(&key(id));let value=wide(&value);
     unsafe {RegSetKeyValueW(HKEY_CURRENT_USER,PCWSTR(key.as_ptr()),PCWSTR::null(),REG_SZ.0,
-        Some(value.as_ptr().cast()),(value.len()*2) as u32)}.ok().map_err(|e|e.to_string())
+        Some(value.as_ptr().cast()),(value.len()*2) as u32)}.ok().map_err(|e|e.to_string())?;
+    super::windows_toast_protocol::register(engine,id)
 }
 pub(super) fn unregister(engine:&Path,id:&str)->Result<(),String> {
+    super::windows_toast_protocol::unregister(engine,id)?;
     if registered(id)?.as_ref()!=Some(&broker(engine)?) {return Ok(());}
     // Delete only our exact server key, preserving other values/subkeys on CLSID.
     let path=wide(&key(id));
@@ -102,6 +105,14 @@ impl Drop for Registration {fn drop(&mut self){unsafe {let _=CoRevokeClassObject
 pub(crate) fn run_broker()->Result<(),String> {
     let engine=std::env::current_exe().map_err(|e|e.to_string())?.with_file_name("pleamar.exe");
     let id=super::windows_toasts::identity_for(&engine);
+    let args=std::env::args().skip(1).collect::<Vec<_>>();
+    if args.first().is_some_and(|arg|arg=="--activate-notification") {
+        if args.len()!=2 {return Err("notification activation requires exactly one URI".into());}
+        return super::windows_toast_protocol::activate(&id,&args[1]);
+    }
+    if !args.is_empty() && !(args.len()==1 && args[0].eq_ignore_ascii_case("-embedding")) {
+        return Err("unrecognized notification broker arguments".into());
+    }
     let _apartment=super::windows_system::Apartment::new()?;
     let calls=Arc::new(AtomicU64::new(0));
     let _class=Registration::new(&id,clsid(&id),calls.clone())?;

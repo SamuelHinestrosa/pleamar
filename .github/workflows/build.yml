@@ -44,7 +44,7 @@ jobs:
       - name: Windows-key hook ownership on an isolated private desktop
         if: runner.os == 'Windows'
         run: cargo test --locked --lib native_layer_private_desktop -- --ignored --nocapture
-      - name: Owned Windows notification COM registration and broker (no toast/input)
+      - name: Owned Windows notification COM and protocol activation (no toast/input)
         if: runner.os == 'Windows'
         shell: pwsh
         run: |

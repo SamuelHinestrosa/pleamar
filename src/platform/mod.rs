@@ -898,6 +898,8 @@ mod windows_toast_actions;
 #[cfg(target_os = "windows")]
 mod windows_toast_activation;
 #[cfg(target_os = "windows")]
+mod windows_toast_protocol;
+#[cfg(target_os = "windows")]
 pub(crate) use windows_toast_activation::run_broker as run_notification_broker;
 #[cfg(target_os = "windows")]
 pub(crate) use windows_toast_actions::release as release_notification_actions;

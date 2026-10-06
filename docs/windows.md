@@ -611,9 +611,13 @@ to retire its callback without running it. History read errors do not imply
 dismissal; a concurrent, unconfirmed publication is excluded from that snapshot.
 The three-argument informational publisher retains its previous retry contract.
 
-The windowless COM helper routes opaque tokens to their originating process's
-local pipe, including when another scene's COM server receives the activation.
-It never starts Marea, replays saved tasks, interprets commands or opens URLs.
+New actionable notices use native protocol activation. Registration assigns an
+installation-specific `pleamar-notify-<hash>` URI scheme directly to the quoted
+windowless helper, without a shell script or browser. The helper accepts only
+its exact scheme and a bounded opaque token, then forwards it to the originating
+process's local pipe. COM activation remains available for existing notices.
+The helper never starts Marea, replays saved tasks, interprets commands or opens
+external URLs. Unregistration preserves a replaced handler and unrelated values.
 An activation after the original process exits is discarded. Text and button
 labels remain literal XML. A fast valid activation also confirms delivery if
 Windows has already removed the toast before its first history read. This
@@ -624,23 +628,34 @@ Build both executables with default Luau enabled:
 The packaging feature includes the helper executable; Windows install scripts
 select it. Ordinary Linux builds and installs retain only the main executable.
 
-The implementation follows Microsoft's [COM activation interface](https://learn.microsoft.com/en-us/windows/win32/api/notificationactivationcallback/nf-notificationactivationcallback-inotificationactivationcallback-activate)
+The implementation uses the `protocol` activation type in Microsoft's
+[notification schema](https://learn.microsoft.com/windows/apps/design/shell/tiles-and-notifications/toast-schema), the [COM activation interface](https://learn.microsoft.com/en-us/windows/win32/api/notificationactivationcallback/nf-notificationactivationcallback-inotificationactivationcallback-activate)
 and [desktop registration example](https://github.com/microsoft/Windows-classic-samples/blob/main/Samples/DesktopToasts/CPP/DesktopToastsSample.cpp).
 `cargo test --release --locked --lib windows_toast_ -- --nocapture` covers
 validation, scene lifetime, expiry and an isolated cross-process COM activation
 without publishing a toast. The new action path still requires actual
 notification-center button acceptance and current installer CI; neither is
-established by COM invocation or the earlier informational-publisher tests.
+established by COM/protocol invocation or earlier informational-publisher tests.
 
-Current validation (October 6, 2026): the default-Luau release build and 193
+Current validation (October 6, 2026): the default-Luau release build and 194
 ordinary library tests pass locally. Starting the windowless helper directly
 also passes the cross-process activation and expiry checks. Automatic startup
 through its per-user registration currently fails locally with
 `REGDB_E_CLASSNOTREG` (`0x80040154`), despite successful registry and shortcut
 readback; ASCII and Unicode install paths both reproduce it. The isolated
-`scripts/windows-toast-broker.py` CI check deliberately requires automatic
-startup and must pass before this path is accepted. No toast was published or
-clicked in that diagnostic, and it does not establish notification UI parity.
+Automatic COM startup does pass on Windows Server 2022 CI at `ecabd1e` (run
+37508560180); this does not resolve the local Windows 11 discrepancy. The
+`scripts/windows-toast-broker.py` check now tests both automatic COM startup and
+native protocol delivery by default. `--activation protocol` isolates the new
+path without claiming COM works. Neither diagnostic publishes or clicks a toast,
+and neither establishes notification UI parity.
+The protocol-only diagnostic passes locally: actual `ShellExecuteExW` startup
+from an owned Unicode path delivers one live action and rejects its duplicate;
+malformed helper arguments fail, the helper exits, both registrations are
+removed, and foreground focus is unchanged. See
+[`windows-toast-activation-validation.json`](windows-toast-activation-validation.json).
+This fixes the tested activation route without claiming that COM startup or an
+actual notification-center button has been validated on this machine.
 The ordinary tests also cover a replaced publication finishing late: cleanup
 addresses its physical toast/token generation and preserves the replacement's
 pending action, even when both publications use the same logical scene tag.

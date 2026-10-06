@@ -1,4 +1,4 @@
-"""Owned shortcut/COM server lifecycle, without sending toasts or desktop input."""
+"""Owned shortcut/activation lifecycle, without sending toasts or desktop input."""
 import argparse,ctypes,hashlib,json,os,shutil,struct,subprocess,time,uuid,winreg
 from pathlib import Path
 
@@ -6,6 +6,7 @@ p=argparse.ArgumentParser(description=__doc__)
 p.add_argument('--binary',type=Path,required=True)
 p.add_argument('--tests',type=Path,required=True,help='Paired pleamar lib-test executable')
 p.add_argument('--output',type=Path,required=True,help='New directory; retained binaries, log and report')
+p.add_argument('--activation',choices=['both','com','protocol'],default='both')
 a=p.parse_args()
 source=a.binary.resolve(strict=True);tests=a.tests.resolve(strict=True)
 helper=source.with_name('pleamar-notifications.exe')
@@ -24,16 +25,23 @@ def fnv(value):
 app=f'org.pleamar.desktop.{fnv(str(engine).replace("/",chr(92)).lower()):016x}'
 clsid=uuid.UUID(int=0x61e6ee1c8b1a41750000000000000000|fnv(app))
 key='Software\\Classes\\CLSID\\{'+str(clsid)+'}\\LocalServer32'
+protocol='Software\\Classes\\pleamar-notify-'+f'{fnv(app):016x}'
+protocol_command=protocol+'\\shell\\open\\command'
+def protocol_value(path=protocol_command,name=None):
+    try:
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER,path) as entry:return winreg.QueryValueEx(entry,name)[0]
+    except FileNotFoundError:return None
 def server():
     try:
         with winreg.OpenKey(winreg.HKEY_CURRENT_USER,key,0,winreg.KEY_READ|winreg.KEY_WOW64_64KEY) as entry:
             return winreg.QueryValueEx(entry,None)[0]
     except FileNotFoundError:return None
 assert server() is None,'Refuse to change an existing COM registration'
+assert protocol_value() is None and protocol_value(protocol,'URL Protocol') is None,'Refuse to change an existing protocol'
 user=ctypes.WinDLL('user32');user.GetForegroundWindow.restype=ctypes.c_void_p
 initial=user.GetForegroundWindow()
 report=dict(passed=False,actual_toast_click=False,toast_published=False,physical_input_sent=False,
-    engine_sha256=hashlib.sha256(source.read_bytes()).hexdigest(),broker_sha256=hashlib.sha256(data).hexdigest(),stages=[])
+    activation_test=a.activation,engine_sha256=hashlib.sha256(source.read_bytes()).hexdigest(),broker_sha256=hashlib.sha256(data).hexdigest(),stages=[])
 def run(command,env=None,timeout=30):
     r=subprocess.run(list(map(str,command)),env=env,capture_output=True,text=True,encoding='utf-8',errors='replace',
         timeout=timeout,creationflags=subprocess.CREATE_NO_WINDOW|subprocess.BELOW_NORMAL_PRIORITY_CLASS)
@@ -75,15 +83,26 @@ try:
     create_shortcut(shortcut,engine)
     run([engine,'--register-notification-shortcut',shortcut])
     assert server()==f'"{broker}"'
+    expected_protocol=f'"{broker}" --activate-notification "%1"'
+    assert protocol_value()==expected_protocol and protocol_value(protocol,'URL Protocol')==''
     run([engine,'--check-notification-shortcut',shortcut])
     report['stages'].append('Unicode shortcut, AUMID/CLSID and exact quoted native server verified')
     # No scene or endpoint exists for this nonce. CoCreateInstance must start the
     # installed GUI-subsystem helper; both stale activations are discarded.
     assert not owned_processes()
-    activation=run([tests,'--exact','platform::windows_toast_actions::tests::activation_child','--ignored','--nocapture'],
-        dict(os.environ,PLEAMAR_TEST_TOAST_APP=app,PLEAMAR_TEST_TOAST_TOKEN=f'v1.{uuid.uuid4().hex}.{uuid.uuid4().hex}'))
-    assert 'activation_child ... ok' in activation.stdout and '1 passed' in activation.stdout,'Paired activation test did not execute'
-    report['stages'].append('real COM startup, wrong-app/malformed rejection and duplicate expired activations completed')
+    if a.activation in ['both','com']:
+        activation=run([tests,'--exact','platform::windows_toast_actions::tests::activation_child','--ignored','--nocapture'],
+            dict(os.environ,PLEAMAR_TEST_TOAST_APP=app,PLEAMAR_TEST_TOAST_TOKEN=f'v1.{uuid.uuid4().hex}.{uuid.uuid4().hex}'))
+        assert 'activation_child ... ok' in activation.stdout and '1 passed' in activation.stdout,'Paired activation test did not execute'
+        report['stages'].append('real COM startup, wrong-app/malformed rejection and duplicate expired activations completed')
+    if a.activation in ['both','protocol']:
+        activation=run([tests,'--exact','platform::windows_toast_actions::tests::protocol_activation_child','--ignored','--nocapture'],
+            dict(os.environ,PLEAMAR_TEST_TOAST_APP=app,PLEAMAR_TEST_TOAST_ENGINE=str(engine)))
+        assert 'protocol_activation_child ... ok' in activation.stdout and '1 passed' in activation.stdout,'Protocol test did not execute'
+        for bad in [['--activate-notification'],['--activate-notification','https://example.invalid'],['--activate-notification','wrong','extra']]:
+            result=subprocess.run([str(broker),*bad],timeout=5,creationflags=subprocess.CREATE_NO_WINDOW|subprocess.BELOW_NORMAL_PRIORITY_CLASS)
+            assert result.returncode==1,'Malformed helper arguments must be rejected'
+        report['stages'].append('real protocol startup and delivery, duplicate rejection and bounded malformed arguments passed')
     until=time.monotonic()+20
     while owned_processes():
         assert time.monotonic()<until,'Owned COM helper did not exit'
@@ -92,19 +111,31 @@ try:
     # An unrelated replacement server must never be removed or overwritten.
     with winreg.OpenKey(winreg.HKEY_CURRENT_USER,key,0,winreg.KEY_SET_VALUE|winreg.KEY_WOW64_64KEY) as entry:
         winreg.SetValueEx(entry,None,0,winreg.REG_SZ,'owned test replacement')
+    with winreg.OpenKey(winreg.HKEY_CURRENT_USER,protocol_command,0,winreg.KEY_SET_VALUE) as entry:
+        winreg.SetValueEx(entry,None,0,winreg.REG_SZ,'owned protocol replacement')
     run([engine,'--unregister-notification-publisher']);assert server()=='owned test replacement'
+    assert protocol_value()=='owned protocol replacement'
     with winreg.OpenKey(winreg.HKEY_CURRENT_USER,key,0,winreg.KEY_SET_VALUE|winreg.KEY_WOW64_64KEY) as entry:
         winreg.SetValueEx(entry,None,0,winreg.REG_SZ,f'"{broker}"')
+    with winreg.OpenKey(winreg.HKEY_CURRENT_USER,protocol_command,0,winreg.KEY_SET_VALUE) as entry:
+        winreg.SetValueEx(entry,None,0,winreg.REG_SZ,expected_protocol)
+        winreg.SetValueEx(entry,'unrelated',0,winreg.REG_SZ,'preserve')
     run([engine,'--unregister-notification-publisher']);assert server() is None
+    assert protocol_value() is None and protocol_value(protocol_command,'unrelated')=='preserve'
+    with winreg.OpenKey(winreg.HKEY_CURRENT_USER,protocol_command,0,winreg.KEY_SET_VALUE) as entry:winreg.DeleteValue(entry,'unrelated')
+    for path in [protocol_command,protocol+'\\shell\\open',protocol+'\\shell',protocol]:winreg.DeleteKey(winreg.HKEY_CURRENT_USER,path)
     run([engine,'--unregister-notification-publisher'])
     report['stages'].append('unregister preserves replacement server, removes exact owner, and is idempotent')
     report['passed']=True
 finally:
+    if protocol_value()=='owned protocol replacement':
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER,protocol_command,0,winreg.KEY_SET_VALUE) as entry:winreg.SetValueEx(entry,None,0,winreg.REG_SZ,expected_protocol)
     if server()=='owned test replacement':
         with winreg.OpenKey(winreg.HKEY_CURRENT_USER,key,0,winreg.KEY_SET_VALUE|winreg.KEY_WOW64_64KEY) as entry:
             winreg.SetValueEx(entry,None,0,winreg.REG_SZ,f'"{broker}"')
-    if server()==f'"{broker}"':run([engine,'--unregister-notification-publisher'])
+    run([engine,'--unregister-notification-publisher'])
     report['registration_removed']=server() is None
+    report['protocol_removed']=protocol_value() is None and protocol_value(protocol,'URL Protocol') is None
     report['foreground_unchanged']=user.GetForegroundWindow()==initial
     (out/'report.json').write_text(json.dumps(report,indent=2),encoding='utf-8')
 print(json.dumps(report,indent=2))
