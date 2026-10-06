@@ -568,6 +568,7 @@ impl State {
                 m.push((output.clone(), name.clone(), mhz));
             }
         }
+        lock_face_for_new_monitor(output, &name, number, mhz);
         for which in 0..self.wanted.len() {
             // The lock one isn't placed: it's engaged, when the scene says so.
             if self.wanted[which].lock_screen {
@@ -642,6 +643,9 @@ impl State {
         OUTPUTS.lock().unwrap().retain(|_, o| o != output);
         if let Some(c) = LOCKS.get() {
             c.monitors.lock().unwrap().retain(|(s, _, _)| s != output);
+        }
+        for id in lock_face_for_gone_monitor(output) {
+            let _ = self.to_render.send(ToRender::SheetGone(id));
         }
         for p in self.placed.iter().filter(|p| &p.output == output) {
             let _ = self.to_render.send(ToRender::SheetGone(p.id));
@@ -735,8 +739,16 @@ struct Engaged {
     /// and where its piece of the plane lands.
     bounds: (u32, u32),
     origin: (f32, f32),
+    /// Which monitors show the scene (`screens:`): a monitor that arrives
+    /// while it is locked gets its face by the same rule.
+    screens: Screens,
     lock: smithay_client_toolkit::session_lock::SessionLock,
     faces: Vec<LockFace>,
+    /// Faces whose monitor has gone but that the render still paints: they are
+    /// destroyed only once it has let go of them (`sheet_released`). Destroying
+    /// the surface under a swapchain that still uses it is a protocol error, and
+    /// the compositor ends the locker for it.
+    retiring: Vec<LockFace>,
 }
 
 /// The lock surface of ONE monitor.
@@ -754,6 +766,8 @@ struct LockFace {
     /// A monitor the scene is not on (`screens:`): it gets a black cover, and
     /// this is its buffer once configured.
     cover: Option<Option<(WlShmPool, WlBuffer, std::os::fd::OwnedFd, (u32, u32))>>,
+    /// The monitor it covers: when that one goes, so does the face.
+    output: wl_output::WlOutput,
     surface: smithay_client_toolkit::session_lock::SessionLockSurface,
 }
 
@@ -790,11 +804,7 @@ pub fn lock_screen(which: usize, what: Option<((u32, u32), (f32, f32), Screens)>
     let shown: Vec<bool> = monitors
         .iter()
         .enumerate()
-        .map(|(number, (_, name, _))| match &screens {
-            Screens::All => true,
-            Screens::Named(n) => n.iter().any(|x| x == name),
-            Screens::Number(x) => *x == number,
-        })
+        .map(|(number, (_, name, _))| lock_shows(&screens, name, number))
         .collect();
     // On none of them (a monitor unplugged), on all: a lock with nowhere to type
     // the password would be no way back.
@@ -802,30 +812,108 @@ pub fn lock_screen(which: usize, what: Option<((u32, u32), (f32, f32), Screens)>
     let faces = monitors
         .iter()
         .zip(shown)
-        .map(|((output, name, mhz), shows)| {
-            let wl = c.compositor.create_surface(&c.qh);
-            let id = next_surface_id();
-            let surface = lock.create_lock_surface(wl, output, &c.qh);
-            if !shows && !everywhere && c.shm.is_some() {
-                // Far from anything of the scene: the mouse over it touches nothing.
-                return LockFace { id, pending: None, viewport: None, _fractional_scale: None, name: name.clone(), mhz: *mhz, view_origin: (-1e7, -1e7), cover: Some(None), surface };
-            }
-            let viewport = c.viewporter.as_ref().map(|v| v.get_viewport(surface.wl_surface(), &c.qh, Silent));
-            let fractional_scale = c.fractional_scales.as_ref().map(|m| m.get_fractional_scale(surface.wl_surface(), &c.qh, ScaleFor(id)));
-            let paints = unsafe {
-                c.instance
-                    .create_surface_unsafe(wgpu::SurfaceTargetUnsafe::RawHandle {
-                        raw_display_handle: Some(RawDisplayHandle::Wayland(WaylandDisplayHandle::new(NonNull::new(c.connection.backend().display_ptr() as *mut _).unwrap()))),
-                        raw_window_handle: RawWindowHandle::Wayland(WaylandWindowHandle::new(NonNull::new(surface.wl_surface().id().as_ptr() as *mut _).unwrap())),
-                    })
-                    .ok()
-            };
-            LockFace { id, pending: paints, viewport, _fractional_scale: fractional_scale, name: name.clone(), mhz: *mhz, view_origin: origin, cover: None, surface }
-        })
+        .map(|((output, name, mhz), shows)| lock_face(c, &lock, output, name, *mhz, shows || everywhere, origin))
         .collect();
     drop(monitors);
-    *engaged = Some(Engaged { which, bounds, origin, lock, faces });
+    *engaged = Some(Engaged { which, bounds, origin, screens, lock, faces, retiring: Vec::new() });
     let _ = c.connection.flush();
+}
+
+/// The lock face of one monitor: the scene, if `shows`, or else a plain black
+/// cover, far from anything of the scene so that the mouse over it touches nothing.
+fn lock_face(c: &Locks, lock: &smithay_client_toolkit::session_lock::SessionLock, output: &wl_output::WlOutput, name: &str, mhz: i32, shows: bool, origin: (f32, f32)) -> LockFace {
+    let wl = c.compositor.create_surface(&c.qh);
+    let id = next_surface_id();
+    let surface = lock.create_lock_surface(wl, output, &c.qh);
+    if !shows && c.shm.is_some() {
+        return LockFace { id, pending: None, viewport: None, _fractional_scale: None, name: name.to_string(), mhz, view_origin: (-1e7, -1e7), cover: Some(None), output: output.clone(), surface };
+    }
+    let viewport = c.viewporter.as_ref().map(|v| v.get_viewport(surface.wl_surface(), &c.qh, Silent));
+    let fractional_scale = c.fractional_scales.as_ref().map(|m| m.get_fractional_scale(surface.wl_surface(), &c.qh, ScaleFor(id)));
+    let paints = unsafe {
+        c.instance
+            .create_surface_unsafe(wgpu::SurfaceTargetUnsafe::RawHandle {
+                raw_display_handle: Some(RawDisplayHandle::Wayland(WaylandDisplayHandle::new(NonNull::new(c.connection.backend().display_ptr() as *mut _).unwrap()))),
+                raw_window_handle: RawWindowHandle::Wayland(WaylandWindowHandle::new(NonNull::new(surface.wl_surface().id().as_ptr() as *mut _).unwrap())),
+            })
+            .ok()
+    };
+    LockFace { id, pending: paints, viewport, _fractional_scale: fractional_scale, name: name.to_string(), mhz, view_origin: origin, cover: None, output: output.clone(), surface }
+}
+
+/// Which monitors show the scene, by the lock's `screens:`.
+fn lock_shows(screens: &Screens, name: &str, number: usize) -> bool {
+    match screens {
+        Screens::All => true,
+        Screens::Named(n) => n.iter().any(|x| x == name),
+        Screens::Number(x) => *x == number,
+    }
+}
+
+/// A monitor that arrives while the session is locked —one that slept so deep
+/// it was unplugged, and woke up— gets a face of its own. Without it the
+/// compositor shows its own fallback there: still locked, but not our lock.
+fn lock_face_for_new_monitor(output: &wl_output::WlOutput, name: &str, number: usize, mhz: i32) {
+    let Some(c) = LOCKS.get() else { return };
+    let mut engaged = c.engaged.lock().unwrap();
+    let Some(e) = engaged.as_mut() else { return };
+    if e.faces.iter().any(|f| &f.output == output) {
+        return;
+    }
+    // If no face shows the scene (the monitors of `screens:` are still away), this
+    // one does: a lock with nowhere to type the password would be no way back. It
+    // keeps showing it when they come back: a face that paints is only let go of
+    // by the render, and the lock must never fail halfway.
+    let shows = lock_shows(&e.screens, name, number) || e.faces.iter().all(|f| f.cover.is_some());
+    let face = lock_face(c, &e.lock, output, name, mhz, shows, e.origin);
+    e.faces.push(face);
+    let _ = c.connection.flush();
+    println!("lock   · {name} arrived while locked: it has its face");
+}
+
+/// A monitor that goes while the session is locked takes its face with it. A
+/// face the render paints waits in `retiring` until the render has let go of it,
+/// as on unlock; a cover, or a face not yet configured, is destroyed here. If
+/// what is left are only black covers, the first of them becomes the scene: a
+/// cover paints nothing, so it can be destroyed here, and it is destroyed before
+/// the new face is made, since a monitor can only have one. Gives back the ids
+/// the render has to let go of.
+fn lock_face_for_gone_monitor(output: &wl_output::WlOutput) -> Vec<u32> {
+    let Some(c) = LOCKS.get() else { return Vec::new() };
+    let mut engaged = c.engaged.lock().unwrap();
+    let Some(e) = engaged.as_mut() else { return Vec::new() };
+    let mut gone = Vec::new();
+    let (going, staying): (Vec<LockFace>, Vec<LockFace>) = std::mem::take(&mut e.faces).into_iter().partition(|f| &f.output == output);
+    e.faces = staying;
+    for f in going {
+        if f.cover.is_none() && f.pending.is_none() {
+            gone.push(f.id);
+            e.retiring.push(f);
+        }
+    }
+    if !e.faces.is_empty() && e.faces.iter().all(|f| f.cover.is_some()) {
+        let cover = e.faces.remove(0);
+        let (output, name, mhz) = (cover.output.clone(), cover.name.clone(), cover.mhz);
+        drop(cover);
+        let face = lock_face(c, &e.lock, &output, &name, mhz, true, e.origin);
+        e.faces.insert(0, face);
+        println!("lock   · {name} shows the lock: the monitors it was meant for have gone");
+    }
+    let _ = c.connection.flush();
+    gone
+}
+
+/// The render has let go of surface `id`: if it was the face of a monitor that
+/// went while locked, it can be destroyed now.
+pub fn sheet_released(id: u32) {
+    let Some(c) = LOCKS.get() else { return };
+    let mut engaged = c.engaged.lock().unwrap();
+    let Some(e) = engaged.as_mut() else { return };
+    let before = e.retiring.len();
+    e.retiring.retain(|f| f.id != id);
+    if e.retiring.len() != before {
+        let _ = c.connection.flush();
+    }
 }
 
 /// The edges it sticks to, as protocol flags. With width 0 it also
