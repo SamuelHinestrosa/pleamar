@@ -122,7 +122,7 @@ pub const HELP: &[(&str, &str)] = &[
 pub const SERVICES: &[(&str, &[&str])] = &[
     ("clock", &["hour", "minute", "second", "day", "month", "year", "weekday", "time", "date"]),
     ("clock.seconds", &["hour", "minute", "second", "day", "month", "year", "weekday", "time", "date"]),
-    ("audio", &["volume", "muted", "input", "input_muted", "outputs", "inputs"]),
+    ("audio", &["volume", "muted", "input", "input_muted", "outputs", "inputs", "apps"]),
     ("battery", &["present", "percent", "charging"]),
     ("brightness", &["present", "level"]),
     ("network", &["online", "kind", "name", "strength", "wifi", "networks"]),
@@ -139,7 +139,7 @@ pub const SERVICES: &[(&str, &[&str])] = &[
 
 /// The fields of a service that are lists: each one goes into a model, never into a fact.
 /// `list` is the service's whole report, for the ones that are only a list.
-pub const LIST_FIELDS: &[&str] = &["networks", "devices", "outputs", "inputs", "players", "list"];
+pub const LIST_FIELDS: &[&str] = &["networks", "devices", "outputs", "inputs", "apps", "players", "list"];
 
 /// The steps of a path: where it goes through. `curve … via …` is a quadratic Bézier.
 pub const PATH_COMMANDS: &[&str] = &["move", "line", "curve", "close"];

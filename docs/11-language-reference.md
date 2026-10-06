@@ -336,7 +336,7 @@ service tray { list: icons }
 | --- | --- |
 | `network` | `networks`: `{ ssid, strength, secure, known, active }`, the strongest first |
 | `bluetooth` | `devices`: `{ name, address, paired, connected, battery, icon }` |
-| `audio` | `outputs` · `inputs`: `{ id, name, default }` |
+| `audio` | `outputs` · `inputs`: `{ id, name, default }`; `apps`: `{ id, name, icon, binary, title, volume, muted, playing }`, what is playing, one per stream |
 | `media` | `players`: `{ id, name, playing, chosen }`, by bus name |
 | `window` | `list`: `{ id, title, class, monitor, active, minimized }` (compositors with wlr-foreign-toplevel) |
 | `workspaces` | `list`: `{ id, name, windows, monitor, active }` |
@@ -1453,7 +1453,7 @@ documented: translations surface permissions model service spring prop pose fact
 services: clock clock.seconds audio battery brightness network bluetooth media window thumbnails workspaces apps tray notifications notification_history
 services.clock: hour minute second day month year weekday time date
 services.clock.seconds: hour minute second day month year weekday time date
-services.audio: volume muted input input_muted outputs inputs
+services.audio: volume muted input input_muted outputs inputs apps
 services.battery: present percent charging
 services.brightness: present level
 services.network: online kind name strength wifi networks
