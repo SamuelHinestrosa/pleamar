@@ -105,7 +105,7 @@ A library with a `.luau` next to it is a plugin (see [Language reference — ver
 
 Each plugin has its own Luau state —its memory, its timers, its processes— **and its own thread**: one that gets stuck does not hold back the others or the scene's logic. The scene may have no logic at all.
 
-`require("lib/format")` loads `lib/format.luau` from that logic's folder (the scene's, or the plugin's), once; whatever it returns is the module. No `..`, no whole paths: it does not leave its folder.
+`require("lib/format")` loads `lib/format.luau` from that logic's folder (the scene's, or the plugin's), once; whatever it returns is the module. No `..`, no whole paths: it does not leave its folder. Saving a module reloads the logic, like saving the main file. A module shares the logic's globals (`on`, `fact`, `sys`…), not its `local`s: what it needs from the main file goes to it as an argument, `require("pages/wifi")(shared)`.
 
 ## Permissions
 

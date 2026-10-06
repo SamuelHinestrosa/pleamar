@@ -352,6 +352,9 @@ pub fn compile<'a>(tree: &'a [Entry], files: &'a [String], dirs: &'a [std::path:
         [Entry::Node(n)] if matches!(n.head.first().map(|f| &f.kind), Some(TokenKind::Id(p)) if p == "library") => {
             return (Err(vec![CompileError::at(n.line, n.col, "this is a library: it is not opened, it is imported from a scene (`import \"…\"`)")]), Vec::new());
         }
+        [Entry::Node(n)] if matches!(n.head.first().map(|f| &f.kind), Some(TokenKind::Id(p)) if p == "part") => {
+            return (Err(vec![CompileError::at(n.line, n.col, "this is a part of a scene: it is not opened, it is included from the scene (`include \"…\"`)")]), Vec::new());
+        }
         _ => return (Err(vec![CompileError::at(1, 1, "a file is a scene: as many `import`s as you want, then `scene Name { … }`")]), Vec::new()),
     };
     let mut o = Compiler {

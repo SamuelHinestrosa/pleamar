@@ -1070,6 +1070,13 @@ impl LuauScript {
                 return t.raw_get::<Value>("value");
             }
             let path = folder.join(format!("{name}.luau"));
+            {
+                // Watched from now on: saving it reloads the logic, like the main file.
+                let mut r = REQUIRED.lock().unwrap();
+                if !r.contains(&path) {
+                    r.push(path.clone());
+                }
+            }
             let source = std::fs::read_to_string(&path).map_err(|e| mlua::Error::runtime(format!("require(\"{name}\"): {}: {e}", path.display())))?;
             let value: Value = lua.load(&source).set_name(format!("@{}", path.display())).eval()?;
             let slot = lua.create_table()?;
@@ -1336,3 +1343,7 @@ impl Script for LuauScript {
         }
     }
 }
+
+/// The modules the logic has loaded with `require`: the reload watches them
+/// too, so saving one of them reloads the logic like saving the main file.
+pub static REQUIRED: std::sync::Mutex<Vec<std::path::PathBuf>> = std::sync::Mutex::new(Vec::new());

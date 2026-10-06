@@ -164,15 +164,26 @@ pub fn watch(path: String, to_render: Sender<ToRender>, to_logic: Sender<Event>)
                 v
             };
             let date = |v: &[String]| v.iter().map(|r| std::fs::metadata(r).and_then(|m| m.modified()).ok()).collect::<Vec<_>>();
+            // And the modules it loads with `require`, as it loads them.
+            let with_modules = |v: &[String]| -> Vec<String> {
+                let mut v = v.to_vec();
+                v.extend(crate::logic_luau::REQUIRED.lock().unwrap().iter().map(|p| p.to_string_lossy().into_owned()));
+                v
+            };
             let mut watched = all(&scene_for_logic);
-            let mut last = date(&watched);
+            let mut last = date(&with_modules(&watched));
             loop {
                 std::thread::sleep(Duration::from_millis(250));
-                let now = date(&watched);
+                let now = date(&with_modules(&watched));
+                // A module required for the first time: watched from here on.
+                if now.len() != last.len() {
+                    last = now;
+                    continue;
+                }
                 if now != last && now.iter().any(Option::is_some) {
                     std::thread::sleep(Duration::from_millis(80));
                     watched = all(&scene_for_logic);
-                    last = date(&watched);
+                    last = date(&with_modules(&watched));
                     if to_logic.send(Event::ReloadLogic).is_err() {
                         return;
                     }
@@ -222,7 +233,7 @@ pub fn watch(path: String, to_render: Sender<ToRender>, to_logic: Sender<Event>)
                 let t0 = std::time::Instant::now();
                 match crate::language::read_file(&path) {
                     Ok((e, files)) => {
-                        println!("reload · {path} read in {:.1} ms{}", t0.elapsed().as_secs_f32() * 1000.0, if files.len() > 1 { format!(" · with {} libraries", files.len() - 1) } else { String::new() });
+                        println!("reload · {path} read in {:.1} ms{}", t0.elapsed().as_secs_f32() * 1000.0, if files.len() > 1 { format!(" · with {} more files", files.len() - 1) } else { String::new() });
                         // It may import other things now.
                         watched = files;
                         watched.extend(e.attachments.iter().cloned());

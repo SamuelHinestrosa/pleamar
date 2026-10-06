@@ -457,7 +457,7 @@ pub fn highlighting(which: &str) -> i32 {
             println!("\" it is not written by hand, so it does not lag behind the language.");
             println!("if exists(\"b:current_syntax\") | finish | endif");
             println!("syn keyword plmStatement {}", words(vocab::STATEMENTS));
-            println!("syn keyword plmStatement scene library import language");
+            println!("syn keyword plmStatement scene library import language part include");
             println!("syn keyword plmKeyword in max while for after from until at by reach within rest inset right middle as via strict each all");
             println!("syn keyword plmFunction {}", words(vocab::FUNCTIONS));
             println!("syn keyword plmFunction {}", words(vocab::TEXT_FUNCTIONS));
@@ -498,7 +498,7 @@ pub fn highlighting(which: &str) -> i32 {
                 { "name": "constant.other.colour.plm", "match": "#[0-9a-fA-F]{3,8}\\b" },
                 { "name": "constant.numeric.plm", "match": "\\b\\d+(\\.\\d+)?(px|%|deg|ms|s)?\\b" },
                 { "name": "entity.other.attribute-name.plm", "match": "\\b\\w+(?=\\s*:)" },
-                { "name": "keyword.control.plm", "match": format!("\\b({}|scene|library|import|language)\\b", o(vocab::STATEMENTS)) },
+                { "name": "keyword.control.plm", "match": format!("\\b({}|scene|library|import|language|part|include)\\b", o(vocab::STATEMENTS)) },
                 { "name": "keyword.other.plm", "match": "\\b(in|max|while|for|after|from|until|at|by|reach|within|rest|inset|right|middle|as|via|strict|each|all)\\b" },
                 { "name": "support.function.plm", "match": format!("\\b({}|{})\\b", o(vocab::FUNCTIONS), o(vocab::TEXT_FUNCTIONS)) },
                 { "name": "entity.name.tag.plm", "match": format!("\\b({})\\b", o(vocab::TRIGGERS)) },

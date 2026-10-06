@@ -1,0 +1,5 @@
+// expect: error «is a library: a library is imported»
+scene NotAPart {
+    surface { size: 100, 100 }
+    include "common/palette.plm"
+}

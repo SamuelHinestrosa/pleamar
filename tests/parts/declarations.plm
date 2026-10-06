@@ -1,0 +1,6 @@
+// A part: what the scene declares, kept apart.
+part Declarations {
+    fact count = 0
+    event tapped
+    on tapped { count = count + 1 }
+}

@@ -1,0 +1,5 @@
+// expect: error «ends up including itself»
+scene Circle {
+    surface { size: 100, 100 }
+    include "parts/circle.plm"
+}

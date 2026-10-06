@@ -112,6 +112,8 @@ pub const HELP: &[(&str, &str)] = &[
     ("import", "`import \"common/palette.plm\"` — brings in a library: its colours, components and springs. `import \"menu.plm\" as menu` calls its components `menu.Row`."),
     ("scene", "`scene Bar { … }` — everything a window shows, and what it reacts to."),
     ("library", "`library Palette { … }` — what several scenes share. With a `.luau` next to it, it is a plugin: its own frontier and its own permissions."),
+    ("include", "`include \"pages/wifi.plm\"` — a piece of this scene kept in a file of its own, put right here as if it were written here: the same names, inside the same group."),
+    ("part", "`part Wifi { … }` — a piece of a scene, in a file of its own: anything a scene can hold. It is not opened: a scene includes it (`include \"…\"`)."),
     ("language", "`language 0.1` — the version of the language this file needs. It is the first line."),
 ];
 

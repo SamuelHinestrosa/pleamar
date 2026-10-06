@@ -90,6 +90,59 @@ impl Reader {
         check_version(tree::parse(&tokens).map_err(|f| if f.line < PER_FILE { here(f) } else { f })?)
     }
 
+    /// `include "pages/wifi.plm"`: a piece of the scene kept in a file of its
+    /// own (`part Wifi { … }`), put where the line is —inside a group, if that
+    /// is where it is written—, as if it had been written there: the same
+    /// names, the same order, its lines still its own file's, for the errors and
+    /// for the paths of what it draws. A part can include others; it does not
+    /// import: libraries are the scene's business.
+    fn resolve_includes(&mut self, path: &Path, entries: &mut Vec<tree::Entry>) -> Result<(), CompileError> {
+        use tokens::TokenKind;
+        let mut out = Vec::with_capacity(entries.len());
+        for mut e in std::mem::take(entries) {
+            let tree::Entry::Node(n) = &mut e else {
+                out.push(e);
+                continue;
+            };
+            if !matches!(n.head.first().map(|f| &f.kind), Some(TokenKind::Id(p)) if p == "include") {
+                if let Some(body) = n.body.as_mut() {
+                    self.resolve_includes(path, body)?;
+                }
+                out.push(e);
+                continue;
+            }
+            let (Some(TokenKind::Str(which)), 2, None) = (n.head.get(1).map(|f| &f.kind), n.head.len(), &n.body) else {
+                return Err(CompileError::at(n.line, n.col, "an include is `include \"path/to/the/part.plm\"`: a piece of this scene, in a file of its own"));
+            };
+            let target = path.parent().unwrap_or(Path::new(".")).join(which);
+            let target = target.canonicalize().map_err(|e| CompileError::at(n.line, n.head[1].col, format!("cannot find '{which}' (looking in {}): {e}", target.display())))?;
+            if self.open_stack.contains(&target) {
+                return Err(CompileError::at(n.line, n.head[1].col, format!("'{which}' ends up including itself: {}", self.open_stack.iter().chain([&target]).map(|p| p.file_name().unwrap_or_default().to_string_lossy()).collect::<Vec<_>>().join(" → "))));
+            }
+            self.open_stack.push(target.clone());
+            let theirs = self.open(&target)?;
+            let part = match theirs.as_slice() {
+                [tree::Entry::Node(p)] if matches!(p.head.first().map(|f| &f.kind), Some(TokenKind::Id(w)) if w == "part") => p,
+                [tree::Entry::Node(p)] if matches!(p.head.first().map(|f| &f.kind), Some(TokenKind::Id(w)) if w == "library") => {
+                    return Err(CompileError::at(n.line, n.head[1].col, format!("'{which}' is a library: a library is imported (`import \"{which}\"`), and a part, included")));
+                }
+                _ => return Err(CompileError::at(n.line, n.head[1].col, format!("'{which}' is not a part: what is included is `part Name {{ … }}`, a piece of a scene, and nothing else"))),
+            };
+            if !matches!((part.head.get(1).map(|f| &f.kind), part.head.len()), (Some(TokenKind::Id(_)), 2)) {
+                return Err(CompileError::at(part.line, part.col, "a part has a name, and only that: `part Wifi { … }`"));
+            }
+            let mut body = part.body.clone().unwrap_or_default();
+            if let Some(tree::Entry::Node(i)) = body.iter().find(|d| matches!(d, tree::Entry::Node(x) if matches!(x.head.first().map(|f| &f.kind), Some(TokenKind::Id(p)) if p == "import"))) {
+                return Err(CompileError::at(i.line, i.col, "a part does not import: libraries are imported by the scene, and then the part can use them"));
+            }
+            self.resolve_includes(&target, &mut body)?;
+            self.open_stack.pop();
+            out.extend(body);
+        }
+        *entries = out;
+        Ok(())
+    }
+
     /// What a file's `import`s declare, in order, and what is left of it.
     /// A library imported twice —by two routes— is read once.
     fn resolve_imports(&mut self, path: &Path, entries: Vec<tree::Entry>, brought: &mut Vec<tree::Entry>) -> Result<Vec<tree::Entry>, CompileError> {
@@ -311,8 +364,9 @@ fn read_with_symbols(path: &str, unsaved: Vec<(PathBuf, String)>) -> (Result<(Sc
     let mut symbols = Vec::new();
     let compiled = (|| {
         l.open_stack.push(main.clone());
-        let entries = l.open(Path::new(path)).map_err(|f| vec![f])?;
+        let mut entries = l.open(Path::new(path)).map_err(|f| vec![f])?;
         l.files[0].0 = main.clone();
+        l.resolve_includes(&main, &mut entries).map_err(|f| vec![f])?;
         let mut brought = Vec::new();
         let mut rest = l.resolve_imports(&main, entries, &mut brought).map_err(|f| vec![f])?;
         // What is imported goes before the scene's own, as if it were written there.

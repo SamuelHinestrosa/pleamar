@@ -1,0 +1,14 @@
+// expect: ok
+// A scene in pieces: each part in a file of its own, put where it is
+// included, inside the group too, with the scene's names.
+scene Pieces {
+    surface { size: 300, 160 }
+    fact open = true
+    let ink = #f5f7f5
+    include "parts/declarations.plm"
+    group {
+        show: open
+        let x0 = 20
+        include "parts/card.plm"
+    }
+}
