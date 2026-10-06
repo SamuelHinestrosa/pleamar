@@ -162,6 +162,8 @@ pub struct Surface {
     /// captured of it (a screenshot, a recording, a remote desktop), where
     /// the compositor can do that (pleamar-wm).
     pub hidden_from_captures: bool,
+    /// `agent: hidden`: left out of what the scene tells an agent.
+    pub agent_hidden: bool,
 }
 
 /// Whether the surface wants the keyboard. `OnDemand` is the normal thing in a panel with
@@ -177,7 +179,7 @@ pub enum Keyboard {
 impl Default for Surface {
     fn default() -> Self {
         // Neutral: full width, at the top, on all monitors. Whatever the scene asks for wins.
-        Surface { name: String::new(), instance: 0, origin: (0.0, 0.0), open: None, window: None, lock_screen: false, width: 0, size_props: None, cursor_props: None, height: 40, anchor: SurfaceAnchor::Top, anchor_from: None, level_while: None, margin: [0; 4], level: Level::Above, exclusive_zone: 0, reserve_while: None, max_fps: 0, screens: Screens::All, keyboard: Keyboard::Never, keyboard_while: false, right_click_quits: true, hidden_from_captures: false }
+        Surface { name: String::new(), instance: 0, origin: (0.0, 0.0), open: None, window: None, lock_screen: false, width: 0, size_props: None, cursor_props: None, height: 40, anchor: SurfaceAnchor::Top, anchor_from: None, level_while: None, margin: [0; 4], level: Level::Above, exclusive_zone: 0, reserve_while: None, max_fps: 0, screens: Screens::All, keyboard: Keyboard::Never, keyboard_while: false, right_click_quits: true, hidden_from_captures: false, agent_hidden: false }
     }
 }
 
@@ -1188,6 +1190,29 @@ pub struct Zone {
     pub zblock: Option<u16>,
     /// Dragged out, what it gives another program: a file, a link, a text.
     pub carries: Option<Content>,
+    /// What it is, said in words for whoever cannot see it (`label:`): an
+    /// agent, a screen reader. Without it, the texts drawn inside it.
+    pub label: Option<Content>,
+    /// Who may use it from outside (`agent:`).
+    pub reach: Reach,
+    /// If it is the zone of a stack that scrolls (`view:`): the property
+    /// that scrolls it.
+    pub scrolls: Option<PropId>,
+    /// The zone of the stack with `view:` it scrolls inside: it can be out of sight.
+    pub within: Option<ZoneId>,
+}
+
+/// `agent: no` and `agent: hidden`: what an agent may do with a zone, a
+/// field or a surface, through the commands that read and act on the scene.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub enum Reach {
+    /// It reads it and acts on it.
+    #[default]
+    Any,
+    /// It reads it, but only a person's hand acts on it.
+    Person,
+    /// It is not even described.
+    Hidden,
 }
 
 /// A `group` with `z:`: its instructions, and which groups it is sorted
@@ -1876,7 +1901,7 @@ impl Scene {
         self.zone_under(id, shape, active, vec![])
     }
     pub fn zone_under(&mut self, id: &'static str, shape: Shape, active: impl Into<Expr>, under: Vec<Transform>) -> ZoneId {
-        self.zones.push(Zone { id, shape, active: active.into(), cursor: Cursor::Normal, under, at: self.instrs.len(), zblock: None, carries: None });
+        self.zones.push(Zone { id, shape, active: active.into(), cursor: Cursor::Normal, under, at: self.instrs.len(), zblock: None, carries: None, label: None, reach: Reach::Any, scrolls: None, within: None });
         ZoneId(self.zones.len() as u16 - 1)
     }
     /// Claims go from more to less priority; the last one should be
@@ -2002,6 +2027,9 @@ pub enum ToRender {
     LockScreen(bool),
     /// Someone from outside asks how much a fact, a text or a property is worth.
     Query(&'static str, std::sync::mpsc::Sender<String>),
+    /// Someone from outside asks what there is to read and touch: the
+    /// scene as a tree (`describe`), as text or as JSON.
+    Describe(bool, std::sync::mpsc::Sender<String>),
     /// `pleamar --report`: measure every frame from now (`None`), or answer
     /// with what was measured and stop (`Some`).
     Probe(Option<std::sync::mpsc::Sender<String>>),

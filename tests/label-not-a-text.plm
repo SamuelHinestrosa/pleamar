@@ -1,0 +1,7 @@
+// expect: error «no text»
+scene LabelNotAText {
+    surface { size: 200, 100 }
+    fact on = false
+    box b { from: 0, 0; size: 50, 50; label: titel }
+    on press b { toggle on }
+}

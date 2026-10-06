@@ -18,9 +18,9 @@ pub const LIBRARY_STATEMENTS: &[&str] = &["let", "spring", "component", "permiss
 
 /// Which properties each element accepts. `shape` are the ones common to all shapes.
 pub const PROPERTIES: &[(&str, &[&str])] = &[
-    ("surface", &["size", "anchor", "margin", "level", "reserve", "screens", "keyboard", "open", "kind", "title", "rate", "captures"]),
+    ("surface", &["size", "anchor", "margin", "level", "reserve", "screens", "keyboard", "open", "kind", "title", "rate", "captures", "agent"]),
     ("permissions", &["run", "services"]),
-    ("shape", &["rotate", "stroke", "color", "opacity", "blend", "glass", "lens", "shine", "refraction", "dispersion", "dome", "ripple", "active", "show", "cursor", "carries", "grow"]),
+    ("shape", &["rotate", "stroke", "color", "opacity", "blend", "glass", "lens", "shine", "refraction", "dispersion", "dome", "ripple", "active", "show", "cursor", "carries", "grow", "label", "agent"]),
     ("ellipse", &["at", "radius", "scale"]),
     ("box", &["at", "from", "size", "corner"]),
     ("arc", &["at", "radius", "span", "width"]),
@@ -33,7 +33,7 @@ pub const PROPERTIES: &[(&str, &[&str])] = &[
     ("figure", &["at", "size", "scale", "rotate", "pivot", "color", "opacity", "blend", "stroke", "show", "grow"]),
     ("shader", &["at", "size", "corner", "opacity", "show", "values", "colors", "grow"]),
     ("particles", &["at", "area", "count", "life", "speed", "direction", "spread", "gravity", "drag", "size", "colors", "opacity", "shape", "emit", "burst", "show"]),
-    ("input", &["at", "width", "size", "weight", "color", "opacity", "family", "placeholder", "selection", "secret", "show"]),
+    ("input", &["at", "width", "size", "weight", "color", "opacity", "family", "placeholder", "selection", "secret", "show", "label", "agent"]),
     ("group", &["pivot", "rotate", "scale", "move", "opacity", "size", "show", "z", "grow", "span", "blur", "glow", "saturation", "brightness", "contrast", "hue", "mask", "mode", "shader"]),
     ("popup", &["at", "size", "open"]),
     ("children", &["move"]),
@@ -161,6 +161,8 @@ pub const KEYBOARD_MODES: &[&str] = &["none", "on_demand", "exclusive"];
 /// Whether what a surface shows goes into captures of the monitor too (a
 /// screenshot, a recording, a remote desktop), or only to the monitor.
 pub const CAPTURES: &[&str] = &["shown", "hidden"];
+/// `agent:` on a zone, a field or a surface: what an agent may do with it.
+pub const AGENT: &[&str] = &["yes", "no", "hidden"];
 pub const TEXT_ALIGNS: &[&str] = &["left", "center", "right"];
 pub const STACK_ALIGNS: &[&str] = &["start", "center", "end"];
 /// How a group with effects blends: covering, or adding light.
@@ -209,6 +211,7 @@ pub fn to_text() -> String {
     line("surface.kind", SURFACE_KINDS);
     line("surface.keyboard", KEYBOARD_MODES);
     line("surface.captures", CAPTURES);
+    line("agent", AGENT);
     line("text.align", TEXT_ALIGNS);
     line("layout.align", STACK_ALIGNS);
     line("group.mode", GROUP_MODES);

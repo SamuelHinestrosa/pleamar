@@ -1,0 +1,7 @@
+// expect: error «what an agent may do with it»
+scene AgentWrong {
+    surface { size: 200, 100 }
+    fact on = false
+    box b { from: 0, 0; size: 50, 50; agent: maybe }
+    on press b { toggle on }
+}

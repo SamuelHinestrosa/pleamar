@@ -1,6 +1,6 @@
 # Scenes an agent can read — design
 
-**Status:** design, nothing implemented yet. Agreed with Abel on 6 Oct 2026 as the first step towards pleamar as a way to give **any program** its interface. This is step 1 of that road: what the scene already knows, handed to whoever drives it from outside.
+**Status:** step 1 (`describe`, `label:`, `agent:`) implemented on 6 Oct 2026; the rest is design. Agreed with Abel on 6 Oct 2026 as the first step towards pleamar as a way to give **any program** its interface. This note is the first stretch of that road: what the scene already knows, handed to whoever drives it from outside.
 
 ## 1. Why
 
@@ -23,34 +23,41 @@ And three small properties for when what is derived is not enough: `label:`, `ro
 
 ## 3. The tree
 
+Implemented (step 1, 6 Oct 2026). This is what it answers for a small notes window, with three rows in sight and two scrolled out of it:
+
 ```
 $ pleamar --say notes describe
-notes · window «Notes» 640 × 480 · scale 1.5 · language 0.1
-  field    search      «Search notes»  "factura"                 at 16,12 240×32
-  list     rows        3 of 12
-    item   row.0       «October invoice»                         at 16,60 608×40
-    item   row.1       «Shopping list»                           at 16,100 608×40
-    item   row.2       «pleamar ideas»                           at 16,140 608×40
-  button   new         «New note»                                at 452,428 80×36
-  button   save        «Save»  · inactive                        at 544,428 80×36
-  button   delete      «Delete»  · a person's                    at 360,428 80×36
+main · window «Notes» 640×480 · scale 1
+  field   query   «Search notes»  ""  at 16,9 240×27
+  field   pin     «PIN»  "(hidden)"  at 300,9 120×27
+  list    list    at 16,60 608×120
+    item    hit#r0  «October invoice»  at 16,60 608×38
+    item    hit#r1  «Shopping list»  at 16,100 608×38
+    item    hit#r2  «pleamar ideas»  at 16,140 608×38
+    item    hit#r3  «Fourth note»  · off view  at 16,180 608×38
+    item    hit#r4  «Fifth note»  · off view  at 16,220 608×38
+  button  new     «New note»  at 452,428 80×36
+  button  save    «Save»  · inactive  at 544,428 80×36
+  button  delete  «Delete»  · a person's  at 360,428 80×36
+  button  close   at 600,14 20×20
 ```
 
-With `describe --json`, the same as data. Each line is a **node**:
+`describe json` gives the same as data, with the rows of a list in its `children`. Asking costs one frame: the answer is made after the next list is composed, when the render knows where every text went (17 ms for Marea's 1169 zones).
 
 | Part | Where it comes from |
 | --- | --- |
-| **name** | The zone's or the field's own name. Copies carry their index, as they already do (`row.0`, `chip.3`) |
-| **role** | Derived: an `input` is a `field`; a zone with `on press` a `button`; with `on drag` or `on wheel` and no press, a `slider`; a copy inside a `for`/`repeat` an `item`, and the `for` itself a `list`; anything else a `region`. `role:` overrides it |
-| **label** | `label:` if it has one (a text with slots, so it translates: `label: "{n.title}"`). If not, the texts drawn inside its box this frame, in reading order. A field without either takes its `placeholder` |
-| **value** | A field's text (**never** with `secret: true`). `value:` for the rest: a slider's `value: volume`, which is given as it would be written (`0.4`, `true`, `critical`) |
-| **state** | `inactive` when its `active:` is false, `covered by X` when another zone is on top at its centre, `off view` when a `view:` has scrolled it out (acting on it scrolls it into view first, section 10), `a person's` with `agent: no` |
+| **header** | One per surface or popup on screen: its name (`main` for the scene's own), what it is (`window «title»`, `panel`, `popup`), its size and its scale. A copy per monitor says `(screen 0)` there, and its names lose the `#screen0` every one of them carries |
+| **name** | The zone's or the field's own, as the scene knows it: `knob.2` for one written `knob.$k`, `hit#r3` for the `hit` of the fourth copy of a `for r`, `touch#TrayIcon431` for one inside a copy of a component. It is the name `press` will take (step 2) |
+| **role** | Derived: an `input` is a `field`; a stack with `view:` a `list`; a zone with `on drag`, or with `on wheel` and no press, a `slider`; one with a press, `cursor: pointer` or `carries:`, a `button`, or an `item` if it is in a copy of a `for` or a `repeat`; anything else a `region`. `role:` will override it (step 7) |
+| **label** | `label:` if it has one. If not, the texts drawn inside its box this frame, in reading order: each text goes to the smallest **active** zone it falls in, so a button's word is the button's and not the panel's around it, and a closed menu still in its place does not take the words of what is drawn there. A field without text says its `placeholder`. **Nothing is guessed from what is near**: in Marea the slider's name is drawn under its icon, not under the slider, and a guess would have named the icon. When the word is not inside, `label:` says it |
+| **value** | A field's text: `(hidden)` with `secret: true` or `agent: no`. `value:` for the rest will come with step 7 |
+| **state** | `inactive` when its `active:` is false **and** something is drawn in it (a greyed out button; an inactive zone with nothing in it is a closed panel's, and is left out), `covered by X` when another zone is on top at its centre, `off view` when its list has scrolled it out, `a person's` with `agent: no` |
 | **box** | In the surface's logical pixels, with the scale in the header: `pleamar-wm` turns it into the pixels of its `look` |
-| **nesting** | Surfaces, popups, component copies and `for`/`repeat` copies, as written. A group adds no level: it is drawing, not meaning |
+| **nesting** | The rows of a list hang from it, the ones in sight and the ones scrolled out, and so does whatever else falls in its window. Groups and components add no level: they are drawing, not meaning |
 
-**What is not described.** A closed surface; a zone that is not there (`show:` false); a surface with `captures: hidden`, because what is kept out of a screenshot is kept out of this too; anything with `agent: hidden` (section 10); and **never a `kind: lock`**: an agent does not get to read or touch the lock screen.
+**What is not described.** A closed surface; a zone that is not there (`show:` false, or inside a hidden group); a surface with `captures: hidden`, because what is kept out of a screenshot is kept out of this too; anything with `agent: hidden` (section 10); and **never a `kind: lock`**: an agent does not get to read or touch the lock screen.
 
-**The compiler warns** when a zone with `on press` has no `label:` and no text inside it in the frame it was checked: `'close' can be pressed, but nothing says what it is: give it a label`. It is a warning in `language 0.1`; it could become an error in a later version, as a scene that cannot be read is also one a screen reader cannot read (section 8).
+**A zone that says nothing is pointed at.** The first time the scene is asked, each zone that can be pressed and has neither `label:` nor a word inside it is named in the log, once, by the name it was written with: `agent  · 'close' can be pressed, but nothing says what it is: give it a \`label:\``. It is in the log and not in the compiler because whether a word falls inside is only known when it is drawn.
 
 ## 4. Acting by name
 
@@ -97,8 +104,8 @@ $ pleamar --say notes "wait sync == done 2s"
 ## 6. `agent: no`: for a person's hand
 
 ```
-zone box delete { at: …; size: …; agent: no }
-zone box pay    { at: …; size: …; agent: no; label: "Pay {total} €" }
+box delete { from: …; size: …; agent: no }
+box pay    { from: …; size: …; agent: no; label: "Pay {total} €" }
 ```
 
 A zone with `agent: no` is described (an agent knows it is there and can tell the person to press it) but cannot be pressed through the socket. On a field, its value is not given either. **No toolkit has this today**, and it is what lets someone hand a program to an agent while keeping the final word over paying, deleting or sending.
@@ -125,10 +132,10 @@ A zone with `agent: no` is described (an agent knows it is there and can tell th
 
 | # | Piece | Checked by |
 | --- | --- | --- |
-| 1 | `describe` with derived roles and labels, `label:`, the warning | `tests/agent-*.plm`: `run-tests.sh` compares `describe` against the expected text, in a headless render |
+| 1 ✅ | `describe` with derived roles and labels, `label:`, `agent:`, the warning | `tests/agent*.plm` and `label-not-a-text.plm` in `run-tests.sh`; `src/agent.rs`'s tests build the tree of `tests/agent.plm`; by hand, a notes window and Marea in a headless pleamar-wm |
 | 2 | `press`, `hold`, `drag`, `wheel`, `type`, `key`, with their refusals and "what happened" | The same tests, plus Marea in the test copy: open the control centre by name |
 | 3 | `wait` and `watch` | A test that waits for a fact a rule sets after a timer |
-| 4 | `agent: no` and `agent: hidden` over the socket | A test that is refused |
+| 4 | `agent: no` and `agent: hidden` over the socket (they already shape `describe`) | A test that is refused |
 | 5 | `hello`, and pleamar-wm's `agent tree/press/type/wait/watch` | Headless pleamar-wm with Marea |
 | 6 | The seat: pleamar reads `wl_seat.name`, pleamar-wm uses the agent seat for pleamar windows, the press is dropped | Headless pleamar-wm: `agent click` on an `agent: no` zone does nothing |
 | 7 | `role:`, `value:` | Tests |

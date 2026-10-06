@@ -1,0 +1,5 @@
+// expect: error «a surface is `agent: hidden` or nothing»
+scene AgentSurface {
+    surface { size: 200, 100; agent: no }
+    box { from: 0, 0; size: 50, 50 }
+}

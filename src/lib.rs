@@ -15,6 +15,7 @@ mod shaders;
 mod shapes;
 mod lsp;
 pub mod gpu;
+mod agent;
 #[cfg(target_os = "linux")]
 pub mod dmabuf;
 mod lens;
@@ -311,6 +312,12 @@ pub fn run_with(options: Vec<String>) {
                 let _ = tx.send(ToRender::Probe(None));
                 return Some("measuring\n".into());
             }
+            // `describe`: what there is to read and touch, by name. `describe json`, as data.
+            if what == "describe" {
+                let (question, answer) = std::sync::mpsc::channel();
+                let _ = tx.send(ToRender::Describe(who == "json", question));
+                return Some(answer.recv_timeout(std::time::Duration::from_secs(2)).unwrap_or_else(|_| "? the render does not answer".into()));
+            }
             if what == "get" {
                 let (question, answer) = std::sync::mpsc::channel();
                 let _ = tx.send(ToRender::Query(scene::intern(who), question));
@@ -338,7 +345,7 @@ pub fn run_with(options: Vec<String>) {
                 "quit" => quit_after_render(tx),
                 _ => {
                     eprintln!("orders · I don't understand '{line}'");
-                    return Some(format!("? I don't understand '{}': emit, fact, text, submit, focus, get, probe, quit", line.trim()));
+                    return Some(format!("? I don't understand '{}': emit, fact, text, submit, focus, get, describe, probe, quit", line.trim()));
                 }
             };
             None
