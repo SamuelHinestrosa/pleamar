@@ -1,0 +1,7 @@
+// expect: error «what it is»
+scene RoleNotARole {
+    surface { size: 200, 100 }
+    fact on = false
+    box b { from: 0, 0; size: 50, 50; role: banana }
+    on press b { toggle on }
+}

@@ -1200,6 +1200,29 @@ pub struct Zone {
     pub scrolls: Option<PropId>,
     /// The zone of the stack with `view:` it scrolls inside: it can be out of sight.
     pub within: Option<ZoneId>,
+    /// What else it says of itself when it is not derived (`role:`, `value:`,
+    /// `checked:`, `selected:`). Most zones say none of it.
+    pub told: Option<Box<Told>>,
+}
+
+/// What a zone says of itself for whoever cannot see it.
+#[derive(Clone, Debug, Default)]
+pub struct Told {
+    /// `role: toggle`: what it is, when its rules do not say it.
+    pub role: Option<&'static str>,
+    /// `value: "{volume * 100}%"` or `value: volume`: what it is worth.
+    pub value: Option<Said>,
+    /// `checked: wifi_on`: a toggle's state.
+    pub checked: Option<Expr>,
+    /// `selected: sel == r.index`: the row or the tab that is chosen.
+    pub selected: Option<Expr>,
+}
+
+/// A value said as a text, or as a number (or a fact's name, `critical`).
+#[derive(Clone, Debug)]
+pub enum Said {
+    Text(Content),
+    Number(Expr),
 }
 
 /// `agent: no` and `agent: hidden`: what an agent may do with a zone, a
@@ -1901,7 +1924,7 @@ impl Scene {
         self.zone_under(id, shape, active, vec![])
     }
     pub fn zone_under(&mut self, id: &'static str, shape: Shape, active: impl Into<Expr>, under: Vec<Transform>) -> ZoneId {
-        self.zones.push(Zone { id, shape, active: active.into(), cursor: Cursor::Normal, under, at: self.instrs.len(), zblock: None, carries: None, label: None, reach: Reach::Any, scrolls: None, within: None });
+        self.zones.push(Zone { id, shape, active: active.into(), cursor: Cursor::Normal, under, at: self.instrs.len(), zblock: None, carries: None, label: None, reach: Reach::Any, scrolls: None, within: None, told: None });
         ZoneId(self.zones.len() as u16 - 1)
     }
     /// Claims go from more to less priority; the last one should be

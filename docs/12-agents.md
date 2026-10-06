@@ -1,6 +1,6 @@
 # Scenes an agent can read — design
 
-**Status:** steps 1 to 6 (`describe`, acting by name, `wait`, `watch`, `label:`, `agent:`, and pleamar-wm's `agent tree/press`) implemented on 6 Oct 2026; the rest is design. Each step is measured with [the agent race](../tools/agent-race/results.md). Agreed with Abel on 6 Oct 2026 as the first step towards pleamar as a way to give **any program** its interface. This note is the first stretch of that road: what the scene already knows, handed to whoever drives it from outside.
+**Status:** steps 1 to 7 (`describe`, acting by name, `wait`, `watch`, `label:`, `agent:`, and pleamar-wm's `agent tree/press`) implemented on 6 Oct 2026; the rest is design. Each step is measured with [the agent race](../tools/agent-race/results.md). Agreed with Abel on 6 Oct 2026 as the first step towards pleamar as a way to give **any program** its interface. This note is the first stretch of that road: what the scene already knows, handed to whoever drives it from outside.
 
 ## 1. Why
 
@@ -49,10 +49,10 @@ main · window «Notes» 640×480 · scale 1
 | --- | --- |
 | **header** | One per surface or popup on screen: its name (`main` for the scene's own), what it is (`window «title»`, `panel`, `popup`), its size and its scale. A copy per monitor says `(screen 0)` there, and its names lose the `#screen0` every one of them carries |
 | **name** | The zone's or the field's own, as the scene knows it: `knob.2` for one written `knob.$k`, `hit#r3` for the `hit` of the fourth copy of a `for r`, `touch#TrayIcon431` for one inside a copy of a component. It is the name `press` will take (step 2) |
-| **role** | Derived: an `input` is a `field`; a stack with `view:` a `list`; a zone with `on drag`, or with `on wheel` and no press, a `slider`; one with a press, `cursor: pointer` or `carries:`, a `button`, or an `item` if it is in a copy of a `for` or a `repeat`; anything else a `region`. And the words drawn outside every zone —a title, a status line— are a `text`, with no name: they are read, not touched. `role:` will override it (step 7) |
+| **role** | Derived: an `input` is a `field`; a stack with `view:` a `list`; a zone with `on drag`, or with `on wheel` and no press, a `slider`; one with a press, `cursor: pointer` or `carries:`, a `button`, or an `item` if it is in a copy of a `for` or a `repeat`; anything else a `region`. And the words drawn outside every zone —a title, a status line— are a `text`, with no name: they are read, not touched. `role:` says it when the rules cannot: `button`, `toggle`, `slider`, `tab`, `link`, `item`, `list`, `region` |
 | **label** | `label:` if it has one. If not, the texts drawn inside its box this frame, in reading order: each text goes to the smallest **active** zone it falls in, so a button's word is the button's and not the panel's around it, and a closed menu still in its place does not take the words of what is drawn there. A field without text says its `placeholder`. **Nothing is guessed from what is near**: in Marea the slider's name is drawn under its icon, not under the slider, and a guess would have named the icon. When the word is not inside, `label:` says it |
-| **value** | A field's text: `(hidden)` with `secret: true` or `agent: no`. `value:` for the rest will come with step 7 |
-| **state** | `inactive` when its `active:` is false **and** something is drawn in it (a greyed out button; an inactive zone with nothing in it is a closed panel's, and is left out), `covered by X` when another zone is on top at its centre, `off view` when its list has scrolled it out, `a person's` with `agent: no` |
+| **value** | A field's text: `(hidden)` with `secret: true` or `agent: no`. For the rest, `value:`: a text with holes (`value: "{volume * 100} %"`) or a sum (`value: volume`), and a fact with names says its name (`critical`) |
+| **state** | `inactive` when its `active:` is false **and** something is drawn in it (a greyed out button; an inactive zone with nothing in it is a closed panel's, and is left out), `covered by X` when another zone is on top at its centre, `off view` when its list has scrolled it out, `a person's` with `agent: no`; and with `checked:` `checked` or `not checked`, with `selected:` `selected` |
 | **box** | In the surface's logical pixels, with the scale in the header: `pleamar-wm` turns it into the pixels of its `look` |
 | **nesting** | The rows of a list hang from it, the ones in sight and the ones scrolled out, and so does whatever else falls in its window. Groups and components add no level: they are drawing, not meaning |
 
@@ -156,7 +156,6 @@ Implemented (step 5, 6 Oct 2026).
 - **Screen readers.** The same tree, handed to AccessKit, becomes AT-SPI on Linux, UIA on Windows and NSAccessibility on macOS. That is why the roles are a subset of AccessKit's (`button`, `slider`, `field`, `list`, `item`, `region`; later `toggle`, `tab`, `link`), and why `label:` is a text that translates.
 - **MCP.** `pleamar mcp SCENE` would offer `describe`, the actions, `wait` and `watch` as tools, and each event with `->` as a tool of its own. Every pleamar program would be an MCP server with no work.
 - **A program in any language** driving a scene over this same socket (step 3 of the road): the commands above are its first half.
-- **`checked:` and `selected:`** on zones, for toggles and lists that say which row is chosen. Left out of step 1: they are new state, the rest is reading what exists.
 
 ## 9. Order of work
 
@@ -168,7 +167,7 @@ Implemented (step 5, 6 Oct 2026).
 | 4 ✅ | `agent: no` and `agent: hidden` over the socket | `a_hand_is_refused_what_a_person_could_not_do_either` |
 | 5 ✅ | `hello`, and pleamar-wm's `agent tree/press/wait/watch/say` | In the live session: `windows` marking the race's window, `tree`, `press` with the cursor gliding there; the race |
 | 6 ✅ | The seat: pleamar hears every seat and reads its name, pleamar-wm then uses the agent's for pleamar windows, the press is not let through | Live: `agent click` on «Delete» left `dirty` as it was, and `watch` said `kept delete`; on «New note» it went through |
-| 7 | `role:`, `value:` | Tests |
+| 7 ✅ | `role:`, `value:`, `checked:`, `selected:` | `a_scene_says_what_it_holds`, `role-not-a-role.plm` |
 
 Steps 1 to 4 are pleamar alone and work on any compositor. 5 and 6 need both.
 

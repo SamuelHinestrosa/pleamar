@@ -20,7 +20,7 @@ pub const LIBRARY_STATEMENTS: &[&str] = &["let", "spring", "component", "permiss
 pub const PROPERTIES: &[(&str, &[&str])] = &[
     ("surface", &["size", "anchor", "margin", "level", "reserve", "screens", "keyboard", "open", "kind", "title", "rate", "captures", "agent"]),
     ("permissions", &["run", "services"]),
-    ("shape", &["rotate", "stroke", "color", "opacity", "blend", "glass", "lens", "shine", "refraction", "dispersion", "dome", "ripple", "active", "show", "cursor", "carries", "grow", "label", "agent"]),
+    ("shape", &["rotate", "stroke", "color", "opacity", "blend", "glass", "lens", "shine", "refraction", "dispersion", "dome", "ripple", "active", "show", "cursor", "carries", "grow", "label", "agent", "role", "value", "checked", "selected"]),
     ("ellipse", &["at", "radius", "scale"]),
     ("box", &["at", "from", "size", "corner"]),
     ("arc", &["at", "radius", "span", "width"]),
@@ -163,6 +163,8 @@ pub const KEYBOARD_MODES: &[&str] = &["none", "on_demand", "exclusive"];
 pub const CAPTURES: &[&str] = &["shown", "hidden"];
 /// `agent:` on a zone, a field or a surface: what an agent may do with it.
 pub const AGENT: &[&str] = &["yes", "no", "hidden"];
+/// `role:` on a zone: what it is, when what its rules do does not say it.
+pub const ROLES: &[&str] = &["button", "toggle", "slider", "tab", "link", "item", "list", "region"];
 pub const TEXT_ALIGNS: &[&str] = &["left", "center", "right"];
 pub const STACK_ALIGNS: &[&str] = &["start", "center", "end"];
 /// How a group with effects blends: covering, or adding light.
@@ -212,6 +214,7 @@ pub fn to_text() -> String {
     line("surface.keyboard", KEYBOARD_MODES);
     line("surface.captures", CAPTURES);
     line("agent", AGENT);
+    line("role", ROLES);
     line("text.align", TEXT_ALIGNS);
     line("layout.align", STACK_ALIGNS);
     line("group.mode", GROUP_MODES);

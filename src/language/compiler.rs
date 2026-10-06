@@ -156,6 +156,8 @@ struct Candidate {
     /// The stack with `view:` it scrolls inside, if any: the zone of a row
     /// that can be scrolled out of sight.
     within: Option<String>,
+    /// `role:`, `value:`, `checked:`, `selected:`.
+    told: Option<Box<Told>>,
 }
 
 /// What holds inside a component or an iteration of `repeat`: its
@@ -1549,6 +1551,37 @@ impl<'a> Compiler<'a> {
             Some(c) => reach(c)?,
             None => Reach::Any,
         };
+        let mut told = Told::default();
+        if let Some(c) = p.get_mut("role") {
+            let r = c.one_of(vocab::ROLES, "what it is")?;
+            c.expect_end()?;
+            told.role = vocab::ROLES.iter().find(|x| **x == r).copied();
+        }
+        // `value: "{volume * 100} %"`, a text; or `value: volume`, a number (a fact with names, its name).
+        if let Some(c) = p.get_mut("value") {
+            told.value = Some(match c.peek() {
+                Some(TokenKind::Str(s)) => {
+                    let s = s.clone();
+                    let at = c.i;
+                    c.i += 1;
+                    c.expect_end()?;
+                    Said::Text(self.content_of(&s, &c.tokens[at])?)
+                }
+                _ => {
+                    let e = self.expr(c)?;
+                    c.expect_end()?;
+                    Said::Number(e)
+                }
+            });
+        }
+        for (k, slot) in [("checked", &mut told.checked), ("selected", &mut told.selected)] {
+            if let Some(c) = p.get_mut(k) {
+                let e = self.expr(c)?;
+                c.expect_end()?;
+                *slot = Some(e);
+            }
+        }
+        let told = (told.role.is_some() || told.value.is_some() || told.checked.is_some() || told.selected.is_some()).then(|| Box::new(told));
         let mut extent: Option<(Expr, Expr)> = None;
         let mut shape = match class.as_str() {
             "ellipse" => {
@@ -1624,7 +1657,7 @@ impl<'a> Compiler<'a> {
         // which it is painted. Whether it is or not is decided at the end: see `materialize_zones`.
         if let Some(name) = &name {
             let name = &self.declare_zone(name);
-            self.candidates.push(Candidate { name: name.clone(), at: self.e.instrs.len(), zblock: self.zblock, shape: shape.clone(), active, visible: None, under: self.under.clone(), forced: carries.is_some(), cursor, carries, label, reach, within: None });
+            self.candidates.push(Candidate { name: name.clone(), at: self.e.instrs.len(), zblock: self.zblock, shape: shape.clone(), active, visible: None, under: self.under.clone(), forced: carries.is_some(), cursor, carries, label, reach, within: None, told });
         }
         Ok(ParsedShape { shape, color, opacity, blend, size: extent, glass_spec })
     }
@@ -3216,7 +3249,7 @@ impl<'a> Compiler<'a> {
             at: self.e.instrs.len(),
             zblock: self.zblock,
             shape: Shape::Rect { center: (at.0.clone() + width.clone() * 0.5, at.1.clone() + height * 0.5), half_size: (width.clone() * 0.5, (height * 0.5 + 3.0).into()), radius: 0.0.into() },
-            active: None, visible: None, under: self.under.clone(), forced: true, cursor: Cursor::Text, carries: None, label, reach, within: None,
+            active: None, visible: None, under: self.under.clone(), forced: true, cursor: Cursor::Text, carries: None, label, reach, within: None, told: None,
         });
         self.last_size = Some((width.clone(), height.into()));
         self.e.paint(Instr::Field { text, zone: interned(&zone), at, width, style, alpha, placeholder, selection, secret });
@@ -4938,7 +4971,7 @@ impl<'a> Compiler<'a> {
                 under.push(t.clone());
             }
             let bounds = Shape::Rect { center: (size.0.clone() * 0.5, size.1.clone() * 0.5), half_size: (size.0.clone() * 0.5, size.1.clone() * 0.5), radius: zone_corner };
-            self.candidates.insert(base_candidates, Candidate { name: name.clone(), at: instr_base, zblock: self.zblock, shape: bounds, active: None, visible: None, under, forced: scroller.is_some(), cursor: stack_cursor, carries: None, label: None, reach: Reach::Any, within: None });
+            self.candidates.insert(base_candidates, Candidate { name: name.clone(), at: instr_base, zblock: self.zblock, shape: bounds, active: None, visible: None, under, forced: scroller.is_some(), cursor: stack_cursor, carries: None, label: None, reach: Reach::Any, within: None, told: None });
             // A hidden stack does not catch the mouse: neither its children nor IT, which with
             // `view:` has a zone of its own —the one for the wheel and dragging— the
             // size of its window. Hidden and in front, that zone
@@ -5671,6 +5704,7 @@ impl<'a> Compiler<'a> {
             label: None,
             reach: Reach::Any,
             within: None,
+            told: None,
         });
         self.e.paint(Instr::Window { slot, target: (x, y, w, h), alpha, ask });
         Ok(())
@@ -5922,6 +5956,7 @@ impl<'a> Compiler<'a> {
                 self.e.zones[z.0 as usize].label = k.label;
                 self.e.zones[z.0 as usize].reach = k.reach;
                 self.e.zones[z.0 as usize].within = k.within.and_then(|w| self.zones.get(&w).copied());
+                self.e.zones[z.0 as usize].told = k.told;
                 self.zones.insert(k.name, z);
             }
         }

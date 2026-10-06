@@ -34,7 +34,7 @@ scene Notes {
         for r in rows {
             group {
                 size: 608, 40
-                box hit { from: 0, 0; size: 608, 38; corner: 8; color: if(sel == r.index, #2f5f52, #202222); cursor: pointer }
+                box hit { from: 0, 0; size: 608, 38; corner: 8; color: if(sel == r.index, #2f5f52, #202222); cursor: pointer; selected: sel == r.index }
                 text r.title { at: 12, 19; anchor: left center; size: 14; color: ink }
                 on press hit { emit open(r.index) }
             }

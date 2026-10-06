@@ -30,6 +30,9 @@ pub struct Sight<'a> {
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub enum Role {
     Button,
+    Toggle,
+    Tab,
+    Link,
     Item,
     Slider,
     Field,
@@ -43,6 +46,9 @@ impl Role {
     fn word(self) -> &'static str {
         match self {
             Role::Button => "button",
+            Role::Toggle => "toggle",
+            Role::Tab => "tab",
+            Role::Link => "link",
             Role::Item => "item",
             Role::Slider => "slider",
             Role::Field => "field",
@@ -66,6 +72,9 @@ pub struct Node {
     pub value: Option<String>,
     pub inactive: bool,
     pub covered_by: Option<&'static str>,
+    /// `checked:` and `selected:`, when it says them.
+    pub checked: Option<bool>,
+    pub selected: Option<bool>,
     /// Scrolled out of its list: acting on it scrolls it into sight first.
     pub off_view: bool,
     pub persons: bool,
@@ -86,6 +95,19 @@ pub struct Part {
 
 /// What a zone is, from what it does: its rules, its cursor, its field.
 pub fn role_of(scene: &Scene, k: usize, z: &Zone) -> Role {
+    // Said by the scene (`role: toggle`), it is that.
+    if let Some(r) = z.told.as_ref().and_then(|t| t.role) {
+        return match r {
+            "toggle" => Role::Toggle,
+            "slider" => Role::Slider,
+            "tab" => Role::Tab,
+            "link" => Role::Link,
+            "item" => Role::Item,
+            "list" => Role::List,
+            "region" => Role::Region,
+            _ => Role::Button,
+        };
+    }
     if field_of(scene, z).is_some() {
         return Role::Field;
     }
@@ -250,11 +272,27 @@ pub fn describe(scene: &Scene, c: Ctx, texts: &[String], sight: &Sight) -> Vec<P
                 (None, Some(_)) => String::new(),
                 (None, None) => words.iter().map(|t| t.text.trim()).collect::<Vec<_>>().join(" "),
             };
-            let value = field.map(|(text, _, secret)| if secret || z.reach == Reach::Person { "(hidden)".to_owned() } else { texts.get(text).cloned().unwrap_or_default() });
+            let told = z.told.as_deref();
+            let value = match (field, told.and_then(|t| t.value.as_ref())) {
+                (Some((text, _, secret)), _) => Some(if secret || z.reach == Reach::Person { "(hidden)".to_owned() } else { texts.get(text).cloned().unwrap_or_default() }),
+                (None, Some(crate::scene::Said::Text(t))) => Some(content_text(t, c, texts).into_owned()),
+                // A fact with names says its name (`critical`, `true`); any other sum, its number.
+                (None, Some(crate::scene::Said::Number(e))) => Some(match e {
+                    crate::scene::Expr::H(f) => {
+                        let n = scene.facts[f.0 as usize].0;
+                        let v = c.facts[f.0 as usize];
+                        scene.types.iter().find(|(t, _)| t == n).map_or_else(|| number(v), |(_, t)| t.to_text(v))
+                    }
+                    e => number(e.eval(c)),
+                }),
+                (None, None) => None,
+            };
+            let checked = told.and_then(|t| t.checked.as_ref()).map(|e| e.is_true(c));
+            let selected = told.and_then(|t| t.selected.as_ref()).map(|e| e.is_true(c));
             let (cx, cy) = ((zb[0] + zb[2]) * 0.5, (zb[1] + zb[3]) * 0.5);
             let off = off_view(k);
             let covered_by = match (active && !off, role) {
-                (true, Role::Button | Role::Item | Role::Field | Role::Slider) => top_at(cx, cy).filter(|t| *t != k && scene.zones[*t].scrolls.is_none()).map(|t| scene.zones[t].id.strip_suffix(suffix.as_str()).unwrap_or(scene.zones[t].id)),
+                (true, Role::Button | Role::Toggle | Role::Tab | Role::Link | Role::Item | Role::Field | Role::Slider) => top_at(cx, cy).filter(|t| *t != k && scene.zones[*t].scrolls.is_none()).map(|t| scene.zones[t].id.strip_suffix(suffix.as_str()).unwrap_or(scene.zones[t].id)),
                 _ => None,
             };
             nodes.push(Node {
@@ -266,6 +304,8 @@ pub fn describe(scene: &Scene, c: Ctx, texts: &[String], sight: &Sight) -> Vec<P
                 value,
                 inactive: !active,
                 covered_by,
+                checked,
+                selected,
                 off_view: off,
                 persons: z.reach == Reach::Person,
                 at: [zb[0] - b[0], zb[1] - b[1], zb[2] - zb[0], zb[3] - zb[1]],
@@ -283,6 +323,8 @@ pub fn describe(scene: &Scene, c: Ctx, texts: &[String], sight: &Sight) -> Vec<P
                 value: None,
                 inactive: false,
                 covered_by: None,
+                checked: None,
+                selected: None,
                 off_view: false,
                 persons: false,
                 at: [t.bounds[0] - b[0], t.bounds[1] - b[1], t.bounds[2] - t.bounds[0], t.bounds[3] - t.bounds[1]],
@@ -315,7 +357,7 @@ pub fn describe(scene: &Scene, c: Ctx, texts: &[String], sight: &Sight) -> Vec<P
 /// The zones a person could press but that nobody says what they are: what
 /// a screen reader would read as «button», and nothing else.
 pub fn unnamed(parts: &[Part]) -> Vec<&'static str> {
-    parts.iter().flat_map(|p| &p.nodes).filter(|n| matches!(n.role, Role::Button | Role::Item | Role::Slider) && n.label.is_empty()).map(|n| n.name).collect()
+    parts.iter().flat_map(|p| &p.nodes).filter(|n| matches!(n.role, Role::Button | Role::Toggle | Role::Tab | Role::Link | Role::Item | Role::Slider) && n.label.is_empty()).map(|n| n.name).collect()
 }
 
 // ── acting by name ──────────────────────────────────────────────
@@ -919,6 +961,14 @@ pub fn to_text(parts: &[Part]) -> String {
             if let Some(v) = &n.value {
                 let _ = write!(line, "  \"{v}\"");
             }
+            match n.checked {
+                Some(true) => line.push_str("  · checked"),
+                Some(false) => line.push_str("  · not checked"),
+                None => {}
+            }
+            if n.selected == Some(true) {
+                line.push_str("  · selected");
+            }
             if n.inactive {
                 line.push_str("  · inactive");
             }
@@ -970,6 +1020,12 @@ pub fn to_json(parts: &[Part]) -> String {
         }
         if n.off_view {
             v["off_view"] = true.into();
+        }
+        if let Some(b) = n.checked {
+            v["checked"] = b.into();
+        }
+        if let Some(b) = n.selected {
+            v["selected"] = b.into();
         }
         let inner: Vec<serde_json::Value> = (0..nodes.len()).filter(|j| nodes[*j].inside == Some(i)).map(|j| node(nodes, j)).collect();
         if !inner.is_empty() {
@@ -1039,6 +1095,13 @@ mod tests {
         // Dragged: sliders, each copy with its own word.
         let knobs: Vec<(Role, &str)> = (0..3).map(|k| node(&parts, &format!("knob.{k}")).map(|n| (n.role, n.label.as_str())).unwrap()).collect();
         assert_eq!(knobs, [(Role::Slider, "Brightness"), (Role::Slider, "Volume"), (Role::Slider, "Microphone")]);
+        // Said by the scene: a toggle that is on, a tab that is chosen, and what each is worth.
+        let switch = node(&parts, "switch").unwrap();
+        assert_eq!((switch.role, switch.checked, switch.value.as_deref()), (Role::Toggle, Some(true), Some("loud")));
+        let tab = node(&parts, "tab").unwrap();
+        assert_eq!((tab.role, tab.selected, tab.value.as_deref()), (Role::Tab, Some(true), Some("3")));
+        assert_eq!(node(&parts, "knob.0").unwrap().value.as_deref(), Some("30%"));
+        assert!(to_text(&parts).contains("toggle  switch  «Wi-Fi»  \"loud\"  · checked"), "{}", to_text(&parts));
         let delete = node(&parts, "delete").unwrap();
         assert_eq!((delete.role, delete.persons), (Role::Button, true));
         // Hidden is not even named; inactive with nothing drawn is not there.
