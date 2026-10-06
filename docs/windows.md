@@ -21,9 +21,10 @@ on non-primary DISPLAY2 at 125% DPI passed module edits, syntax-error recovery,
 Unicode-path part edits and retired-module checks; six WGC captures were
 inspected. No physical input was sent and the foreground window was unchanged.
 This does not validate the new Marea pages or complete desktop parity:
-`thumbnails.live`, the `audio` service's `apps` list, and the `audio.app_volume`
-and `audio.app_mute` commands still need Windows adapters. The existing per-player `media.volume`
-control and pleamar-wm WGC previews are separate capabilities.
+`thumbnails.live` still needs a Windows adapter. The native `audio.apps` list
+and per-session controls were added and validated subsequently, as described
+below. Per-player `media.volume` and pleamar-wm WGC previews are separate
+capabilities.
 
 Native screenshots use `sys.ask_async("screenshot.freeze", { scope }, callback)`
 followed by `screenshot.finish` with the returned numeric identifier, on the
@@ -184,7 +185,7 @@ is reported as an error rather than being mistaken for an unplugged monitor.
 | Input regions and click-through | GPU visual window plus a region-clipped input HWND; tested against a separate process, including region removal |
 | Popup placement | Uses the surface that last received input, falling back to a live surface; edge constraint and parent-move tracking remain limited |
 | Global cursor outside surfaces | GetCursorPos with monitor-relative DPI conversion; no global mouse hook |
-| Audio | Native volume/mute and output/input selection; all three default roles changed and restored on real hardware |
+| Audio | Native master/input levels, output/input selection and per-session application mixer. Three owned silent WASAPI sessions passed independent control/readback/callback tests; all three default roles were changed and restored in earlier hardware validation |
 | Network | WinRT connection status; native WLAN scan, radio, saved-profile connection/disconnection and new open/WPA2-Personal profiles; no Wi-Fi hardware on the validation host |
 | Bluetooth | WinRT radio, classic and LE catalogs, explicit discovery and pairing, plus audio-driver connection control. Native LE watching/discovery and Marea pagination passed. New-device pairing/PIN/cancellation still need an identified test device; generic non-audio connection control is unavailable |
 | Brightness | DDC/CI change/readback/restore passed earlier on a ViewSonic. The current display exposes no physical monitor interface and reports unavailable with both old and new binaries; this is not a current hardware pass. WMI internal-panel backend is implemented; laptop validation is pending |
@@ -291,6 +292,43 @@ default endpoint when they execute. This does not add an artificial delay to
 the renderer's local slider preview. Device unplug/replug, audio-service restart
 and end-to-end volume-change latency need separate interactive validation of
 this event-driven implementation.
+
+The `audio` subscription and `audio.state` query include `apps`, with one row
+per Core Audio session instance: `id`, `name`, `binary`, `title`, `icon`,
+`volume` (0–1), `muted` and `playing`. Windows `id` values are opaque strings
+from `GetSessionInstanceIdentifier`, not PIDs, names or list positions. Pass
+that exact value to `audio.app_volume(id, level)` or
+`audio.app_mute(id[, boolean])`. Changing a level preserves mute; a missing or
+expired instance fails without changing another application or the master.
+System sounds are excluded and the catalog is bounded to 256 instances.
+The native icon field is empty; consumers can match the application's catalog
+icon or show a letter. `apps_error` reports catalog failures independently of
+the default endpoint's controls.
+
+The service retains session callbacks and listens for new sessions on all
+active output endpoints. Callbacks only queue bounded wakeups and references;
+the MTA audio worker enumerates, reads and releases them. Explicit queries
+read state without creating subscriptions. API contracts:
+[session identifiers](https://learn.microsoft.com/en-us/windows/win32/api/audiopolicy/nf-audiopolicy-iaudiosessioncontrol2-getsessioninstanceidentifier),
+[new-session notifications](https://learn.microsoft.com/en-us/windows/win32/api/audiopolicy/nf-audiopolicy-iaudiosessionmanager2-registersessionnotification).
+
+Mixer validation on Windows x64/MSVC, 2026-10-06:
+
+- `cargo test --release --locked --lib -- --test-threads=2`: 174 passed,
+  39 opt-in tests skipped. Release executable and Luau runner built with
+  default features.
+- `cargo test --release --locked --lib native_app_mixer_isolates_session_volume_mute_and_callbacks -- --ignored --nocapture --test-threads=1`:
+  passed with three unique, silent, owned WASAPI sessions, including two in
+  one PID, Unicode metadata, actual level/mute readback, new-session and
+  volume callbacks, and an unchanged master endpoint.
+- `cargo test --release --locked --lib live_audio_subscription -- --ignored --nocapture --test-threads=1`:
+  twelve actual endpoint/session subscription, snapshot and drop cycles passed.
+- An isolated copy of Marea's updated sound page rendered six real native
+  sessions and both device selectors on non-primary DISPLAY2 at 125% DPI.
+  Three WGC captures were inspected. This was read-only, used no physical
+  input and left the foreground unchanged. It does not validate physical
+  dragging, the full updated Marea profile, hardware hotplug or service restart.
+
 Default endpoint selection uses the isolated, undocumented `IPolicyConfig` COM
 ABI; failure is reported. Bluetooth audio uses Microsoft's documented
 [KS connection requests](https://learn.microsoft.com/en-us/windows-hardware/drivers/audio/kspropsetid-btaudio).

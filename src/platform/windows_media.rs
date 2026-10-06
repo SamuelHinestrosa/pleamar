@@ -2,6 +2,7 @@
 use super::SysValue;
 #[path = "windows_media_volume.rs"]
 mod volume;
+pub(super) use volume::process_identity;
 use windows::Media::Control::{GlobalSystemMediaTransportControlsSessionManager as Manager, GlobalSystemMediaTransportControlsSession as Session, GlobalSystemMediaTransportControlsSessionPlaybackStatus as Status};
 use windows::Networking::Connectivity::{NetworkInformation, NetworkConnectivityLevel};
 use windows::core::Result;

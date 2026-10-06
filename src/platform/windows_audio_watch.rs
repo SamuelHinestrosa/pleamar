@@ -8,28 +8,29 @@ use windows::Win32::Foundation::PROPERTYKEY;
 use windows::Win32::Media::Audio::{IMMNotificationClient, IMMNotificationClient_Impl, DEVICE_STATE, AUDIO_VOLUME_NOTIFICATION_DATA};
 use windows::Win32::Media::Audio::Endpoints::{IAudioEndpointVolumeCallback, IAudioEndpointVolumeCallback_Impl};
 
-const LEVELS: u8 = 1;
+pub(super) const LEVELS: u8 = 1;
 const DEVICES: u8 = 2;
+pub(super) const APPS: u8 = 4;
 const RECOVERY: Duration = Duration::from_secs(5);
 
 #[derive(Clone)]
-struct Wake {
+pub(super) struct Wake {
     pending: Arc<AtomicU8>,
     sender: SyncSender<()>,
 }
 
 impl Wake {
-    fn new() -> (Self, Receiver<()>) {
+    pub(super) fn new() -> (Self, Receiver<()>) {
         let (sender, receiver) = mpsc::sync_channel(1);
         (Self { pending: Arc::new(AtomicU8::new(0)), sender }, receiver)
     }
-    fn signal(&self, kind: u8) {
+    pub(super) fn signal(&self, kind: u8) {
         self.pending.fetch_or(kind, Ordering::Release);
         // A full queue already promises a wakeup; the bits retain every kind
         // of change without a queue growing for every slider sample.
         let _ = self.sender.try_send(());
     }
-    fn take(&self) -> u8 { self.pending.swap(0, Ordering::AcqRel) }
+    pub(super) fn take(&self) -> u8 { self.pending.swap(0, Ordering::AcqRel) }
     fn wait(&self, receiver: &Receiver<()>, recovery: Instant) -> Option<u8> {
         loop {
             if Instant::now() >= recovery { return Some(self.take() | DEVICES); }
@@ -88,6 +89,8 @@ struct Watcher {
     outputs: SysValue,
     inputs: SysValue,
     endpoints: [Option<Endpoint>; 2],
+    apps: apps::Catalog,
+    apps_error: Option<String>,
 }
 impl Watcher {
     fn new(wake: Wake) -> Result<Self> {
@@ -97,7 +100,7 @@ impl Watcher {
         // queues another refresh instead of being lost between read and subscribe.
         unsafe { enumerator.RegisterEndpointNotificationCallback(&callback)?; }
         Ok(Self { enumerator, callback, wake, outputs: SysValue::List(Vec::new()),
-            inputs: SysValue::List(Vec::new()), endpoints: [None, None] })
+            inputs: SysValue::List(Vec::new()), endpoints: [None, None], apps: apps::Catalog::default(), apps_error: None })
     }
     fn refresh(&mut self) -> Result<()> {
         let outputs = devices(&self.enumerator, eRender)?;
@@ -124,6 +127,10 @@ impl Watcher {
     }
     fn snapshot(&self) -> Result<SysValue> {
         let mut values = vec![("outputs".into(), self.outputs.clone()), ("inputs".into(), self.inputs.clone())];
+        match &self.apps_error {
+            Some(error) => values.push(("apps_error".into(), SysValue::Text(error.clone()))),
+            None => values.push(("apps".into(), self.apps.snapshot())),
+        }
         for (index, level, mute) in [(0, "volume", "muted"), (1, "input", "input_muted")] {
             if let Some(endpoint) = &self.endpoints[index] {
                 unsafe {
@@ -156,6 +163,9 @@ pub fn service(notify: Box<dyn Fn(SysValue) + Send>) -> bool {
                 if changes & DEVICES != 0 {
                     recovery = Instant::now() + RECOVERY;
                     watcher.refresh()?;
+                }
+                if changes & (DEVICES | APPS) != 0 {
+                    watcher.apps_error = watcher.apps.refresh(&watcher.enumerator, &wake).err().map(|e| e.to_string());
                 }
                 watcher.snapshot()
             })();
@@ -248,9 +258,11 @@ mod tests {
         for _ in 0..12 {
             let mut watcher = Watcher::new(wake.clone()).unwrap();
             watcher.refresh().unwrap();
+            watcher.apps.refresh(&watcher.enumerator, &wake).unwrap();
             let SysValue::Map(values) = watcher.snapshot().unwrap() else { panic!("missing snapshot") };
             assert!(values.iter().any(|(name, value)| name == "outputs" && matches!(value, SysValue::List(_))));
             assert!(values.iter().any(|(name, value)| name == "inputs" && matches!(value, SysValue::List(_))));
+            assert!(values.iter().any(|(name, value)| name == "apps" && matches!(value, SysValue::List(_))));
         }
         println!("PASS: twelve actual Core Audio subscription/snapshot/drop cycles; no settings changed");
     }

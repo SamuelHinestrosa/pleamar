@@ -13,7 +13,7 @@ use windows::{core::{Interface, PWSTR, GUID}, Win32::{
 
 const APP_ID: PROPERTYKEY = PROPERTYKEY { fmtid: GUID::from_u128(0x9f4c2855_9f79_4b39_a8d0_e1d42de1d5f3), pid: 5 };
 
-fn process_identity(pid: u32) -> Option<(String, String)> {
+pub(in crate::platform) fn process_identity(pid: u32) -> Option<(String, String)> {
     unsafe {
         let process = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid).ok()?;
         let mut path = vec![0u16; 32768];

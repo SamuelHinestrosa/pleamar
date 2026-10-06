@@ -1,6 +1,8 @@
 //! Core Audio endpoints. Commands resolve the current default at execution time.
 #[path = "windows_audio_watch.rs"]
 mod watch;
+#[path = "windows_audio_apps.rs"]
+mod apps;
 pub use watch::service;
 use super::SysValue;
 use windows::core::{Result, Interface, GUID, HRESULT, PCWSTR, IUnknown, IUnknown_Vtbl};
@@ -204,6 +206,10 @@ pub fn read() -> Result<SysValue> {
         Ok((outputs.clone(), inputs.clone()))
     })?;
     let mut result = vec![("outputs".into(), outputs), ("inputs".into(), inputs)];
+    match apps::read() {
+        Ok(apps) => result.push(("apps".into(), apps)),
+        Err(error) => result.push(("apps_error".into(), SysValue::Text(error.to_string()))),
+    }
     for (flow, level, mute) in [(eRender, "volume", "muted"), (eCapture, "input", "input_muted")] {
         if let Ok(device) = endpoint(flow) {
             unsafe {
@@ -216,6 +222,7 @@ pub fn read() -> Result<SysValue> {
 }
 
 pub fn command(name: &str, args: &[SysValue]) -> std::result::Result<(), String> {
+    if matches!(name, "audio.app_volume" | "audio.app_mute") { return apps::command(name, args); }
     let flow = if name.starts_with("audio.input") { eCapture } else { eRender };
     match name {
         "audio.volume" | "audio.input" | "audio.input_volume" | "audio.step" => {
