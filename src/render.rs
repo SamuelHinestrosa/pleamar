@@ -1609,8 +1609,8 @@ pub fn run(
                                 // lights up under it.
                                 match sheets.iter().find(|s| s.open && s.view.popup.is_none() && crate::agent::inside_box(s.view.bounds(), p)) {
                                     Some(s) => {
-                                        let at = ((p.0 - s.view.origin.0) * s.scale, (p.1 - s.view.origin.1) * s.scale);
-                                        a.steps.push_front(Step::Cursor(crate::platform::agent_cursor_to(at.0, at.1, true), now + Duration::from_millis(300)));
+                                        let (on, at) = cursor_place(&scene, s, p);
+                                        a.steps.push_front(Step::Cursor(crate::platform::agent_cursor_to(on, at.0, at.1, true), now + Duration::from_millis(300)));
                                     }
                                     None => a.hand = Some(p),
                                 }
@@ -1630,7 +1630,8 @@ pub fn run(
                             a.hand = Some(p);
                             // The agent's cursor goes with the hand, step by step.
                             if let Some(s) = sheets.iter().find(|s| s.open && s.view.popup.is_none() && crate::agent::inside_box(s.view.bounds(), p)) {
-                                crate::platform::agent_cursor_to((p.0 - s.view.origin.0) * s.scale, (p.1 - s.view.origin.1) * s.scale, false);
+                                let (on, at) = cursor_place(&scene, s, p);
+                                crate::platform::agent_cursor_to(on, at.0, at.1, false);
                             }
                             a.steps.pop_front();
                             break;
@@ -4654,4 +4655,14 @@ struct Watcher {
     until: Instant,
     start: Instant,
     before: crate::agent::Before,
+}
+
+/// Where the agent's cursor goes for a point of the scene on that sheet: a
+/// window's picture in its pixels, or a panel by its size, in its units.
+fn cursor_place(scene: &Scene, s: &Sheet, p: (f32, f32)) -> (crate::platform::CursorOn, (f32, f32)) {
+    let local = (p.0 - s.view.origin.0, p.1 - s.view.origin.1);
+    match scene.surfaces.get(s.view.surface).is_some_and(|f| f.window.is_some()) {
+        true => (crate::platform::CursorOn::Window, (local.0 * s.scale, local.1 * s.scale)),
+        false => (crate::platform::CursorOn::Panel(s.view.size.0.round() as u32, s.view.size.1.round() as u32), local),
+    }
 }
