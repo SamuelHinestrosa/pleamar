@@ -150,6 +150,10 @@ fn start_service(from: &str, name: &str, notify: Box<dyn Fn(SysValue) + Send>) -
 /// Ask a service to do something: `workspaces.focus`, 3.
 pub fn command(from: &str, name: &str, args: &[SysValue]) -> Result<(), String> {
     #[cfg(target_os = "windows")]
+    if name=="notifications.publish" {return windows_toast_actions::publish(from,args);}
+    #[cfg(target_os = "windows")]
+    if name=="notifications.cancel" {return windows_toast_actions::cancel(from,args);}
+    #[cfg(target_os = "windows")]
     if name.starts_with("thumbnails.") { return windows_thumbnails::command(from, name, args); }
     #[cfg(target_os = "windows")]
     if name.starts_with("credentials.") { return windows_credentials::command(from, name, args); }
@@ -239,6 +243,8 @@ pub fn config_dir() -> std::path::PathBuf {
 /// It can take a while —there's another application on the other side—, and
 /// that's why it's up to the logic, which can wait without it showing.
 pub fn query(from: &str, name: &str, args: &[SysValue]) -> Result<SysValue, String> {
+    #[cfg(target_os = "windows")]
+    if name=="notifications.actions" {return windows_toast_actions::query(from,args);}
     #[cfg(target_os = "windows")]
     if name.starts_with("credentials.") { return windows_credentials::query(from, name, args); }
     if name.starts_with("files.") {
@@ -888,6 +894,18 @@ mod windows_notifications;
 #[cfg(target_os = "windows")]
 mod windows_toasts;
 #[cfg(target_os = "windows")]
+mod windows_toast_actions;
+#[cfg(target_os = "windows")]
+mod windows_toast_activation;
+#[cfg(target_os = "windows")]
+pub(crate) use windows_toast_activation::run_broker as run_notification_broker;
+#[cfg(target_os = "windows")]
+pub(crate) use windows_toast_actions::release as release_notification_actions;
+#[cfg(target_os = "windows")]
+pub(crate) use windows_toasts::unregister as unregister_notification_publisher;
+#[cfg(target_os = "windows")]
+pub(crate) use windows_toasts::check_shortcut as check_notification_shortcut;
+#[cfg(target_os = "windows")]
 pub(crate) use windows_toasts::register_shortcut as register_notification_shortcut;
 #[cfg(target_os = "windows")]
 mod windows_windows;
@@ -927,6 +945,7 @@ mod windows_capture_winrt;
 mod windows_recording;
 #[cfg(target_os = "windows")]
 pub(crate) fn finish_native_services() {
+    windows_toast_actions::shutdown();
     windows_recording::shutdown();
     windows_thumbnails::shutdown();
 }

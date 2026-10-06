@@ -26,7 +26,7 @@ fn pipe_path(scene: &str) -> Result<String, String> {
     Ok(format!(r"\\.\pipe\{}{scene}", prefix()))
 }
 
-fn read_line(file: &mut File, until: Instant) -> Result<String, String> {
+pub(super) fn read_line(file: &mut File, until: Instant) -> Result<String, String> {
     let mut data = Vec::new();
     loop {
         let mut available = 0;
@@ -47,6 +47,10 @@ fn read_line(file: &mut File, until: Instant) -> Result<String, String> {
 
 fn bind(scene: &str) -> Result<File, String> {
     let path = pipe_path(scene)?;
+    bind_path(&path)
+}
+
+pub(super) fn bind_path(path: &str) -> Result<File, String> {
     let wide: Vec<u16> = path.encode_utf16().chain([0]).collect();
     let handle = unsafe {
         CreateNamedPipeW(PCWSTR(wide.as_ptr()), PIPE_ACCESS_DUPLEX | FILE_FLAG_FIRST_PIPE_INSTANCE,
@@ -84,8 +88,11 @@ pub fn listen_for_commands(scene: &str, receive: Box<dyn Fn(String) -> Option<St
 }
 
 pub fn ask(scene: &str, command: &str, wait: Duration) -> Result<String, String> {
+    ask_path(&pipe_path(scene)?, command, wait)
+}
+
+pub(super) fn ask_path(path: &str, command: &str, wait: Duration) -> Result<String, String> {
     if command.len() >= LIMIT || command.contains(['\n', '\r']) { return Err("send one command line at a time (less than 64 KiB)".into()); }
-    let path = pipe_path(scene)?;
     let until = Instant::now() + wait;
     let mut pipe = loop {
         match OpenOptions::new().read(true).write(true).open(&path) {

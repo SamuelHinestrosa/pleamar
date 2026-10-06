@@ -979,6 +979,8 @@ impl LuauScript {
         c.service_lifetime.0.store(false, Ordering::Release);
         #[cfg(target_os = "windows")]
         crate::platform::release_thumbnail_requests(&self.owner());
+        #[cfg(target_os = "windows")]
+        crate::platform::release_notification_actions(&self.owner());
         c.service_workers.clear();
         c.watchers.clear();
         c.watched.clear();

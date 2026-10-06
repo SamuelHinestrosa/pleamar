@@ -21,7 +21,7 @@ jobs:
         with:
           python-version: '3.x'
       - name: Build with Luau
-        run: cargo build --release --locked
+        run: cargo build --release --locked ${{ runner.os == 'Windows' && '--features windows-notifications' || '' }}
       - name: Package and verify the Windows shader compiler
         if: runner.os == 'Windows'
         shell: pwsh
@@ -44,6 +44,15 @@ jobs:
       - name: Windows-key hook ownership on an isolated private desktop
         if: runner.os == 'Windows'
         run: cargo test --locked --lib native_layer_private_desktop -- --ignored --nocapture
+      - name: Owned Windows notification COM registration and broker (no toast/input)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $artifacts = cargo test --locked --lib --no-run --message-format=json 2>$null | ForEach-Object { try { $_ | ConvertFrom-Json } catch {} }
+          if ($LASTEXITCODE -ne 0) { throw 'Could not locate paired notification test executable' }
+          $tests = @($artifacts | Where-Object { $_.reason -eq 'compiler-artifact' -and $_.target.name -eq 'pleamar' -and $_.profile.test -and $_.executable })
+          if ($tests.Count -ne 1) { throw 'Expected one notification test executable' }
+          python scripts/windows-toast-broker.py --binary target/release/pleamar.exe --tests $tests[0].executable --output "${{ runner.temp }}/toast broker ñ"
       - name: Allocation diagnostic bookkeeping
         run: cargo test --locked --example allocation-profile
       - name: Build diagnostic executables
@@ -104,4 +113,6 @@ jobs:
             ${{ runner.temp }}/watch reload ñ
             ${{ runner.temp }}/callback isolation ñ
             ${{ runner.temp }}/run lifetime ñ
+            ${{ runner.temp }}/toast broker ñ/report.json
+            ${{ runner.temp }}/toast broker ñ/commands.log
           if-no-files-found: ignore

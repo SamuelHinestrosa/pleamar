@@ -33,6 +33,10 @@ pub use gpu::{Frames, NewSheet, Sent, Target, View};
 /// The same wgpu the render paints with, for a platform that lends it textures.
 pub use wgpu;
 pub use scenes::from_file::read as read_scene;
+
+/// Entry point for the windowless Windows COM notification activator.
+#[cfg(target_os = "windows")]
+pub fn run_notification_broker() -> Result<(),String> {platform::run_notification_broker()}
 mod text;
 
 use scene::*;
@@ -133,6 +137,20 @@ fn args(given: Vec<String>) -> Args {
                 std::process::exit(match platform::register_notification_shortcut(std::path::Path::new(&path)) {
                     Ok(id) => { println!("Notification publisher registered: {id}"); 0 },
                     Err(error) => { eprintln!("{error}"); 1 },
+                });
+            }
+            #[cfg(target_os = "windows")]
+            "--unregister-notification-publisher" => {
+                std::process::exit(match platform::unregister_notification_publisher() {
+                    Ok(()) => 0, Err(error) => {eprintln!("{error}");1},
+                });
+            }
+            #[cfg(target_os = "windows")]
+            "--check-notification-shortcut" => {
+                let path=value();
+                std::process::exit(match platform::check_notification_shortcut(std::path::Path::new(&path)) {
+                    Ok(())=>{println!("Notification shortcut and broker match this package");0},
+                    Err(error)=>{eprintln!("{error}");1},
                 });
             }
             "--approve" => {

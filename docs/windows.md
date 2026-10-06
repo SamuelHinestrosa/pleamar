@@ -564,19 +564,83 @@ another application's identity or require permission to read other apps' toasts.
 The installer must first create a Start menu shortcut that opens the app, then
 run the **installed executable** with
 `--register-notification-shortcut "C:\...\Programs\My app.lnk"`. This preserves
-the shortcut's target/arguments/icon while assigning its AppUserModelID. Moving
+the shortcut's target/arguments/icon while assigning its AppUserModelID and
+ToastActivatorCLSID. With the companion `pleamar-notifications.exe` beside the
+engine, it also registers the quoted, installation-specific per-user COM server.
+`--check-notification-shortcut <existing.lnk>` verifies both identities and the
+server path; `--unregister-notification-publisher` removes only this matching
+server registration. Moving
 the executable requires registering the shortcut again. Marea's installation
 and update scripts do this and preserve the previous shortcut on update.
 This follows Microsoft's [desktop toast registration contract](https://learn.microsoft.com/en-us/windows/win32/shell/enable-desktop-toast-with-appusermodelid).
 
-`sys.ask("notifications.publisher")` reports `app_id`, `setting` and `error`.
+`sys.ask("notifications.publisher")` reports `app_id`, `setting`, `error` and
+whether its native action broker is registered (`actions`).
 A new classic publisher may have no setting before its first send; that is
 reported as unavailable, not enabled. Known disabled states reject publishing.
 `Show` acceptance alone is insufficient: success waits up to five seconds for
 the exact tagged content in the publisher's own Windows history. Windows' DND
 and notification policies remain in control of visible banners. These toasts
-are silent, have no custom activation actions, and are not OS-scheduled while
+are silent and are not OS-scheduled while
 the scene is closed. MSIX publisher identity has not been validated.
+
+Own action buttons use an optional fourth argument:
+
+```lua
+sys.call_async("notifications.publish", {
+    "Marea", "Do the missed task now?", "task42",
+    {{"now", "Do it now"}, {"skip", "Leave it"}}
+}, function(error, code) -- inspect code before assuming delivery
+end)
+sys.ask_async("notifications.actions", {}, function(events, code)
+    -- Successful replies contain only this scene's {tag, action} selections.
+end)
+```
+
+There are at most four buttons, with unique 1–16 character ASCII keys and
+80-character labels; `default` is reserved for clicking the notification body
+and `dismissed` for cancellation in Windows. The runtime accepts at most 64
+outstanding notices/selections, with bounded pending history cleanup. A
+selection consumes all buttons on that notice exactly once. The same owner/tag
+replaces its previous actionable notice. Entries expire after six hours and
+on scene reload/exit; `notifications.cancel(tag)` cancels that owner's pending
+notice and selection. Queries must stop when the scene has no callbacks left.
+While confirmed actionable notices remain, the runtime reads its own history
+every five seconds. A removed notice produces `dismissed`, allowing the scene
+to retire its callback without running it. History read errors do not imply
+dismissal; a concurrent, unconfirmed publication is excluded from that snapshot.
+The three-argument informational publisher retains its previous retry contract.
+
+The windowless COM helper routes opaque tokens to their originating process's
+local pipe, including when another scene's COM server receives the activation.
+It never starts Marea, replays saved tasks, interprets commands or opens URLs.
+An activation after the original process exits is discarded. Text and button
+labels remain literal XML. A fast valid activation also confirms delivery if
+Windows has already removed the toast before its first history read. This
+does not expose other applications' private action buttons.
+
+Build both executables with default Luau enabled:
+`cargo build --release --locked --features windows-notifications --bin pleamar --bin pleamar-notifications`.
+The packaging feature includes the helper executable; Windows install scripts
+select it. Ordinary Linux builds and installs retain only the main executable.
+
+The implementation follows Microsoft's [COM activation interface](https://learn.microsoft.com/en-us/windows/win32/api/notificationactivationcallback/nf-notificationactivationcallback-inotificationactivationcallback-activate)
+and [desktop registration example](https://github.com/microsoft/Windows-classic-samples/blob/main/Samples/DesktopToasts/CPP/DesktopToastsSample.cpp).
+`cargo test --release --locked --lib windows_toast_ -- --nocapture` covers
+validation, scene lifetime, expiry and an isolated cross-process COM activation
+without publishing a toast. The new action path still requires actual
+notification-center button acceptance and current installer CI; neither is
+established by COM invocation or the earlier informational-publisher tests.
+
+Current validation (October 6, 2026): the default-Luau release build and 192
+ordinary library tests pass locally. Starting the windowless helper directly
+also passes the cross-process activation and expiry checks. Automatic startup
+through its per-user registration currently fails locally with
+`REGDB_E_CLASSNOTREG` (`0x80040154`), despite successful registry and shortcut
+readback; ASCII and Unicode install paths both reproduce it. The isolated
+`scripts/windows-toast-broker.py` CI check deliberately requires automatic
+startup and must pass before this path is accepted. No toast was published or
+clicked in that diagnostic, and it does not establish notification UI parity.
 
 Opt-in native publishing validation (creates/removes only its own shortcut and
 toast): `cargo test --locked native_publisher_roundtrip -- --ignored --nocapture`.
@@ -624,8 +688,9 @@ toast and acknowledges delivery only after the exact tagged title/body appears
 in that publisher's Windows history. Known disabled states, asynchronous failure
 and the confirmation deadline are returned as errors. This does not bypass DND
 or guarantee a visible banner. Marea persists the tag before sending and retries
-within its existing due window; closed-app scheduling and custom toast actions
-are not provided. The installed publisher and reminder/reload/dismissal flow
+within its existing due window; closed-app scheduling is not provided. Its
+calendar reminders use the informational contract; task buttons use the separate
+owned-action contract above. The earlier installed publisher and reminder/reload/dismissal flow
 were exercised on Windows 11; other OS versions and policy states remain untested.
 
 References: [notification listener](https://learn.microsoft.com/en-us/windows/apps/develop/notifications/app-notifications/notification-listener),

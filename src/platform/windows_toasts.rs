@@ -11,7 +11,7 @@ use windows::{core::{GUID, HSTRING, Interface, PCWSTR}, Data::Xml::Dom::XmlDocum
 const GROUP: &str = "pleamar-scenes";
 const APP_ID: PROPERTYKEY = PROPERTYKEY { fmtid: GUID::from_u128(0x9f4c2855_9f79_4b39_a8d0_e1d42de1d5f3), pid: 5 };
 
-fn identity_for(path: &Path) -> String {
+pub(super) fn identity_for(path: &Path) -> String {
     // Stable across builds, distinct between portable installations. Never use
     // another application's AUMID merely because its notifications are enabled.
     let mut hash = 0xcbf29ce484222325u64;
@@ -20,7 +20,7 @@ fn identity_for(path: &Path) -> String {
     }
     format!("org.pleamar.desktop.{hash:016x}")
 }
-fn app_id() -> Result<HSTRING, String> {
+pub(super) fn app_id() -> Result<HSTRING, String> {
     std::env::current_exe().map(|path| HSTRING::from(identity_for(&path))).map_err(|e| e.to_string())
 }
 fn wide(path: &Path) -> Vec<u16> {
@@ -30,7 +30,37 @@ fn wide(path: &Path) -> Vec<u16> {
 
 /// Installer-only: preserve an existing shortcut's target, arguments and icon.
 pub fn register_shortcut(path: &Path) -> Result<String, String> {
-    register_for(path, &app_id()?)
+    let id=app_id()?;
+    let engine=std::env::current_exe().map_err(|e|e.to_string())?;
+    // Keep the three-argument informational publisher usable without the helper.
+    if engine.with_file_name("pleamar-notifications.exe").is_file() {
+        super::windows_toast_activation::register(&engine,&id.to_string())?;
+    }
+    register_for(path, &id)
+}
+pub(crate) fn unregister() -> Result<(),String> {
+    super::windows_toast_activation::unregister(&std::env::current_exe().map_err(|e|e.to_string())?,&app_id()?.to_string())
+}
+pub(crate) fn check_shortcut(path:&Path)->Result<(),String> {
+    use windows::Win32::System::Com::{STGM_READ,CoTaskMemFree,StructuredStorage::{PropVariantToGUID,PropVariantToStringAlloc}};
+    let id=app_id()?;
+    let engine=std::env::current_exe().map_err(|e|e.to_string())?;
+    if !super::windows_toast_activation::ready(&engine,&id.to_string()) {return Err("native notification broker is not registered".into());}
+    let _apartment=super::windows_system::Apartment::new()?;
+    unsafe {
+        let link:IShellLinkW=CoCreateInstance(&ShellLink,None,CLSCTX_INPROC_SERVER).map_err(|e|e.to_string())?;
+        link.cast::<IPersistFile>().map_err(|e|e.to_string())?.Load(PCWSTR(wide(path).as_ptr()),STGM_READ).map_err(|e|e.to_string())?;
+        let store:IPropertyStore=link.cast().map_err(|e|e.to_string())?;
+        let value=store.GetValue(&APP_ID).map_err(|e|e.to_string())?;
+        let text=PropVariantToStringAlloc(&value).map_err(|e|e.to_string())?;
+        let actual=text.to_string().map_err(|e|e.to_string());CoTaskMemFree(Some(text.0.cast()));
+        if actual?!=id.to_string() {return Err("shortcut notification identity does not match the package".into());}
+        let value=store.GetValue(&PROPERTYKEY{fmtid:APP_ID.fmtid,pid:26}).map_err(|e|e.to_string())?;
+        if PropVariantToGUID(&value).map_err(|e|e.to_string())?!=super::windows_toast_activation::clsid(&id.to_string()) {
+            return Err("shortcut notification activator does not match the package".into());
+        }
+    }
+    Ok(())
 }
 fn register_for(path: &Path, id: &HSTRING) -> Result<String, String> {
     if !path.is_file() || !path.extension().is_some_and(|ext| ext.eq_ignore_ascii_case("lnk")) {
@@ -44,6 +74,9 @@ fn register_for(path: &Path, id: &HSTRING) -> Result<String, String> {
         file.Load(PCWSTR(path.as_ptr()), STGM_READWRITE).map_err(|e| format!("Cannot load notification shortcut: {e}"))?;
         let store: IPropertyStore = link.cast().map_err(|e| e.to_string())?;
         store.SetValue(&APP_ID, &PROPVARIANT::from(id.to_string().as_str())).map_err(|e| format!("Cannot assign notification identity: {e}"))?;
+        let activator=PROPERTYKEY{fmtid:APP_ID.fmtid,pid:26};
+        let value=windows::Win32::System::Com::StructuredStorage::InitPropVariantFromCLSID(&super::windows_toast_activation::clsid(&id.to_string())).map_err(|e|e.to_string())?;
+        store.SetValue(&activator,&value).map_err(|e|format!("Cannot assign notification activator: {e}"))?;
         store.Commit().map_err(|e| e.to_string())?;
         file.Save(PCWSTR(path.as_ptr()), true).map_err(|e| format!("Cannot save notification shortcut: {e}"))?;
         SHChangeNotify(SHCNE_UPDATEITEM, SHCNF_PATHW | SHCNF_FLUSH, Some(path.as_ptr().cast()), None);
@@ -70,13 +103,14 @@ pub fn state() -> Result<SysValue, String> {
         ("app_id".into(), SysValue::Text(id.to_string())),
         ("setting".into(), SysValue::Text(setting.into())),
         ("error".into(), SysValue::Text(error)),
+        ("actions".into(), SysValue::Bool(std::env::current_exe().ok().is_some_and(|path|super::windows_toast_activation::ready(&path,&id.to_string())))),
     ]))
 }
 
-fn valid_text(value: &str, limit: usize) -> bool {
+pub(super) fn valid_text(value: &str, limit: usize) -> bool {
     value.chars().count() <= limit && value.chars().all(|c| matches!(c, '\t' | '\n' | '\r') || c >= ' ' && c != '\u{fffe}' && c != '\u{ffff}')
 }
-fn document(title: &str, body: &str) -> windows::core::Result<XmlDocument> {
+pub(super) fn document(title: &str, body: &str) -> windows::core::Result<XmlDocument> {
     let doc = XmlDocument::new()?;
     doc.LoadXml(&HSTRING::from("<toast><visual><binding template='ToastGeneric'><text/><text/></binding></visual><audio silent='true'/></toast>"))?;
     let fields = doc.GetElementsByTagName(&HSTRING::from("text"))?;
@@ -98,16 +132,40 @@ fn in_history(id: &HSTRING, tag: &str, xml: &HSTRING) -> windows::core::Result<b
     Ok(false)
 }
 pub fn publish(args: &[SysValue]) -> Result<(), String> {
+    let _apartment=super::windows_system::Apartment::new()?;
     publish_for(args, &app_id()?)
 }
-fn publish_for(args: &[SysValue], id: &HSTRING) -> Result<(), String> {
+pub(super) fn valid_tag(tag:&str)->bool {
+    !tag.is_empty() && tag.len()<=16 && tag.bytes().all(|b|b.is_ascii_alphanumeric() || b==b'-' || b==b'_')
+}
+pub(super) fn validate(args: &[SysValue]) -> Result<(&str,&str,&str), String> {
     let [SysValue::Text(title), SysValue::Text(body), SysValue::Text(tag)] = args else {
         return Err("notifications.publish takes title, body and a stable 1–16 character ASCII tag".into());
     };
     if title.trim().is_empty() || !valid_text(title, 256) || !valid_text(body, 2048)
-        || tag.is_empty() || tag.len() > 16 || !tag.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_') {
+        || !valid_tag(tag) {
         return Err("invalid notification text/tag (title: 256 characters; body: 2048; tag: 1–16 ASCII letters/digits/_/-)".into());
     }
+    Ok((title,body,tag))
+}
+fn publish_for(args: &[SysValue], id: &HSTRING) -> Result<(), String> {
+    let (title,body,tag)=validate(args)?;
+    deliver(id,tag,document(title,body).map_err(|e|e.to_string())?,None)
+}
+pub(super) fn remove(id:&str,tag:&str) {
+    if let Ok(history)=ToastNotificationManager::History() {
+        let _=history.RemoveGroupedTagWithId(&HSTRING::from(tag),&HSTRING::from(GROUP),&HSTRING::from(id));
+    }
+}
+pub(super) fn history_tags(id:&str)->windows::core::Result<std::collections::HashSet<String>> {
+    let history=match ToastNotificationManager::History()?.GetHistoryWithId(&HSTRING::from(id)) {
+        Ok(h)=>h,Err(e) if e.code().0==0x80070490u32 as i32=>return Ok(std::collections::HashSet::new()),Err(e)=>return Err(e),
+    };
+    let mut tags=std::collections::HashSet::new();
+    for toast in history {if toast.Group()?==GROUP {tags.insert(toast.Tag()?.to_string());}}
+    Ok(tags)
+}
+pub(super) fn deliver(id:&HSTRING, tag:&str, doc:XmlDocument,activated:Option<&std::sync::atomic::AtomicBool>) -> Result<(),String> {
     let notifier = ToastNotificationManager::CreateToastNotifierWithId(id).map_err(|e| e.to_string())?;
     match notifier.Setting() {
         Ok(setting) if setting != NotificationSetting::Enabled => return Err(format!("Windows notification publishing is {}", setting_name(setting))),
@@ -116,7 +174,6 @@ fn publish_for(args: &[SysValue], id: &HSTRING) -> Result<(), String> {
         Err(error) if error.code().0 != 0x80070490u32 as i32 => return Err(error.to_string()),
         _ => {}
     }
-    let doc = document(title, body).map_err(|e| e.to_string())?;
     let xml = doc.GetXml().map_err(|e| e.to_string())?;
     if in_history(id, tag, &xml).map_err(|e| e.to_string())? { return Ok(()); }
     let toast = ToastNotification::CreateToastNotification(&doc).map_err(|e| e.to_string())?;
@@ -135,6 +192,8 @@ fn publish_for(args: &[SysValue], id: &HSTRING) -> Result<(), String> {
         // to other applications' notifications or listener consent is required.
         let deadline = Instant::now() + Duration::from_secs(5);
         loop {
+            // A fast click removes the toast before its first history read.
+            if activated.is_some_and(|v|v.load(std::sync::atomic::Ordering::Acquire)) {return Ok(());}
             if let Some(error) = failure.lock().unwrap().clone() { return Err(error); }
             if in_history(id, tag, &xml).map_err(|e| e.to_string())? { return Ok(()); }
             if Instant::now() >= deadline { return Err("Windows did not confirm the reminder in notification history".into()); }

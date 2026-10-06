@@ -5,7 +5,7 @@ param(
 $ErrorActionPreference = 'Stop'
 Push-Location $PSScriptRoot
 try {
-    cargo install --path . --locked --root $Prefix
+    cargo install --path . --locked --features windows-notifications --root $Prefix
     if ($LASTEXITCODE -ne 0) { throw 'The MSVC build failed. Install Rust x64 MSVC and Visual Studio C++ build tools.' }
     if (-not $SkipDxc) {
         & (Join-Path $PSScriptRoot 'scripts/prepare-windows-runtime.ps1') -BinaryDirectory (Join-Path $Prefix 'bin')
