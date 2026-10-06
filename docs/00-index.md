@@ -19,6 +19,7 @@
 | [The logic, in Luau](10-luau-logic.md) | The boundary seen from the logic: what a `.luau` can do, and its sandbox |
 | [Language reference — version 0.1](11-language-reference.md) | **The reference**: lexicon, EBNF grammar, every element with what it accepts, and the version number. Its examples are compiled by `./run-tests.sh` |
 | [Known limitations](08-limitations.md) | Everything that is half-done, with its severity, to cross off one by one |
+| [Scenes an agent can read](12-agents.md) | Design: the scene as a tree, acting by name, `wait`, and `agent: no`. Step 1 towards pleamar as any program's interface |
 
 ## Status (4 Oct 2026)
 
