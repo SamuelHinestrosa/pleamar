@@ -530,6 +530,78 @@ pub fn send(_: Option<&str>, _: &str) -> Result<(), String> {
     Err("this system has nowhere to receive commands yet: the named pipe is missing".into())
 }
 
+/// What became of the agent's cursor sent to a point (see `agent_cursor_to`).
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub enum CursorTrip {
+    Going,
+    Arrived,
+    /// The user stopped the agent (pleamar-wm's «Stop»): nothing more is done.
+    Stopped,
+    /// There is no agent's cursor here (no pleamar-wm, or `agent on` missing).
+    Nowhere,
+}
+
+/// The agent's own cursor of the session (pleamar-wm, `cua-inject v1`), glided
+/// to (x, y) of this program's window, in the pixels of its picture: whoever
+/// watches sees it reach what it is about to press before it is pressed. Fast,
+/// as a decided hand: 60 to 180 ms by how far it goes; `glide: false`, at once
+/// (the steps of a drag, which already come one by one).
+#[cfg(unix)]
+pub fn agent_cursor_to(x: f32, y: f32, glide: bool) -> std::sync::Arc<std::sync::Mutex<CursorTrip>> {
+    use std::io::{BufRead, BufReader, Write};
+    let trip = std::sync::Arc::new(std::sync::Mutex::new(CursorTrip::Going));
+    let set = trip.clone();
+    let path = std::env::var("CUA_INJECT_SOCKET").ok().filter(|p| !p.is_empty());
+    std::thread::spawn(move || {
+        let end = |t| *set.lock().unwrap() = t;
+        let Some(stream) = path.and_then(|p| std::os::unix::net::UnixStream::connect(p).ok()) else { return end(CursorTrip::Nowhere) };
+        let _ = stream.set_read_timeout(Some(std::time::Duration::from_millis(400)));
+        let (Ok(mut w), mut r) = (stream.try_clone(), BufReader::new(stream)) else { return end(CursorTrip::Nowhere) };
+        let mut say = |l: &str| -> Option<String> {
+            writeln!(w, "{l}").ok()?;
+            let mut reply = String::new();
+            r.read_line(&mut reply).ok()?;
+            Some(reply.trim_end().to_owned())
+        };
+        if say("cua-inject v1").is_none() {
+            return end(CursorTrip::Nowhere);
+        }
+        let me = std::process::id();
+        if !glide {
+            let reply = say(&format!("m root:{me} 0 {x:.1} {y:.1}"));
+            return end(if reply.as_deref() == Some("err stopped-by-user") { CursorTrip::Stopped } else { CursorTrip::Arrived });
+        }
+        let nums = |r: Option<String>, head: &str| -> Option<Vec<f32>> { r?.strip_prefix(head).map(|v| v.split_whitespace().filter_map(|n| n.parse().ok()).collect()) };
+        let (at, rect) = (nums(say("p 0"), "at "), nums(say(&format!("r {me}")), "rect "));
+        // From where it is if that is on this window; else from a little before.
+        let from = match (at.filter(|a| a.len() >= 2), rect.filter(|r| r.len() >= 4)) {
+            (Some(a), Some(r)) if a[0] >= r[0] && a[1] >= r[1] && a[0] < r[0] + r[2] && a[1] < r[1] + r[3] => (a[0] - r[0], a[1] - r[1]),
+            _ => (x - 40.0, y - 26.0),
+        };
+        let far = (x - from.0).hypot(y - from.1);
+        let total = (60.0 + far * 0.15).clamp(60.0, 180.0);
+        let steps = if far < 2.0 { 1 } else { ((total / 12.0).round() as u32).max(3) };
+        for k in 1..=steps {
+            let t = k as f32 / steps as f32;
+            let e = t * t * (3.0 - 2.0 * t);
+            let reply = say(&format!("m root:{me} 0 {:.1} {:.1}", from.0 + (x - from.0) * e, from.1 + (y - from.1) * e));
+            if reply.as_deref() == Some("err stopped-by-user") {
+                return end(CursorTrip::Stopped);
+            }
+            if k < steps {
+                std::thread::sleep(std::time::Duration::from_millis((total / steps as f32) as u64));
+            }
+        }
+        end(CursorTrip::Arrived)
+    });
+    trip
+}
+
+#[cfg(not(unix))]
+pub fn agent_cursor_to(_: f32, _: f32, _: bool) -> std::sync::Arc<std::sync::Mutex<CursorTrip>> {
+    std::sync::Arc::new(std::sync::Mutex::new(CursorTrip::Nowhere))
+}
+
 /// The system clipboard. `arboard` speaks it on all three systems; it lives
 /// here so the core keeps knowing nothing about any of them.
 pub fn clipboard_read() -> Option<String> {

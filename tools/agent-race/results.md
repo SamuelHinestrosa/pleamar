@@ -48,4 +48,4 @@ deciding included. Written by hand.
 | --- | --- | --- | --- |
 | 2026-10-06 | 21a962e+ | `pleamar-wm agent press PID NAME`, whose cursor glides to the thing first so it is seen, against `pleamar --say NAME "press …"` | 566 ms against 220 ms, medians of three: the glide costs ~350 ms a press, for being seen |
 | 2026-10-06 | 21a962e+ | `pleamar-wm agent windows`, asking each pleamar socket who it is | 12 ms (the first try, waiting on a socket that is no scene's, took 68 s: now skipped, and `hello` waits 300 ms at most) |
-
+| 2026-10-06 | f278f4e+ | The cursor led by the scene's own hand, before it presses (60–180 ms glide, the press waits for it), both ways | `agent press` 314 ms, `--say press` 319 ms, medians of four: the cursor is always at the press, and 250 ms less than gliding first from pleamar-wm |

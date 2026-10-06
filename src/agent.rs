@@ -139,6 +139,10 @@ fn area(b: [f32; 4]) -> f32 {
     (b[2] - b[0]).max(0.0) * (b[3] - b[1]).max(0.0)
 }
 
+pub fn inside_box(b: [f32; 4], p: (f32, f32)) -> bool {
+    inside(b, p.0, p.1)
+}
+
 fn inside(b: [f32; 4], x: f32, y: f32) -> bool {
     x >= b[0] && x <= b[2] && y >= b[1] && y <= b[3]
 }

@@ -1555,6 +1555,18 @@ pub fn run(
                 // One step a frame, as a hand: in, down, up, out. A wait lets frames go by.
                 while let Some(step) = a.steps.front().cloned() {
                     match step {
+                        Step::Cursor(trip, until) => match *trip.lock().unwrap() {
+                            crate::platform::CursorTrip::Going if now < until => break,
+                            crate::platform::CursorTrip::Stopped => {
+                                failed = Some("? the user stopped the agent: stop here and tell them where you left it".to_owned());
+                                break;
+                            }
+                            _ => {
+                                a.hand = Some(a.from);
+                                a.steps.pop_front();
+                                break;
+                            }
+                        },
                         Step::Pause(d) => {
                             a.steps[0] = Step::Wait(now + d);
                             break;
@@ -1584,9 +1596,18 @@ pub fn run(
                         },
                         Step::Point => match crate::agent::reach_point(&scene, c, a.zone, &sight) {
                             Ok(Some(p)) => {
-                                a.hand = Some(p);
                                 a.from = p;
                                 a.steps.pop_front();
+                                // The agent's cursor there first, in the pixels of the window's
+                                // picture; the hand comes in when it arrives, so what lights up
+                                // lights up under it.
+                                match sheets.iter().find(|s| s.open && s.view.popup.is_none() && crate::agent::inside_box(s.view.bounds(), p)) {
+                                    Some(s) => {
+                                        let at = ((p.0 - s.view.origin.0) * s.scale, (p.1 - s.view.origin.1) * s.scale);
+                                        a.steps.push_front(Step::Cursor(crate::platform::agent_cursor_to(at.0, at.1, true), now + Duration::from_millis(300)));
+                                    }
+                                    None => a.hand = Some(p),
+                                }
                                 break;
                             }
                             Ok(None) => {
@@ -1599,7 +1620,12 @@ pub fn run(
                             }
                         },
                         Step::Move(dx, dy) => {
-                            a.hand = Some((a.from.0 + dx, a.from.1 + dy));
+                            let p = (a.from.0 + dx, a.from.1 + dy);
+                            a.hand = Some(p);
+                            // The agent's cursor goes with the hand, step by step.
+                            if let Some(s) = sheets.iter().find(|s| s.open && s.view.popup.is_none() && crate::agent::inside_box(s.view.bounds(), p)) {
+                                crate::platform::agent_cursor_to((p.0 - s.view.origin.0) * s.scale, (p.1 - s.view.origin.1) * s.scale, false);
+                            }
                             a.steps.pop_front();
                             break;
                         }
@@ -4445,6 +4471,9 @@ enum Step {
     Down(u8),
     Up(u8),
     Wheel(f32),
+    /// The session's agent cursor is on its way to the hand: the press waits
+    /// for it to arrive (300 ms at most), so it is never behind the action.
+    Cursor(std::sync::Arc<std::sync::Mutex<crate::platform::CursorTrip>>, Instant),
     /// So long from when it is reached: it becomes a `Wait`.
     Pause(Duration),
     Wait(Instant),

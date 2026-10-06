@@ -75,7 +75,7 @@ Implemented (step 2, 6 Oct 2026).
 
 `submit FIELD TEXT` was there before and stays: it sets the text and presses Enter without going through the field.
 
-**It goes through the same path as a hand**, not round it. A `press` is the hand entering the zone in one frame, the button going down in the next, coming up 40 ms later, and the hand leaving: the zone's `hover` and `pressed` springs move, the touch ripples where a finger would, `pointer.x` and `local.x` have their values, its rules fire in their order and the logic hears `press:save` as it always does. While it lasts the pointer is the hand; the user's comes back after. That is the point: a scene does not have to be written twice, and what an agent does is what a person would have done. `emit` and `fact` stay for scripts that want to skip all that.
+**It goes through the same path as a hand**, not round it. In a pleamar-wm session the agent's own cursor glides there first (section 7); then a `press` is the hand entering the zone in one frame, the button going down in the next, coming up 40 ms later, and the hand leaving: the zone's `hover` and `pressed` springs move, the touch ripples where a finger would, `pointer.x` and `local.x` have their values, its rules fire in their order and the logic hears `press:save` as it always does. While it lasts the pointer is the hand; the user's comes back after. That is the point: a scene does not have to be written twice, and what an agent does is what a person would have done. `emit` and `fact` stay for scripts that want to skip all that.
 
 **The name** is the one `describe` gives: `hit#r3`, `knob.2`, and in a copy per monitor without its `#screen0`.
 
@@ -147,7 +147,7 @@ Implemented (step 5, 6 Oct 2026).
 - A scene answers **`hello`** with who it is: `pleamar 0.2.24 · scene notes · pid 4521 · language 0.2`. pleamar-wm asks every socket in its programs' folder (`PLEAMAR_SOCKETS`) and so knows which window is which scene.
 - **`pleamar-wm agent windows`** marks them: `· pleamar scene notes: tree, press`.
 - By the window's PID, as everything else in `agent`: **`tree PID [json]`**, **`press PID NAME`**, **`wait PID CONDITION`**, **`watch PID [SECONDS]`**, and **`say PID ORDER`** for the rest (`type`, `drag`, `hold`, `wheel`, `key`). The agent does not need to know what the scene is called.
-- **`press` is seen**: before the scene presses, the agent's own cursor (the mint one with «agent» beside it) glides to the centre of the thing's box, as `move` does. Whoever watches sees what it is about to touch; the press itself is the scene's, by name.
+- **The press is seen, and the cursor is never behind it**: the scene's hand itself, before it goes down, glides the session's agent cursor (the mint one with «agent» beside it) to the point it will press, in 60 to 180 ms by how far, and waits for it to arrive (300 ms at most); in a drag the cursor goes with each step. So it happens however the press was asked —`pleamar-wm agent press`, `pleamar --say … press`—, and if the user has pressed «Stop» the press is refused: `? the user stopped the agent`.
 - Every other window keeps `look` and `click`.
 - **pleamar-wm's own shell is a pleamar scene**, so its socket (`session`, and `wm` beside its programs) answers `describe` and `press` too. **Still to be checked**: in a headless session it told only an empty main surface, not the dock nor the bar; why is not known yet.
 
