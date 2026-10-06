@@ -1,0 +1,8 @@
+// expect: ok
+// A text that can be selected with the mouse and copied, with its own
+// colour behind what is selected.
+scene SelectableText {
+    surface { size: 360, 120; kind: window; title: "selectable" }
+    text said = "Drag over these words, double click one, or click three times for all of it."
+    text said { at: 12, 12; width: 336; size: 14; color: #e8ecea; selectable: true; selection: #2f5a50 }
+}
