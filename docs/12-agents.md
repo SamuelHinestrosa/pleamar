@@ -1,6 +1,6 @@
 # Scenes an agent can read — design
 
-**Status:** steps 1 to 4 (`describe`, acting by name, `wait`, `watch`, `label:`, `agent:`) implemented on 6 Oct 2026; the rest is design. Each step is measured with [the agent race](../tools/agent-race/results.md). Agreed with Abel on 6 Oct 2026 as the first step towards pleamar as a way to give **any program** its interface. This note is the first stretch of that road: what the scene already knows, handed to whoever drives it from outside.
+**Status:** steps 1 to 5 (`describe`, acting by name, `wait`, `watch`, `label:`, `agent:`, and pleamar-wm's `agent tree/press`) implemented on 6 Oct 2026; the rest is design. Each step is measured with [the agent race](../tools/agent-race/results.md). Agreed with Abel on 6 Oct 2026 as the first step towards pleamar as a way to give **any program** its interface. This note is the first stretch of that road: what the scene already knows, handed to whoever drives it from outside.
 
 ## 1. Why
 
@@ -142,9 +142,14 @@ A zone with `agent: no` is described (an agent knows it is there and can tell th
 
 ## 7. In pleamar-wm
 
-- pleamar answers `hello` with its PID, its scene and its language version. With that, `pleamar-wm agent windows` marks which windows speak pleamar.
-- New commands that pass straight through: `agent tree PID`, `agent press PID NAME`, `agent type PID FIELD TEXT`, `agent wait PID EXPR`, `agent watch PID`. Every other window keeps `look` and `click`.
-- **pleamar-wm's own shell is a pleamar scene**: its dock, its top bar and the overview become readable and touchable by name with this, for free.
+Implemented (step 5, 6 Oct 2026).
+
+- A scene answers **`hello`** with who it is: `pleamar 0.2.24 · scene notes · pid 4521 · language 0.2`. pleamar-wm asks every socket in its programs' folder (`PLEAMAR_SOCKETS`) and so knows which window is which scene.
+- **`pleamar-wm agent windows`** marks them: `· pleamar scene notes: tree, press`.
+- By the window's PID, as everything else in `agent`: **`tree PID [json]`**, **`press PID NAME`**, **`wait PID CONDITION`**, **`watch PID [SECONDS]`**, and **`say PID ORDER`** for the rest (`type`, `drag`, `hold`, `wheel`, `key`). The agent does not need to know what the scene is called.
+- **`press` is seen**: before the scene presses, the agent's own cursor (the mint one with «agent» beside it) glides to the centre of the thing's box, as `move` does. Whoever watches sees what it is about to touch; the press itself is the scene's, by name.
+- Every other window keeps `look` and `click`.
+- **pleamar-wm's own shell is a pleamar scene**, so its socket (`session`, and `wm` beside its programs) answers `describe` and `press` too. **Still to be checked**: in a headless session it told only an empty main surface, not the dock nor the bar; why is not known yet.
 
 ## 8. What comes after, and why the tree is shaped like this
 
@@ -161,7 +166,7 @@ A zone with `agent: no` is described (an agent knows it is there and can tell th
 | 2 ✅ | `press`, `hold`, `drag`, `wheel`, `type`, `key`, with their refusals and "what happened" | `src/agent.rs`'s tests (reading an action, being refused); every action by hand on the race's window in a headless pleamar-wm; the race, live |
 | 3 ✅ | `wait` and `watch` | `a_wait_reads_the_scene_as_it_is`; by hand in a headless pleamar-wm, watching while pressing; the race now saves, which takes 0.8 s |
 | 4 ✅ | `agent: no` and `agent: hidden` over the socket | `a_hand_is_refused_what_a_person_could_not_do_either` |
-| 5 | `hello`, and pleamar-wm's `agent tree/press/type/wait/watch` | Headless pleamar-wm with Marea |
+| 5 ✅ | `hello`, and pleamar-wm's `agent tree/press/wait/watch/say` | In the live session: `windows` marking the race's window, `tree`, `press` with the cursor gliding there; the race |
 | 6 | The seat: pleamar reads `wl_seat.name`, pleamar-wm uses the agent seat for pleamar windows, the press is dropped | Headless pleamar-wm: `agent click` on an `agent: no` zone does nothing |
 | 7 | `role:`, `value:` | Tests |
 

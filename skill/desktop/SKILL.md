@@ -21,7 +21,7 @@ yourself unless they ask.
 ## The loop: look, act, look
 
 ```sh
-pleamar-wm agent windows                 # every window: its name (PID, or PID.N for one of a program's several), program, title, box, monitor, keyboard
+pleamar-wm agent windows                 # every window: its name (PID, or PID.N for one of a program's several), program, title, box, monitor, keyboard, and «pleamar scene» for one that can be asked
 pleamar-wm agent open firefox            # start a program for your work: see below
 pleamar-wm agent look PID [FILE]         # a picture of that window; prints FILE WxH
 pleamar-wm agent click PID X Y           # X, Y are pixels of that picture
@@ -66,34 +66,34 @@ pleamar-wm agent help
    you work, the user's monitor glows; without it the glow waits a minute and
    a half in case you are only thinking.
 
-## A pleamar program: ask it, and act by name
+## A pleamar window: ask it, and act by name
 
-A window or panel made with pleamar (its program is `pleamar`) can be asked
-what is on it and used by name, with no picture and no coordinates. Its name is
-its scene's file name, and the sockets of the running ones are in
-`$PLEAMAR_SOCKETS` (`NAME.sock`):
+`windows` marks a window made with pleamar with «pleamar scene NAME». Such a
+window is asked what is on it and used by name, with no picture and no
+coordinates:
 
 ```sh
-pleamar --say NAME describe              # every surface on screen: each button, slider, field, list, item and text
-pleamar --say NAME describe json         # the same, as data
-pleamar --say NAME "press save"          # by the name describe gives; also: press X right 2, hold X
-pleamar --say NAME "type query some words"
-pleamar --say NAME "drag knob.1 0 -40"   # and wheel X 3, key escape, key ctrl+z
-pleamar --say NAME 'wait status == "Saved" 5s'   # answers as soon as it holds: no looking again and again
-pleamar --say NAME "watch 10"            # a line for each thing that happens, for 10 s
+pleamar-wm agent tree PID                       # every button, slider, field, list, item and text: name, what it says, state, box
+pleamar-wm agent press PID save                 # your cursor glides to it and it is pressed; also: press PID X right 2
+pleamar-wm agent wait PID 'status == "Saved" 5s'  # answers as soon as it holds: no looking again and again
+pleamar-wm agent watch PID 10                   # a line for each thing that happens on it, for 10 s
+pleamar-wm agent say PID "type query some words"  # any other order: drag knob.1 0 -40, hold X, wheel X 3, key escape
 ```
 
-Each line of `describe` is a thing's name, what it is, what it says («Save»),
-its state (`inactive`, `covered by X`, `off view`, `a person's`) and its box.
+(Outside pleamar-wm, `pleamar --say NAME describe`, `"press save"`, `wait …`
+reach the scene by its name, in `$PLEAMAR_SOCKETS`.)
+
+Each line of `tree` is a thing's name, what it is, what it says («Save»), its
+state (`inactive`, `covered by X`, `off view`, `a person's`) and its box.
 **Each action answers with what happened** —events, facts and texts that
 changed, lists that scrolled, surfaces that opened—, so you do not need to look
-again; a row `off view` is scrolled into sight by itself. For what takes
-time —saving, loading, a search— use `wait` on what the window will say or hold
-when it is done, instead of looking until it shows. What cannot be done
-is refused with the reason (`? save is inactive`). **`a person's` means the
-scene keeps it for the user's hand** (`agent: no`): it is refused, ask them to
-press it. Prefer this to `look` and `click` for a pleamar window: it is several
-times faster and cannot miss.
+again; a row `off view` is scrolled into sight by itself. For what takes time
+—saving, loading, a search— `wait` on what the window will say or hold when it
+is done, instead of looking until it shows. What cannot be done is refused with
+the reason (`? save is inactive`). **`a person's` means the scene keeps it for
+the user's hand** (`agent: no`): it is refused, ask them to press it. Prefer
+this to `look` and `click` for a pleamar window: it is several times faster and
+cannot miss.
 
 ## What works best
 

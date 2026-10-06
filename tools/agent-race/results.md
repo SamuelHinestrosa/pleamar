@@ -41,3 +41,11 @@ deciding included. Written by hand.
 | 2026-10-06 | 9283a89+ | Claude Opus 5.5 | 16.4 s, 3 pictures of 829×522 (~1700 tokens) | 7.2 s, 814 characters (~250 tokens) | No picture to read; each click and its check in one command. B still clicks at the centre of `describe`'s box: `press` does not exist yet |
 | 2026-10-06 | 3c8606d+ | Claude Opus 5.5 | (as above: 16.4 s) | 3.0 s one command a step, 3.8 s with both presses in one; describe once (~200 tokens) and each `press` answering with what changed (~50 tokens) | `press` by name: no picture, no coordinates, no second describe to check |
 | 2026-10-06 | f39e725+ | Claude Opus 5.5 | Open, new **and save**: 22.7 s, 5 pictures (~2900 tokens), clicking and looking in one command each | 5.4 s, one command a step: describe, three `press`, `wait status == "Saved"` (~350 tokens) | `wait`: the save is asked about once, not looked at until it shows |
+
+## Other measures
+
+| Date | Commit | What | Result |
+| --- | --- | --- | --- |
+| 2026-10-06 | 21a962e+ | `pleamar-wm agent press PID NAME`, whose cursor glides to the thing first so it is seen, against `pleamar --say NAME "press …"` | 566 ms against 220 ms, medians of three: the glide costs ~350 ms a press, for being seen |
+| 2026-10-06 | 21a962e+ | `pleamar-wm agent windows`, asking each pleamar socket who it is | 12 ms (the first try, waiting on a socket that is no scene's, took 68 s: now skipped, and `hello` waits 300 ms at most) |
+

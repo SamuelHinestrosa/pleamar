@@ -297,6 +297,7 @@ pub fn run_with(options: Vec<String>) {
     {
         let name = std::path::Path::new(&a.scene).file_stem().map_or(a.scene.clone(), |n| n.to_string_lossy().into_owned());
         let tx = Mutex::new((to_render.clone(), to_logic_for_commands));
+        let me = name.clone();
         platform::listen_for_commands(&name, std::sync::Arc::new(move |line: String, out: &mut dyn FnMut(&str) -> bool| {
             // Copies, and the lock let go at once: a `wait` that lasts does not hold up the others.
             let (tx, to_logic) = {
@@ -307,6 +308,10 @@ pub fn run_with(options: Vec<String>) {
             let mut p = line.trim().splitn(3, ' ');
             let (what, who, rest) = (p.next().unwrap_or(""), p.next().unwrap_or(""), p.next().unwrap_or(""));
             let after = line.trim().split_once(' ').map_or("", |x| x.1);
+            // Who it is: what a window manager asks to know which window is which scene.
+            if what == "hello" {
+                return Some(format!("pleamar {} · scene {me} · pid {} · language {}.{}", env!("CARGO_PKG_VERSION"), std::process::id(), language::VERSION.0, language::VERSION.1));
+            }
             // `wait saving == false 3s`: answered as soon as it holds, or when it is late.
             if what == "wait" {
                 let (question, answer) = std::sync::mpsc::channel();
@@ -380,7 +385,7 @@ pub fn run_with(options: Vec<String>) {
                 "quit" => quit_after_render(tx),
                 _ => {
                     eprintln!("orders · I don't understand '{line}'");
-                    return Some(format!("? I don't understand '{}': emit, fact, text, submit, focus, get, describe, press, hold, drag, wheel, type, key, wait, watch, probe, quit", line.trim()));
+                    return Some(format!("? I don't understand '{}': emit, fact, text, submit, focus, get, describe, press, hold, drag, wheel, type, key, wait, watch, hello, probe, quit", line.trim()));
                 }
             };
             None
