@@ -15,6 +15,8 @@ mod shaders;
 mod shapes;
 mod lsp;
 pub mod gpu;
+#[cfg(target_os = "windows")]
+pub mod windows_texture;
 mod agent;
 #[cfg(target_os = "linux")]
 pub mod dmabuf;

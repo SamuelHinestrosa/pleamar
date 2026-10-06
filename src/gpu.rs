@@ -1702,6 +1702,8 @@ pub struct Gpu {
     copies: std::cell::RefCell<Vec<(u64, u32, wgpu::Extent3d, bool)>>,
     #[cfg(target_os = "linux")]
     yuv: Option<crate::dmabuf::YuvToRgb>,
+    #[cfg(target_os = "windows")]
+    windows_copies: std::cell::RefCell<Vec<(wgpu::Texture, u32, wgpu::Extent3d)>>,
     last_submission: std::cell::RefCell<Option<Sent>>,
     /// The layouts of the card's memory it can paint BGRA in, for a platform
     /// that lends its own textures (a monitor driven directly).
@@ -1841,7 +1843,7 @@ impl Gpu {
         }).create_view(&Default::default());
         let no_backdrop_group = Self::build_backdrop_group(&device, &pipeline, &nothing, &nothing, &sampler);
         #[allow(unused_mut)]
-        let mut g = Gpu { lens, no_backdrop_group, can_copy, adapter, device, queue, format, alpha, non_blocking, pipeline, particles, screen, multiply, erase, pipeline_layout, user_code: base, shapes_buffer, elements_buffer, points_buffer, stops_buffer, atlas, atlas_view, windows, windows_view, windows_dims: (1, 1, 1), #[cfg(target_os = "linux")] dmabufs: Default::default(), #[cfg(target_os = "linux")] copies: Default::default(), #[cfg(target_os = "linux")] yuv: None, last_submission: Default::default(), render_modifiers: Vec::new(), sampler, capacity: (INITIAL_SHAPES * PER_SHAPE, INITIAL_ELEMENTS * PER_ELEMENT, INITIAL_POINTS, INITIAL_STOPS), limit, limit_warned: false, scene_group, no_layers_group };
+        let mut g = Gpu { lens, no_backdrop_group, can_copy, adapter, device, queue, format, alpha, non_blocking, pipeline, particles, screen, multiply, erase, pipeline_layout, user_code: base, shapes_buffer, elements_buffer, points_buffer, stops_buffer, atlas, atlas_view, windows, windows_view, windows_dims: (1, 1, 1), #[cfg(target_os = "linux")] dmabufs: Default::default(), #[cfg(target_os = "linux")] copies: Default::default(), #[cfg(target_os = "linux")] yuv: None, #[cfg(target_os = "windows")] windows_copies: Default::default(), last_submission: Default::default(), render_modifiers: Vec::new(), sampler, capacity: (INITIAL_SHAPES * PER_SHAPE, INITIAL_ELEMENTS * PER_ELEMENT, INITIAL_POINTS, INITIAL_STOPS), limit, limit_warned: false, scene_group, no_layers_group };
         #[cfg(target_os = "linux")]
         if first.is_none() {
             g.render_modifiers = g.bgra_modifiers(ash::vk::FormatFeatureFlags::COLOR_ATTACHMENT);
@@ -2341,6 +2343,28 @@ impl Gpu {
         Ok(remade)
     }
 
+    #[cfg(target_os = "windows")]
+    pub fn copy_windows_texture(&mut self, layer: u32, image: &std::sync::Arc<crate::windows_texture::SharedTexture>) -> Result<bool, String> {
+        let size = image.size();
+        if size.0 > self.device.limits().max_texture_dimension_2d || size.1 > self.device.limits().max_texture_dimension_2d {
+            return Err("native capture exceeds the renderer's texture limit".into());
+        }
+        let source = crate::windows_texture::SharedTexture::import(image, &self.device).map_err(|e| e.to_string())?;
+        let grew = self.window_room(layer, size);
+        self.windows_copies.borrow_mut().push((source, layer, wgpu::Extent3d {
+            width:size.0, height:size.1, depth_or_array_layers:1 }));
+        Ok(grew)
+    }
+
+    #[cfg(target_os = "windows")]
+    fn record_copies(&self, encoder: &mut wgpu::CommandEncoder) {
+        for (source, layer, size) in self.windows_copies.borrow_mut().drain(..) {
+            encoder.copy_texture_to_texture(source.as_image_copy(), wgpu::TexelCopyTextureInfo {
+                texture:&self.windows, mip_level:0, origin:wgpu::Origin3d {x:0,y:0,z:layer}, aspect:wgpu::TextureAspect::All
+            }, size);
+        }
+    }
+
     /// The copies still waiting for a painting, in this encoder.
     #[cfg(target_os = "linux")]
     fn record_copies(&self, encoder: &mut wgpu::CommandEncoder) {
@@ -2364,7 +2388,11 @@ impl Gpu {
     /// If no painting took the copies this round, they go on their own.
     pub fn flush_copies(&self) {
         #[cfg(target_os = "linux")]
-        if !self.copies.borrow().is_empty() {
+        let pending = !self.copies.borrow().is_empty();
+        #[cfg(target_os = "windows")]
+        let pending = !self.windows_copies.borrow().is_empty();
+        #[cfg(any(target_os = "linux", target_os = "windows"))]
+        if pending {
             let mut encoder = self.device.create_command_encoder(&Default::default());
             self.record_copies(&mut encoder);
             self.queue.submit(Some(encoder.finish()));
@@ -2671,7 +2699,7 @@ impl Gpu {
         };
         let view = frame_texture.create_view(&Default::default());
         let mut encoder = self.device.create_command_encoder(&Default::default());
-        #[cfg(target_os = "linux")]
+        #[cfg(any(target_os = "linux", target_os = "windows"))]
         self.record_copies(&mut encoder);
         // What the last capture of what is behind left, before painting with it.
         let scale = l.scale;

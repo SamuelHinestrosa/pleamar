@@ -2211,6 +2211,9 @@ pub enum PieceContent {
     Kept,
     /// BGRA, premultiplied, opaque if the program said so.
     Pixels(Vec<u8>),
+    /// Immutable native capture pixels, retained until GPU copies finish.
+    #[cfg(target_os = "windows")]
+    Windows(std::sync::Arc<crate::windows_texture::SharedTexture>),
     /// Already on the card: a program that draws with the GPU hands it over
     /// as it is, and it is copied there without passing through here.
     #[cfg(unix)]
@@ -2244,6 +2247,9 @@ pub struct DmabufPlane {
 /// are in the window's own pixels, from its corner.
 #[derive(Debug)]
 pub enum ToNest {
+    /// The renderer's actual adapter/device, or a request for CPU fallback.
+    #[cfg(target_os = "windows")]
+    WindowsGpu(Option<crate::windows_texture::SharedDevice>),
     Size(i32, i32),
     /// Window images needed by open scene surfaces, including view-only copies.
     /// This is resource demand, not an input target or native window placement.

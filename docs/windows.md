@@ -26,6 +26,11 @@ and per-session controls were added and validated subsequently, as described
 below. Per-player `media.volume` and pleamar-wm WGC previews are separate
 capabilities.
 
+The native WM provider can now share same-adapter WGC images with the D3D12
+renderer without a CPU pixel roundtrip. See [native window capture transport](windows-shared-capture.md)
+for ownership, fallback, resource limits and validation. This is separate from
+the small cached images exposed by the `thumbnails` service below.
+
 Asynchronous commands keep at most 16 service threads with bounded serial
 queues. A completed family can give its slot to another; visiting more than
 16 features over time no longer exhausts a scene's worker slots. Threads with

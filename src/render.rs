@@ -52,9 +52,32 @@ struct NestPiece {
     opaque: bool,
     pixels: Vec<u8>,
     buffer: Option<u64>,
+    #[cfg(target_os = "windows")]
+    shared: Option<std::sync::Arc<crate::windows_texture::SharedTexture>>,
     #[cfg(unix)]
     fresh: Option<crate::scene::DmabufPiece>,
     uploaded: bool,
+}
+
+#[derive(Default)]
+struct NestLoans {
+    buffers: Vec<u64>,
+    #[cfg(target_os = "windows")]
+    images: Vec<std::sync::Arc<crate::windows_texture::SharedTexture>>,
+}
+impl NestLoans {
+    fn is_empty(&self) -> bool {
+        #[cfg(target_os = "windows")]
+        if !self.images.is_empty() { return false; }
+        self.buffers.is_empty()
+    }
+}
+impl NestPiece {
+    fn has_pixels(&self) -> bool {
+        #[cfg(target_os = "windows")]
+        if self.shared.is_some() { return true; }
+        self.buffer.is_some() || !self.pixels.is_empty()
+    }
 }
 
 /// The workspaces of the scene's windows: which one each window is on, which
@@ -601,10 +624,10 @@ pub fn run(
     // Where the windows' instructions are, by how many instructions there were.
     let mut window_instrs: Option<(usize, Vec<usize>)> = None;
     // The buffers copied this round, and the copy to wait for before handing them back.
-    let mut nest_copied: (Vec<u64>, bool) = (Vec::new(), false);
+    let mut nest_copied: (NestLoans, bool) = (NestLoans::default(), false);
     // Programs' buffers the card is still copying, by the work they went in:
     // they go back as soon as it says it has finished, and nobody waits for it.
-    let mut nest_lent: Vec<(crate::gpu::Sent, Vec<u64>)> = Vec::new();
+    let mut nest_lent: Vec<(crate::gpu::Sent, NestLoans)> = Vec::new();
     let mut last_card_ask = Instant::now();
     // Where each window was last told to be seen.
     let mut nest_shown: std::collections::HashMap<usize, (String, [i32; 4])> = Default::default();
@@ -676,7 +699,7 @@ pub fn run(
                     nest_lent.retain(|(index, buffers)| {
                         let done = index.finished() || (ask && g.is_done(index));
                         if done {
-                            send(ToNest::Released(buffers.clone()));
+                            if !buffers.buffers.is_empty() { send(ToNest::Released(buffers.buffers.clone())); }
                         }
                         !done
                     });
@@ -714,7 +737,7 @@ pub fn run(
             nest_lent.retain(|(index, buffers)| {
                 let done = index.finished() || (ask && g.is_done(index));
                 if done {
-                    send(ToNest::Released(buffers.clone()));
+                    if !buffers.buffers.is_empty() { send(ToNest::Released(buffers.buffers.clone())); }
                 }
                 !done
             });
@@ -1317,7 +1340,7 @@ pub fn run(
                                             nest_layers.push(true);
                                         }
                                         nest_layers[layer] = true;
-                                        NestPiece { id: p.id, layer: layer as u32, at: p.at, size: p.size, px: p.px, src: p.src, opaque: false, pixels: Vec::new(), buffer: None, #[cfg(unix)] fresh: None, uploaded: false }
+                                        NestPiece { id: p.id, layer: layer as u32, at: p.at, size: p.size, px: p.px, src: p.src, opaque: false, pixels: Vec::new(), buffer: None, #[cfg(target_os = "windows")] shared: None, #[cfg(unix)] fresh: None, uploaded: false }
                                     });
                                     piece.at = p.at;
                                     piece.size = p.size;
@@ -1330,8 +1353,18 @@ pub fn run(
                                             if let Some(before) = piece.fresh.take() {
                                                 unread.push(before.buffer);
                                             }
+                                            #[cfg(target_os = "windows")]
+                                            { piece.shared = None; }
                                             piece.pixels = px;
                                             piece.buffer = None;
+                                            piece.uploaded = false;
+                                        }
+                                        #[cfg(target_os = "windows")]
+                                        PieceContent::Windows(image) => {
+                                            piece.pixels = Vec::new();
+                                            piece.buffer = None;
+                                            piece.px = image.size();
+                                            piece.shared = Some(image);
                                             piece.uploaded = false;
                                         }
                                         #[cfg(unix)]
@@ -2912,6 +2945,13 @@ pub fn run(
                         send(ToNest::Gpu { device, formats });
                     }
                 }
+                #[cfg(target_os = "windows")]
+                if !nest_gpu_told {
+                    nest_gpu_told = true;
+                    if let Some(send) = &nest {
+                        send(ToNest::WindowsGpu(crate::windows_texture::SharedDevice::from_wgpu(g.device())));
+                    }
+                }
                 let mut released: Vec<u64> = Vec::new();
                 let mut copied_any = false;
                 let mut again = true;
@@ -2923,7 +2963,24 @@ pub fn run(
                                 continue;
                             }
                             p.uploaded = true;
-                            let grew = if let Some(buffer) = p.buffer {
+                            #[cfg(target_os = "windows")]
+                            let shared_grew = if let Some(image) = &p.shared {
+                                match g.copy_windows_texture(p.layer, image) {
+                                    Ok(grew) => {
+                                        nest_copied.0.images.push(image.clone());
+                                        copied_any = true;
+                                        Some(grew)
+                                    },
+                                    Err(error) => {
+                                        eprintln!("windows · GPU capture failed, requesting CPU fallback: {error}");
+                                        if let Some(send) = &nest { send(ToNest::WindowsGpu(None)); }
+                                        Some(false)
+                                    },
+                                }
+                            } else { None };
+                            #[cfg(not(target_os = "windows"))]
+                            let shared_grew: Option<bool> = None;
+                            let grew = if let Some(grew) = shared_grew { grew } else if let Some(buffer) = p.buffer {
                                 #[cfg(target_os = "linux")]
                                 {
                                     let fresh = p.fresh.take();
@@ -2970,7 +3027,7 @@ pub fn run(
                 }
                 // The programs' buffers go back once the card has copied them:
                 // that is waited for after painting, when it is long done.
-                nest_copied.0.extend(released);
+                nest_copied.0.buffers.extend(released);
                 nest_copied.1 |= copied_any;
                 let (dw, dh) = g.windows_dims();
                 draw.window_tex = nest_windows
@@ -2979,7 +3036,7 @@ pub fn run(
                         let pieces: Vec<(u32, [f32; 4], [f32; 4], bool)> = w
                             .pieces
                             .iter()
-                            .filter(|p| p.buffer.is_some() || !p.pixels.is_empty())
+                            .filter(|p| p.has_pixels())
                             .map(|p| {
                                 // Its pixels (the part it shows) into its size, in the window's units.
                                 let (pw, ph) = (p.size.0 as f32, p.size.1 as f32);
@@ -3678,6 +3735,13 @@ pub fn run(
             // The copies went with the painting; if nothing was painted, on their own.
             g.flush_copies();
             let done = std::mem::take(&mut nest_copied.0);
+            #[cfg(target_os = "windows")]
+            if !done.images.is_empty() {
+                // Keep the producer's loan even if this render loop exits before
+                // its last submission. The queue owns the completion callback.
+                let images = done.images.clone();
+                g.queue().on_submitted_work_done(move || drop(images));
+            }
             if let (Some(index), false) = (g.last_submission(), done.is_empty()) {
                 nest_lent.push((index, done));
             }
