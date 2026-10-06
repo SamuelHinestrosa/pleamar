@@ -884,10 +884,44 @@ See [desktop controls validation](windows-desktop-controls.md).
 
 `pleamar --install-skill` installs the scene-authoring skill for detected agents
 on Windows, including accounts with only `USERPROFILE` set. It preserves skills
-written by someone else. The separate `pleamar-desktop` skill and `--agent`
-installer option require pleamar-wm and an independent Wayland seat. They are
-Linux-only; the Windows package does not install or advertise that desktop-control
-capability. No Windows equivalent or additional pleamar-wm port is claimed.
+written by someone else. The independent-seat `pleamar-desktop` skill and
+`--agent` installer option remain Linux-only. Windows `desktop.*` operations
+share the user's input, and the companion Windows pleamar-wm implements native
+window layouts and previews. Neither supplies an independent agent seat; see
+the [companion draft](https://github.com/k4ditano/pleamar-wm/pull/1) for its
+capabilities and remaining compositor work.
+
+### Scene descriptions
+
+Upstream `3c8606d` adds the first implemented step of the scene-agent interface:
+`describe`, `describe json`, `label:` and `agent:` metadata. From PowerShell:
+
+```powershell
+.\pleamar.exe --say notes 'describe'
+.\pleamar.exe --say notes 'describe json'
+```
+
+`notes` is the running scene's file stem. The result describes that scene's
+open surfaces, fields, lists and labels, with logical coordinates and the
+surface scale. It does not inspect other applications or expose a Windows UIA
+tree. A request recomposes one frame, including a previously cached static
+scene, and then returns the painted text and current Luau values.
+
+Descriptions keep full row geometry and mark scrolled rows `off_view`; native
+input still clips them to the viewport. Hidden-zone words cannot reappear as
+loose text. Secret fields and fields marked `agent: no` omit their values;
+hidden, capture-excluded and lock surfaces are omitted entirely.
+
+Name-based actions, wait/watch, UIA and independent seats remain upstream design
+work. These metadata affect descriptions; they do not restrict legacy IPC
+commands or isolate applications running in the same Windows logon.
+
+[Validation](windows-scene-description-validation.json) records 202 passing
+library tests, 248 language checks and the Marea logic suite. An owned passive
+scene on DISPLAY2 at 125% DPI verifies actual DX12 rendering, live Luau labels,
+privacy changes and reload. The [initial](windows-scene-description/01-initial.png)
+and [reloaded](windows-scene-description/02-reloaded.png) captures were inspected.
+No physical input or installed-app acceptance is claimed.
 
 
 ### Media folder name
