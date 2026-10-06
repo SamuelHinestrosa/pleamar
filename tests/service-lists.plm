@@ -11,6 +11,7 @@ scene ServiceLists {
     model gadgets max 8 { name: text; address: text; connected: bool; battery: number = -1 }
     model outs max 6 { id: number; name: text; default: bool }
     model ins max 6 { id: number; name: text; default: bool }
+    model playing max 6 { id: number; name: text; icon: image 20, 20; volume: number; muted: bool }
     model wins max 8 { title: text; class: text; minimized: bool }
     model spaces max 10 { id: number; name: text; active: bool }
     model launchers max 40 { name: text; exec: text; icon: image 24, 24 }
@@ -21,7 +22,7 @@ scene ServiceLists {
 
     service network as net { online: bool; networks: nets }
     service bluetooth as bt { powered: bool; devices: gadgets }
-    service audio { volume: number; outputs: outs; inputs: ins }
+    service audio { volume: number; outputs: outs; inputs: ins; apps: playing }
     service window { title: text; list: wins }
     service workspaces as ws { active: number; list: spaces }
     service apps { list: launchers }

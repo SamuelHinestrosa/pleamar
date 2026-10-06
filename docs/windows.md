@@ -5,6 +5,26 @@ enabled by default and is built from source. WSL, Wayland and Unix shell tools
 are not runtime requirements. Native interactive scenes have been validated;
 the limitations below still prevent full desktop-shell parity.
 
+Upstream 0.2.23 (`a506287`) is integrated. Scene `include` parts, module reloads,
+the grid hit-region correction and `PLEAMAR_GPU=high` are shared with Windows.
+Required modules are scoped to their scene and live VM; failed reloads retain
+the previous logic and keep failed dependencies repairable. Retired modules
+stop triggering reloads. The Linux lock-monitor lifecycle, cursor socket and
+PulseAudio changes are preserved.
+
+Validation on Windows x64/MSVC (2026-10-06): `cargo test --release --locked
+--lib -- --test-threads=2` passed 173 tests (38 opt-in tests skipped), the release
+executable built with default Luau, and `scripts/run-tests.py --binary
+target/release/pleamar.exe` passed 240 checks including 34 documentation scenes.
+The additional no-default-features check passed. An owned, passive DX12 scene
+on non-primary DISPLAY2 at 125% DPI passed module edits, syntax-error recovery,
+Unicode-path part edits and retired-module checks; six WGC captures were
+inspected. No physical input was sent and the foreground window was unchanged.
+This does not validate the new Marea pages or complete desktop parity:
+`thumbnails.live`, the `audio` service's `apps` list, and the `audio.app_volume`
+and `audio.app_mute` commands still need Windows adapters. The existing per-player `media.volume`
+control and pleamar-wm WGC previews are separate capabilities.
+
 Native screenshots use `sys.ask_async("screenshot.freeze", { scope }, callback)`
 followed by `screenshot.finish` with the returned numeric identifier, on the
 same service worker. Scopes are `region`, `display` (pointer's monitor) and

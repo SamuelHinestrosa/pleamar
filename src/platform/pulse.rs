@@ -3,13 +3,14 @@
 //! `pactl subscribe` underneath. One connection subscribes to the server's
 //! events and reports on each; commands open their own, short, one.
 //!
-//! `{ volume, muted, input, input_muted, outputs, inputs }`: the default output
-//! and input (volume as the mixer shows it, 0..1, 1 being 100 %), and the
+//! `{ volume, muted, input, input_muted, outputs, inputs, apps }`: the default
+//! output and input (volume as the mixer shows it, 0..1, 1 being 100 %), the
 //! devices for each, `{ { id, name, default }, … }` (the monitors of the
-//! outputs are not inputs).
+//! outputs are not inputs), and what is playing, one per stream:
+//! `{ { id, name, icon, binary, title, volume, muted, playing }, … }`.
 
 use super::SysValue;
-use pulseaudio::protocol::{self, ChannelVolume, Command, SetDeviceMuteParams, SetDeviceVolumeParams, SinkInfo, SourceInfo, Volume};
+use pulseaudio::protocol::{self, ChannelVolume, Command, Prop, Props, SetDeviceMuteParams, SetDeviceVolumeParams, SetStreamMuteParams, SetStreamVolumeParams, SinkInfo, SinkInputInfo, SourceInfo, Volume};
 use std::ffi::CString;
 use std::io::BufReader;
 use std::os::unix::net::UnixStream;
@@ -60,6 +61,12 @@ impl Pulse {
         let sources = self.ask::<protocol::SourceInfoList>(Command::GetSourceInfoList)?;
         Ok((server, sinks, sources))
     }
+
+    /// The streams that play, each an application's (a browser tab, a game, a
+    /// call). Without one to say so, nothing: the devices are still told.
+    fn apps(&mut self) -> Vec<SinkInputInfo> {
+        self.ask::<protocol::SinkInputInfoList>(Command::GetSinkInputInfoList).unwrap_or_default()
+    }
 }
 
 /// The volume as the mixer shows it: the loudest channel, 1 being 100 %.
@@ -75,7 +82,36 @@ fn name_of(description: &Option<CString>, name: &CString) -> String {
     description.as_ref().unwrap_or(name).to_string_lossy().into_owned()
 }
 
-fn report(server: &protocol::ServerInfo, sinks: &[SinkInfo], sources: &[SourceInfo]) -> SysValue {
+/// A property of a stream, as text: they come with their final zero.
+fn prop(props: &Props, p: Prop) -> Option<String> {
+    let bytes = props.get(p)?;
+    let text = String::from_utf8_lossy(bytes.strip_suffix(&[0]).unwrap_or(bytes)).trim().to_string();
+    (!text.is_empty()).then_some(text)
+}
+
+/// One stream that plays, as the logic sees it. Event sounds (a click, a
+/// notice's chime) come and go in a second and are nobody's to set: left out,
+/// as are streams whose volume cannot be read.
+fn app(i: &SinkInputInfo) -> Option<SysValue> {
+    if !i.has_volume || prop(&i.props, Prop::MediaRole).as_deref() == Some("event") {
+        return None;
+    }
+    let binary = prop(&i.props, Prop::ApplicationProcessBinary).unwrap_or_default();
+    let name = prop(&i.props, Prop::ApplicationName).unwrap_or_else(|| if binary.is_empty() { i.name.to_string_lossy().into_owned() } else { binary.clone() });
+    let icon = prop(&i.props, Prop::ApplicationIconName).unwrap_or_else(|| binary.to_lowercase());
+    Some(SysValue::Map(vec![
+        ("id".into(), SysValue::Num(i.index as f64)),
+        ("name".into(), SysValue::Text(name)),
+        ("icon".into(), SysValue::Text(icon)),
+        ("binary".into(), SysValue::Text(binary)),
+        ("title".into(), SysValue::Text(prop(&i.props, Prop::MediaName).unwrap_or_default())),
+        ("volume".into(), SysValue::Num(round(level(&i.cvolume)))),
+        ("muted".into(), SysValue::Bool(i.muted)),
+        ("playing".into(), SysValue::Bool(!i.corked)),
+    ]))
+}
+
+fn report(server: &protocol::ServerInfo, sinks: &[SinkInfo], sources: &[SourceInfo], apps: &[SinkInputInfo]) -> SysValue {
     let default_sink = server.default_sink_name.as_ref();
     let default_source = server.default_source_name.as_ref();
     let sink = sinks.iter().find(|s| Some(&s.name) == default_sink).or(sinks.first());
@@ -90,6 +126,7 @@ fn report(server: &protocol::ServerInfo, sinks: &[SinkInfo], sources: &[SourceIn
         ("input_muted".into(), SysValue::Bool(source.is_none_or(|s| s.muted))),
         ("outputs".into(), SysValue::List(sinks.iter().map(|s| device(s.index, name_of(&s.description, &s.name), Some(&s.name) == default_sink)).collect())),
         ("inputs".into(), SysValue::List(inputs.iter().map(|s| device(s.index, name_of(&s.description, &s.name), Some(&s.name) == default_source)).collect())),
+        ("apps".into(), SysValue::List(apps.iter().filter_map(app).collect())),
     ])
 }
 
@@ -108,10 +145,11 @@ pub fn service(dispatch: Box<dyn Fn(SysValue) + Send>) -> bool {
                 let mut run = || -> R<()> {
                     let mut asker = Pulse::connect("pleamar")?;
                     let mut events = Pulse::connect("pleamar events")?;
-                    events.ack(Command::Subscribe(protocol::SubscriptionMask::SINK | protocol::SubscriptionMask::SOURCE | protocol::SubscriptionMask::SERVER))?;
+                    events.ack(Command::Subscribe(protocol::SubscriptionMask::SINK | protocol::SubscriptionMask::SOURCE | protocol::SubscriptionMask::SINK_INPUT | protocol::SubscriptionMask::SERVER))?;
                     let mut tell = |asker: &mut Pulse| -> R<()> {
                         let (server, sinks, sources) = asker.state()?;
-                        let v = report(&server, &sinks, &sources);
+                        let apps = asker.apps();
+                        let v = report(&server, &sinks, &sources, &apps);
                         let fingerprint = format!("{v:?}");
                         if fingerprint != last {
                             last = fingerprint;
@@ -148,6 +186,16 @@ fn set_volume(p: &mut Pulse, sink: bool, index: u32, channels: usize, v: f64) ->
     }
     let params = SetDeviceVolumeParams { device_index: Some(index), device_name: None, volume: cv };
     p.ack(if sink { Command::SetSinkVolume(params) } else { Command::SetSourceVolume(params) })
+}
+
+/// One application's stream, as loud as `v` on every channel it has.
+fn set_app_volume(p: &mut Pulse, index: u32, channels: usize, v: f64) -> R<()> {
+    let mut cv = ChannelVolume::empty();
+    let raw = Volume::from_u32_clamped((v.clamp(0.0, 1.0) * Volume::NORM.as_u32() as f64).round() as u32);
+    for _ in 0..channels.max(1) {
+        cv.push(raw);
+    }
+    p.ack(Command::SetSinkInputVolume(SetStreamVolumeParams { index, volume: cv }))
 }
 
 fn set_mute(p: &mut Pulse, sink: bool, index: u32, mute: bool) -> R<()> {
@@ -192,6 +240,19 @@ pub fn command(what: &str, args: &[SysValue]) -> R<()> {
             let (i, _, _, _) = inp(source)?;
             set_mute(&mut p, false, i, *yes)
         }
+        // One application: the `id` that `apps` gives.
+        ("audio.app_volume", [SysValue::Num(id), SysValue::Num(v)]) => {
+            let a = p.apps().into_iter().find(|a| a.index == *id as u32).ok_or(format!("there is no stream {id}"))?;
+            set_app_volume(&mut p, a.index, a.cvolume.channels().len(), *v)
+        }
+        ("audio.app_mute", [SysValue::Num(id), rest @ ..]) if rest.len() <= 1 => {
+            let a = p.apps().into_iter().find(|a| a.index == *id as u32).ok_or(format!("there is no stream {id}"))?;
+            let mute = match rest {
+                [SysValue::Bool(yes)] => *yes,
+                _ => !a.muted,
+            };
+            p.ack(Command::SetSinkInputMute(SetStreamMuteParams { index: a.index, mute }))
+        }
         // Where it plays or listens: the number the lists give.
         ("audio.default", [SysValue::Num(id)]) => {
             let id = *id as u32;
@@ -203,6 +264,6 @@ pub fn command(what: &str, args: &[SysValue]) -> R<()> {
             }
             Err(format!("there is no device {id}"))
         }
-        _ => Err(format!("'{what}' is not asked like that: audio.volume(0..1), audio.step(±0.05), audio.mute([true|false]), audio.input(0..1), audio.input_mute([true|false]), audio.default(id)")),
+        _ => Err(format!("'{what}' is not asked like that: audio.volume(0..1), audio.step(±0.05), audio.mute([true|false]), audio.input(0..1), audio.input_mute([true|false]), audio.default(id), audio.app_volume(id, 0..1), audio.app_mute(id[, true|false])")),
     }
 }

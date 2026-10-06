@@ -3,7 +3,7 @@
 **What this note is.** The complete, exact description of what the language accepts. [The language — the guide](09-language-v0.md) is the guide —read straight through, with the reason behind each thing—; this is where a doubt gets looked up. It comes from the compiler (`src/language/`), not from memory, and **it cannot fall behind without `./run-tests.sh` saying so**: its whole examples compile, and its vocabulary (§17) is compared against the one the compiler consults.
 
 ```sh
-pleamar --version                  # pleamar 0.2.19 · language 0.2
+pleamar --version                  # pleamar 0.2.23 · language 0.2
 pleamar --check scene.plm      # reads it, with whatever it imports; says whether it is fine, exits
 ./run-tests.sh                        # tests/*.plm, examples/*.plm and the examples in this note
 ```
@@ -160,6 +160,18 @@ color        = "#" hex | name | "mix" "(" color "," color "," expr ")" | "if" "(
 
 **`import "menu.plm" as menu`** gives the library's components a surname: from the scene they are `menu.Row(r)`, and inside the library they keep calling each other by their own names (`Row` inside `menu.Pair` is `menu.Row`). That is how two libraries that each have a `Row` are used together. A library has one name in a scene: imported once with `as menu` and again with `as other`, or without it, is an error. The surname is for components; a library's facts, texts and events already live under the library's name (`Menu.open`), and its `let`s and springs are still shared, so the scene can override a colour.
 
+**A big scene goes in pieces with `include`.** `include "pages/wifi.plm"` puts there, where the line is, what a **part** holds —`part Wifi { … }`, in a file of its own—, as if it had been written there: the same names (a part's `fact` is the scene's, and it reads the scene's lets, and those of the group it is included in), the same order (it paints where it is included). It can go inside a `group`, and a part can include others; its path is relative to the file that includes it. A part does not import: the scene imports the libraries, and its parts use them. Its errors say its own file and line, what it draws finds its images next to it, and saving it reloads the scene like any of its files. A part is not opened: `pleamar --check` on one says so. Unlike a library it has no name of its own to live under; it is the same scene, in more files.
+
+```
+scene Marea {
+    include "pages/declarations.plm"
+    group {
+        let lx = card.x - 228
+        include "pages/wifi.plm"       // part Wifi { … }, which reads lx
+    }
+}
+```
+
 **`library Name strict { … }`**: its components can only read what they ask for by parameter, what they declare themselves, what belongs to their library (and to whatever it imports), and the names that always exist. Reading a fact, a color or an event of the scene without asking for it is an error on load —`'Nosy' belongs to a `strict` library and reads 'secret', which is the scene's, without asking for it`—: that way someone else's library does not depend on what things are called in the scene, nor does it touch them. Without `strict`, a component sees everything belonging to whoever uses it, which is the comfortable thing for one's own libraries.
 
 **A plugin is a library with its logic next to it**: `clock.plm` and `clock.luau`. It can also declare its own boundary —`fact`, `text`, `model`, `event`— and its `permissions`:
@@ -201,9 +213,11 @@ another monitor, far from the scene. They are in the scene's own coordinates,
 like `pointer.x`, so a pair of eyes computes the same way whether the mouse is
 over them or across the desk: `atan2(cursor.y - cy, cursor.x - cx)`. A surface
 on Wayland is not told where the mouse is when it is not over it —on purpose—,
-so pleamar asks whoever knows: on Hyprland, its socket, about thirty times a
-second and **only if the scene names them**. Elsewhere they are the pointer's
-while it is over the scene, and keep their last value when it leaves.
+so pleamar asks whoever knows, and **only if the scene names them**: on
+Hyprland, its socket, about thirty times a second; in a pleamar-wm session,
+the `cursor.sock` it keeps for its programs, which says the mouse as it
+moves. Elsewhere they are the pointer's while it is over the scene, and keep
+their last value when it leaves.
 
 A named surface draws from its own corner, so it has its own pair:
 **`nook.cursor.x`, `nook.cursor.y`** are the same mouse in the coordinates the
@@ -336,7 +350,7 @@ service tray { list: icons }
 | --- | --- |
 | `network` | `networks`: `{ ssid, strength, secure, known, active }`, the strongest first |
 | `bluetooth` | `devices`: `{ name, address, paired, connected, battery, icon }` |
-| `audio` | `outputs` · `inputs`: `{ id, name, default }` |
+| `audio` | `outputs` · `inputs`: `{ id, name, default }`; `apps`: `{ id, name, icon, binary, title, volume, muted, playing }`, what is playing, one per stream |
 | `media` | `players`: `{ id, name, playing, chosen }`, by bus name |
 | `window` | `list`: `{ id, title, class, monitor, active, minimized }` (compositors with wlr-foreign-toplevel) |
 | `workspaces` | `list`: `{ id, name, windows, monitor, active }` |
@@ -657,7 +671,10 @@ which inside a `repeat` may depend on it—. It does not have to say its size:
 inside it **`cell.w` and `cell.h`** are the size of its cell, so it is drawn
 in its own coordinates, from its corner. With `row:` every row is that tall;
 without it, each child says its height (`group { size: cell.w, 90 }`) and a
-row is as tall as its tallest child. Its zones go where it goes.
+row is as tall as its tallest child. Its zones go where it goes. With a
+`for` inside, a cell the list does not reach is not there —neither seen nor
+pressed—, and **its place stays**: the cells never move to fill it, so six
+cards that become two leave four empty places, not a reshuffled grid.
 
 And **inside any layout —`row`, `column`, `grid`— a `prop`, a `let`, a
 `fact` or a rule is not a child**: it is read where it is written, with the
@@ -1446,11 +1463,11 @@ field_types: text number bool image
 fact_types: number bool
 model: list
 path: move line curve close
-documented: translations surface permissions model service spring prop pose fact event text image figure particles shader measure let zone body ellipse box arc line path input clip group popup component children repeat for row grid windows window pages column space between layer on every blink wave spin follow look gesture posture import scene library language
+documented: translations surface permissions model service spring prop pose fact event text image figure particles shader measure let zone body ellipse box arc line path input clip group popup component children repeat for row grid windows window pages column space between layer on every blink wave spin follow look gesture posture import scene library include part language
 services: clock clock.seconds audio battery brightness network bluetooth media window thumbnails workspaces apps tray notifications notification_history
 services.clock: hour minute second day month year weekday time date
 services.clock.seconds: hour minute second day month year weekday time date
-services.audio: volume muted input input_muted outputs inputs
+services.audio: volume muted input input_muted outputs inputs apps
 services.battery: present percent charging
 services.brightness: present level
 services.network: online kind name strength wifi networks

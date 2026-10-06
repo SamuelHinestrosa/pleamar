@@ -353,6 +353,9 @@ pub fn compile<'a>(tree: &'a [Entry], files: &'a [String], dirs: &'a [std::path:
         [Entry::Node(n)] if matches!(n.head.first().map(|f| &f.kind), Some(TokenKind::Id(p)) if p == "library") => {
             return (Err(vec![CompileError::at(n.line, n.col, "this is a library: it is not opened, it is imported from a scene (`import \"…\"`)")]), Vec::new());
         }
+        [Entry::Node(n)] if matches!(n.head.first().map(|f| &f.kind), Some(TokenKind::Id(p)) if p == "part") => {
+            return (Err(vec![CompileError::at(n.line, n.col, "this is a part of a scene: it is not opened, it is included from the scene (`include \"…\"`)")]), Vec::new());
+        }
         _ => return (Err(vec![CompileError::at(1, 1, "a file is a scene: as many `import`s as you want, then `scene Name { … }`")]), Vec::new()),
     };
     let mut o = Compiler {
@@ -5220,10 +5223,23 @@ impl<'a> Compiler<'a> {
             }
             let w = cell_w.clone() * span as f32 + gap.clone() * (span as f32 - 1.0);
             let x = (cell_w.clone() + gap.clone()) * col as f32;
+            // A turn of a `for` only exists if the list reaches that far: as in
+            // a row or a column, a cell past the end is neither seen nor pressed.
+            // (Its place stays: a grid's cells do not move up to fill it.)
+            let mut present = Expr::K(1.0);
+            for e in &self.scopes[self.scopes.len() - (extra - 1)..] {
+                if let Some(v) = &e.visible {
+                    present = if matches!(present, Expr::K(k) if k == 1.0) { v.clone() } else { present * v.clone() };
+                }
+            }
+            let present = (!matches!(present, Expr::K(k) if k == 1.0)).then_some(present);
             let mut here = Scope::default();
             here.exprs.insert("cell.w".into(), w.clone());
             here.exprs.insert("cell.h".into(), row_given.clone().unwrap_or(Expr::K(0.0)));
             self.scopes.push(Rc::new(here));
+            if let Some(v) = &present {
+                self.e.paint(Instr::Opacity(Some(v.clone())));
+            }
             let instr = self.e.instrs.len();
             let slot = Transform::at((0.0.into(), 0.0.into())).translate(x, Expr::K(0.0));
             self.e.paint(Instr::Transform(Some(slot.clone())));
@@ -5245,6 +5261,12 @@ impl<'a> Compiler<'a> {
                 }
             }
             self.e.paint(Instr::Transform(None));
+            if let Some(v) = &present {
+                self.e.paint(Instr::Opacity(None));
+                for k in &mut self.candidates[from..] {
+                    k.visible = Some(match k.visible.take() { Some(w) => w * v.clone(), None => v.clone() });
+                }
+            }
             for _ in 0..extra {
                 self.close_scope(mark);
             }

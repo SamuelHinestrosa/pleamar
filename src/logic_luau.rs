@@ -28,6 +28,8 @@ use std::sync::{Arc, Mutex, Weak};
 use std::time::{Duration, Instant};
 
 mod input;
+mod module_watch;
+pub(crate) use module_watch::required as required_modules;
 use input::InputPipe;
 #[cfg(test)]
 mod input_tests;
@@ -751,6 +753,7 @@ mod run_tests;
 pub struct LuauScript {
     scene: String,
     logic: String,
+    required: Arc<module_watch::Modules>,
     tx: Sender<ToRender>,
     to_logic: Sender<Event>,
     blocked: Arc<AtomicBool>,
@@ -814,13 +817,13 @@ fn qualified_listener(prefix: &Option<String>, what: &str) -> String {
 
 impl LuauScript {
     pub fn new(scene: &str, logic: &str, tx: Sender<ToRender>, to_logic: Sender<Event>, blocked: Arc<AtomicBool>) -> Self {
-        LuauScript { scene: scene.to_owned(), logic: logic.to_owned(), tx, to_logic, blocked, lua: None, c: Arc::default(), prefix: None, plugins: Vec::new(), definition: None, memory_reported: crate::gpu::timing_enabled().then(Instant::now) }
+        LuauScript { required: module_watch::Modules::new(scene), scene: scene.to_owned(), logic: logic.to_owned(), tx, to_logic, blocked, lua: None, c: Arc::default(), prefix: None, plugins: Vec::new(), definition: None, memory_reported: crate::gpu::timing_enabled().then(Instant::now) }
     }
 
     /// A plugin's logic, with its own state and the scene's shared reply mailbox.
     fn for_plugin(&self, p: &crate::scene::Plugin) -> Self {
         let c = Shared { plugin: Some(p.name.clone()), ..Default::default() };
-        LuauScript { scene: self.scene.clone(), logic: p.logic.to_string_lossy().into_owned(), tx: self.tx.clone(), to_logic: self.to_logic.clone(), blocked: self.blocked.clone(), lua: None, c: Arc::new(Mutex::new(c)), prefix: Some(p.name.clone()), plugins: Vec::new(), definition: Some(p.clone()), memory_reported: crate::gpu::timing_enabled().then(Instant::now) }
+        LuauScript { required: module_watch::Modules::new(&self.scene), scene: self.scene.clone(), logic: p.logic.to_string_lossy().into_owned(), tx: self.tx.clone(), to_logic: self.to_logic.clone(), blocked: self.blocked.clone(), lua: None, c: Arc::new(Mutex::new(c)), prefix: Some(p.name.clone()), plugins: Vec::new(), definition: Some(p.clone()), memory_reported: crate::gpu::timing_enabled().then(Instant::now) }
     }
 
     /// Sets a plugin running on its thread. From there it tends its mailbox and its timers.
@@ -1079,6 +1082,7 @@ impl LuauScript {
             Err(e) => return eprintln!("logic  · {}: {e}", self.logic),
         };
         let t0 = Instant::now();
+        let old_required = std::mem::replace(&mut self.required, module_watch::Modules::new(&self.scene));
         let old = self.c.clone();
         let fresh = old.lock().unwrap().fresh();
         self.c = Arc::new(Mutex::new(fresh));
@@ -1110,6 +1114,8 @@ impl LuauScript {
             }
             Err(e) => {
                 // What the failed one started goes with it; the old one, as it was.
+                old_required.retain_failed(&self.required);
+                self.required = old_required;
                 self.release();
                 self.c = old;
                 // A candidate may have replaced the hub's callback for the same
@@ -1596,6 +1602,7 @@ impl LuauScript {
         // It is loaded once; whatever it returns is the module.
         let folder = std::path::Path::new(&self.logic).parent().map(std::path::Path::to_owned).unwrap_or_default();
         let loaded = lua.create_table()?;
+        let required = self.required.clone();
         g.set("require", lua.create_function(move |lua, name: String| {
             let clean = !name.is_empty() && name.split('/').all(|t| !t.is_empty() && t != ".." && t != "." && t.chars().all(|c| c.is_alphanumeric() || c == '_' || c == '-'));
             if !clean {
@@ -1605,6 +1612,7 @@ impl LuauScript {
                 return t.raw_get::<Value>("value");
             }
             let path = folder.join(format!("{name}.luau"));
+            required.add(path.clone());
             let source = std::fs::read_to_string(&path).map_err(|e| mlua::Error::runtime(format!("require(\"{name}\"): {}: {e}", path.display())))?;
             let value: Value = lua.load(&source).set_name(format!("@{}", path.display())).eval()?;
             let slot = lua.create_table()?;

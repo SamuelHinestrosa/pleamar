@@ -296,6 +296,15 @@ pub fn lock_screen(which: usize, what: Option<((u32, u32), (f32, f32), crate::sc
     let _ = (which, what);
 }
 
+/// The render has let go of the sheet of surface `id`, and with it of its
+/// swapchain: what the platform kept alive for it until then can go.
+pub fn sheet_released(id: u32) {
+    #[cfg(target_os = "linux")]
+    wayland::sheet_released(id);
+    #[cfg(not(target_os = "linux"))]
+    let _ = id;
+}
+
 /// Sticks surface `which` to another edge, while running. On Wayland it's a
 /// layer-shell request —`set_anchor` and `set_margin` work on a live
 /// surface, without creating it again—; on Windows it will be moving the window and
@@ -660,16 +669,70 @@ pub static CURSOR_WANTED: std::sync::atomic::AtomicBool = std::sync::atomic::Ato
 
 /// Where the mouse is when it is not over us. Wayland does not tell a surface
 /// that —on purpose—, so it is asked of whoever knows: Hyprland, through its
-/// socket, about thirty times a second and only while a scene wants it. It
+/// socket, about thirty times a second; pleamar-wm, through the `cursor.sock`
+/// of its session, which says it as it moves. Only while a scene wants it. It
 /// reaches the render as `ToRender::Cursor` when it moves. Windows supplies it
 /// from its native event loop. Other backends only know it over the scene.
 pub fn watch_cursor(to_render: std::sync::mpsc::Sender<crate::scene::ToRender>) {
     #[cfg(target_os = "linux")]
     if hyprland::is_present() && std::env::var_os("PLEAMAR_GENERIC").is_none() {
         hyprland::watch_cursor(to_render);
+    } else if let Some(dir) = std::env::var("PLEAMAR_SOCKETS").ok().filter(|d| std::path::Path::new(&format!("{d}/cursor.sock")).exists()) {
+        session_cursor(dir, to_render);
     }
     #[cfg(not(target_os = "linux"))]
     let _ = to_render;
+}
+
+/// pleamar-wm's `cursor.sock`: a line, `x y` in units of the desktop, each
+/// time the mouse moves. Connected only while a scene wants it, and let go of
+/// when it no longer does; the monitors, to place it, from the `desktop` file
+/// beside it (`monitor name width height x y mhz focused scale`, the size in
+/// pixels), read again every two seconds.
+#[cfg(target_os = "linux")]
+fn session_cursor(dir: String, to_render: std::sync::mpsc::Sender<crate::scene::ToRender>) {
+    use std::io::BufRead;
+    use std::sync::atomic::Ordering;
+    let monitors_of = |dir: &str| -> Vec<(String, [i32; 4])> {
+        let text = std::fs::read_to_string(format!("{dir}/desktop")).unwrap_or_default();
+        text.lines()
+            .filter_map(|l| l.strip_prefix("monitor "))
+            .filter_map(|l| {
+                let f: Vec<&str> = l.split(' ').collect();
+                let [name, w, h, x, y, _mhz, _focused, scale] = f[..] else { return None };
+                let scale = scale.parse::<f64>().ok()?.max(0.1);
+                Some((name.to_owned(), [x.parse().ok()?, y.parse().ok()?, (w.parse::<f64>().ok()? / scale) as i32, (h.parse::<f64>().ok()? / scale) as i32]))
+            })
+            .collect()
+    };
+    let _ = std::thread::Builder::new().name("session·cursor".into()).spawn(move || loop {
+        if !CURSOR_WANTED.load(Ordering::Relaxed) {
+            std::thread::sleep(std::time::Duration::from_millis(500));
+            continue;
+        }
+        let Ok(stream) = std::os::unix::net::UnixStream::connect(format!("{dir}/cursor.sock")) else {
+            std::thread::sleep(std::time::Duration::from_secs(2));
+            continue;
+        };
+        let mut monitors = monitors_of(&dir);
+        let mut asked = std::time::Instant::now();
+        for line in std::io::BufReader::new(stream).lines() {
+            let Ok(line) = line else { break };
+            if !CURSOR_WANTED.load(Ordering::Relaxed) {
+                break;
+            }
+            let Some((x, y)) = line.split_once(' ').and_then(|(x, y)| Some((x.parse::<f32>().ok()?, y.parse::<f32>().ok()?))) else { continue };
+            if asked.elapsed().as_secs() >= 2 {
+                asked = std::time::Instant::now();
+                monitors = monitors_of(&dir);
+            }
+            if to_render.send(crate::scene::ToRender::Cursor((x, y), monitors.clone())).is_err() {
+                return;
+            }
+        }
+        // The session restarted it, or it went: try again in a moment.
+        std::thread::sleep(std::time::Duration::from_secs(1));
+    });
 }
 
 /// Where the scene is shown and the input comes from. pleamar's own is a
@@ -741,6 +804,22 @@ mod tray;
 mod compositor;
 #[cfg(target_os = "linux")]
 mod thumbnails;
+/// A live window's last frame (`thumbnails.live`), by the `picture` that
+/// names it, for the image that draws it.
+#[cfg(target_os = "linux")]
+pub use thumbnails::{frame as thumbnail_frame, Frame as ThumbnailFrame};
+#[cfg(not(target_os = "linux"))]
+pub struct ThumbnailFrame {
+    pub version: u64,
+    pub width: u32,
+    pub height: u32,
+    pub pixels: Vec<u8>,
+    pub opaque: bool,
+}
+#[cfg(not(target_os = "linux"))]
+pub fn thumbnail_frame(_: &str) -> Option<std::sync::Arc<ThumbnailFrame>> {
+    None
+}
 mod files;
 
 /// JSON to what the logic sees, and back: `json.decode` and `json.encode`.

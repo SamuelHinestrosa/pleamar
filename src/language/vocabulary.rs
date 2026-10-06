@@ -112,6 +112,8 @@ pub const HELP: &[(&str, &str)] = &[
     ("import", "`import \"common/palette.plm\"` — brings in a library: its colours, components and springs. `import \"menu.plm\" as menu` calls its components `menu.Row`."),
     ("scene", "`scene Bar { … }` — everything a window shows, and what it reacts to."),
     ("library", "`library Palette { … }` — what several scenes share. With a `.luau` next to it, it is a plugin: its own frontier and its own permissions."),
+    ("include", "`include \"pages/wifi.plm\"` — a piece of this scene kept in a file of its own, put right here as if it were written here: the same names, inside the same group."),
+    ("part", "`part Wifi { … }` — a piece of a scene, in a file of its own: anything a scene can hold. It is not opened: a scene includes it (`include \"…\"`)."),
     ("language", "`language 0.1` — the version of the language this file needs. It is the first line."),
 ];
 
@@ -122,7 +124,7 @@ pub const HELP: &[(&str, &str)] = &[
 pub const SERVICES: &[(&str, &[&str])] = &[
     ("clock", &["hour", "minute", "second", "day", "month", "year", "weekday", "time", "date"]),
     ("clock.seconds", &["hour", "minute", "second", "day", "month", "year", "weekday", "time", "date"]),
-    ("audio", &["volume", "muted", "input", "input_muted", "outputs", "inputs"]),
+    ("audio", &["volume", "muted", "input", "input_muted", "outputs", "inputs", "apps"]),
     ("battery", &["present", "percent", "charging"]),
     ("brightness", &["present", "level"]),
     ("network", &["online", "kind", "name", "strength", "wifi", "networks"]),
@@ -139,7 +141,7 @@ pub const SERVICES: &[(&str, &[&str])] = &[
 
 /// The fields of a service that are lists: each one goes into a model, never into a fact.
 /// `list` is the service's whole report, for the ones that are only a list.
-pub const LIST_FIELDS: &[&str] = &["networks", "devices", "outputs", "inputs", "players", "list"];
+pub const LIST_FIELDS: &[&str] = &["networks", "devices", "outputs", "inputs", "apps", "players", "list"];
 
 /// The steps of a path: where it goes through. `curve … via …` is a quadratic Bézier.
 pub const PATH_COMMANDS: &[&str] = &["move", "line", "curve", "close"];

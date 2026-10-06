@@ -165,6 +165,25 @@ fn watch_binary() {
     }
 }
 
+type LogicDates = std::collections::BTreeMap<std::path::PathBuf, Option<(std::time::SystemTime, u64)>>;
+
+fn logic_dates(watched: &[String], _scene: &str) -> LogicDates {
+    #[allow(unused_mut)]
+    let mut paths: Vec<std::path::PathBuf> = watched.iter().map(Into::into).collect();
+    #[cfg(feature = "luau")]
+    paths.extend(crate::logic_luau::required_modules(_scene));
+    paths.into_iter().map(|path| {
+        let date = std::fs::metadata(&path).ok().and_then(|m| Some((m.modified().ok()?, m.len())));
+        (path, date)
+    }).collect()
+}
+
+fn logic_changed(before: &LogicDates, after: &LogicDates) -> bool {
+    // Newly required modules already ran with these contents. Their arrival
+    // must not hide an edit/deletion of a file we were already watching.
+    before.iter().any(|(path, date)| after.get(path).is_some_and(|now| now != date))
+}
+
 pub fn watch(path: String, to_render: Sender<ToRender>, to_logic: Sender<Event>) {
     watch_binary();
     // The logic reloads too: same trick, another file.
@@ -182,19 +201,20 @@ pub fn watch(path: String, to_render: Sender<ToRender>, to_logic: Sender<Event>)
                 }
                 v
             };
-            let date = |v: &[String]| v.iter().map(|r| std::fs::metadata(r).and_then(|m| m.modified()).ok()).collect::<Vec<_>>();
             let mut watched = all(&scene_for_logic);
-            let mut last = date(&watched);
+            let mut last = logic_dates(&watched, &scene_for_logic);
             loop {
                 std::thread::sleep(Duration::from_millis(250));
-                let now = date(&watched);
-                if now != last && now.iter().any(Option::is_some) {
+                let now = logic_dates(&watched, &scene_for_logic);
+                if logic_changed(&last, &now) {
                     std::thread::sleep(Duration::from_millis(80));
                     watched = all(&scene_for_logic);
-                    last = date(&watched);
+                    last = logic_dates(&watched, &scene_for_logic);
                     if to_logic.send(Event::ReloadLogic).is_err() {
                         return;
                     }
+                } else {
+                    last = now;
                 }
             }
         })
@@ -241,7 +261,7 @@ pub fn watch(path: String, to_render: Sender<ToRender>, to_logic: Sender<Event>)
                 let t0 = std::time::Instant::now();
                 match crate::language::read_file(&path) {
                     Ok((e, files)) => {
-                        println!("reload · {path} read in {:.1} ms{}", t0.elapsed().as_secs_f32() * 1000.0, if files.len() > 1 { format!(" · with {} libraries", files.len() - 1) } else { String::new() });
+                        println!("reload · {path} read in {:.1} ms{}", t0.elapsed().as_secs_f32() * 1000.0, if files.len() > 1 { format!(" · with {} more files", files.len() - 1) } else { String::new() });
                         // It may import other things now.
                         watched = files;
                         watched.extend(e.attachments.iter().cloned());
@@ -264,6 +284,21 @@ pub fn watch(path: String, to_render: Sender<ToRender>, to_logic: Sender<Event>)
 #[cfg(test)]
 mod tests {
     use crate::scene::{Rule, Trigger};
+
+    #[test]
+    fn requiring_a_module_does_not_hide_a_concurrent_edit_or_deletion() {
+        use super::{LogicDates, logic_changed};
+        let date = Some((std::time::UNIX_EPOCH, 12));
+        let before = LogicDates::from([("main.luau".into(), date)]);
+        let mut after = before.clone();
+        after.insert("util.luau".into(), date);
+        assert!(!logic_changed(&before, &after));
+        after.insert("main.luau".into(), Some((std::time::UNIX_EPOCH, 20)));
+        assert!(logic_changed(&before, &after));
+        after.insert("main.luau".into(), None);
+        assert!(logic_changed(&before, &after));
+        assert!(logic_changed(&before, &LogicDates::from([("main.luau".into(), None)])));
+    }
 
     #[test]
     fn scene_definition_precedes_synchronous_logic_snapshot() {
@@ -324,6 +359,43 @@ mod tests {
         for name in ["glow.1#screen0", "glow.1#screen1"] {
             assert!(pressed.contains(&name), "no rule presses {name}: {pressed:?}");
         }
+    }
+
+    /// A `for` inside a `grid`: a cell past the end of its list is neither
+    /// seen nor pressed, as in a row or a column. It used to keep showing the
+    /// records of the last longer list.
+    #[test]
+    fn a_grid_only_has_the_cells_its_list_reaches() {
+        let dir = std::env::temp_dir().join(format!("pleamar-grid-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("grid.plm");
+        std::fs::write(&path, "scene Cells {
+    surface { size: 200, 100 }
+    model rows max 4 { title: text }
+    grid {
+        at: 0, 0; columns: 2; width: 200; gap: 10; row: 40
+        for r in rows {
+            group {
+                size: 95, 40
+                zone box hit { from: 0, 0; size: 95, 40 }
+                text r.title { at: 4, 20; size: 12; color: #fff }
+            }
+        }
+    }
+}
+").unwrap();
+        let scene = super::read(path.to_str().unwrap()).unwrap();
+        let _ = std::fs::remove_dir_all(&dir);
+        let mut facts: Vec<f32> = scene.facts.iter().map(|f| f.1).collect();
+        let count = scene.facts.iter().position(|f| f.0 == "rows.count").expect("rows.count");
+        let active = |facts: &[f32]| scene.zones.iter().filter(|z| z.active.is_true(crate::scene::Ctx { props: &[], facts })).count();
+        assert_eq!(scene.zones.len(), 4);
+        facts[count] = 4.0;
+        assert_eq!(active(&facts), 4);
+        facts[count] = 1.0;
+        assert_eq!(active(&facts), 1, "a cell the list does not reach can still be pressed");
+        facts[count] = 0.0;
+        assert_eq!(active(&facts), 0);
     }
 
     /// A rule that names nothing of its copy is the same rule once per monitor:

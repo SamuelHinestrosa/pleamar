@@ -933,6 +933,7 @@ pub fn run(
                 ToRender::SheetGone(id) => {
                     sheets.retain(|l| l.id != id);
                     update_screen_count(&scene, &mut facts, &sheets);
+                    crate::platform::sheet_released(id);
                     println!("render · surface {id} gone; {} left", sheets.len());
                     if let Some(g) = &gpu {
                         assign_pace(g, &mut sheets, size, op.no_vsync);

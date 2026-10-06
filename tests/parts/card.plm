@@ -1,0 +1,7 @@
+// A part that reads the group's `x0`, the scene's `ink` and `count`, and
+// includes another.
+part Card {
+    box { from: x0, 20; size: 120, 60; corner: 12; color: #1d2b27 }
+    text "{count, 0}" { at: x0 + 60, 50; anchor: center; size: 14; color: ink }
+    include "button.plm"
+}
