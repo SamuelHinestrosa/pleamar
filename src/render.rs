@@ -426,6 +426,9 @@ pub fn run(
     let mut acts: std::collections::VecDeque<(crate::agent::Act, std::sync::mpsc::Sender<String>)> = std::collections::VecDeque::new();
     let mut acting: Option<Acting> = None;
     let mut real_pointer: Option<(f32, f32)> = None;
+    // Who waits for a condition (`wait`), and who watches what happens (`watch`).
+    let mut waits: Vec<(crate::agent::Cond, Instant, Instant, std::sync::mpsc::Sender<String>)> = Vec::new();
+    let mut watchers: Vec<Watcher> = Vec::new();
     // The zones that have already been said to have no words: once each.
     let mut unnamed_said: std::collections::HashSet<&'static str> = std::collections::HashSet::new();
     let mut changed: Vec<[f32; 4]> = Vec::new();
@@ -626,6 +629,8 @@ pub fn run(
         // (which one, whether it comes from the logic)
         let mut signals: Vec<(usize, bool, Option<f32>)> = late_signals.drain(..).map(|s| (s.0 as usize, false, None)).collect();
         let mut gestures_asked: Vec<usize> = Vec::new();
+        // What a `watch` is told of this frame besides what changed: events, and presses.
+        let mut heard_events: Vec<(&str, &'static str)> = Vec::new();
         let mut incoming: Vec<ToRender> = std::mem::take(&mut held_back);
         if resting {
             // Still: not a single frame. Only a message or the next appointment wakes it
@@ -1037,6 +1042,20 @@ pub fn run(
                     let _ = reply_to.send(r);
                 }
                 ToRender::Act(act, reply_to) => acts.push_back((act, reply_to)),
+                ToRender::Wait(src, reply_to) => match crate::agent::Cond::parse(&scene, &src) {
+                    Ok((cond, timeout)) => {
+                        let now = Instant::now();
+                        waits.push((cond, now, now + timeout, reply_to));
+                    }
+                    Err(m) => {
+                        let _ = reply_to.send(format!("? {m}\n"));
+                    }
+                },
+                ToRender::Watch(lines, until) => {
+                    let c = Ctx { props: &props, facts: &facts };
+                    let _ = lines.send(format!("watching for {:.0} s", until.saturating_duration_since(Instant::now()).as_secs_f32()));
+                    watchers.push(Watcher { lines, until, start: Instant::now(), before: crate::agent::before(&scene, c, &texts, open_surfaces(&scene, &sheets)) });
+                }
                 ToRender::Describe(json, reply_to) => {
                     describing.push((json, reply_to));
                     draw.collect_texts = true;
@@ -1850,6 +1869,9 @@ pub fn run(
                     }
                     selection = None;
                     pressed = hovered;
+                    if let Some(k) = hovered.filter(|_| !watchers.is_empty()) {
+                        heard_events.push(("press", scene.zones[k].id));
+                    }
                     if let (Some(k), Some(p)) = (hovered, pointer) {
                         // Clicking a field focuses it, with the cursor where the click landed.
                         let id = scene.zones[k].id;
@@ -2570,7 +2592,10 @@ pub fn run(
             for (s, from_logic, payload) in std::mem::take(&mut signals) {
                 let id = SignalId(s as u16);
                 if let Some(a) = &mut acting {
-                    a.events.push(scene.signals[s].0);
+                    a.events.push(("event", scene.signals[s].0));
+                }
+                if !watchers.is_empty() {
+                    heard_events.push(("event", scene.signals[s].0));
                 }
                 // When it last happened: what a `burst:` of particles starts from.
                 if draw.signal_times.len() != scene.signals.len() {
@@ -3191,6 +3216,39 @@ pub fn run(
                     let _ = a.reply.send(format!("{}{}", a.said, a.heard));
                 }
             }
+        }
+        // Conditions waited for: said as soon as they hold.
+        if !waits.is_empty() {
+            waits.retain(|(cond, start, deadline, reply)| {
+                if cond.holds(&scene, c, &texts) {
+                    let _ = reply.send(format!("yes, after {} ms\n", (now - *start).as_millis()));
+                    false
+                } else if now >= *deadline {
+                    let _ = reply.send(format!("? not after {:.1} s: {}\n", (*deadline - *start).as_secs_f32(), cond.now(&scene, c, &texts)));
+                    false
+                } else {
+                    appointments.push(*deadline);
+                    true
+                }
+            });
+        }
+        // And what is watched: a line for each change, with when it happened.
+        if !watchers.is_empty() {
+            let open = open_surfaces(&scene, &sheets);
+            watchers.retain_mut(|w| {
+                if now >= w.until {
+                    let _ = w.lines.send("done watching".into());
+                    return false;
+                }
+                appointments.push(w.until);
+                let heard = crate::agent::what_happened(&scene, &w.before, c, &texts, &open, &heard_events);
+                if heard.trim() == "nothing changed" {
+                    return true;
+                }
+                w.before = crate::agent::before(&scene, c, &texts, open.clone());
+                let at = (now - w.start).as_secs_f32();
+                heard.lines().all(|l| w.lines.send(format!("+{at:.2}s{l}")).is_ok())
+            });
         }
         // Particles carry themselves: while one is alive, the scene does not rest.
         alive |= draw.particles_alive;
@@ -4409,7 +4467,7 @@ struct Acting {
     from: (f32, f32),
     scrolled: bool,
     before: crate::agent::Before,
-    events: Vec<&'static str>,
+    events: Vec<(&'static str, &'static str)>,
     done: Option<Instant>,
     heard: String,
     quiet: Instant,
@@ -4515,4 +4573,12 @@ fn open_surfaces(scene: &Scene, sheets: &[Sheet]) -> Vec<String> {
     v.sort();
     v.dedup();
     v
+}
+
+/// Someone watching what happens in the scene (`watch`), until then.
+struct Watcher {
+    lines: std::sync::mpsc::Sender<String>,
+    until: Instant,
+    start: Instant,
+    before: crate::agent::Before,
 }

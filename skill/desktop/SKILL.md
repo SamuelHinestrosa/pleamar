@@ -79,13 +79,17 @@ pleamar --say NAME describe json         # the same, as data
 pleamar --say NAME "press save"          # by the name describe gives; also: press X right 2, hold X
 pleamar --say NAME "type query some words"
 pleamar --say NAME "drag knob.1 0 -40"   # and wheel X 3, key escape, key ctrl+z
+pleamar --say NAME 'wait status == "Saved" 5s'   # answers as soon as it holds: no looking again and again
+pleamar --say NAME "watch 10"            # a line for each thing that happens, for 10 s
 ```
 
 Each line of `describe` is a thing's name, what it is, what it says («Save»),
 its state (`inactive`, `covered by X`, `off view`, `a person's`) and its box.
 **Each action answers with what happened** —events, facts and texts that
 changed, lists that scrolled, surfaces that opened—, so you do not need to look
-again; a row `off view` is scrolled into sight by itself. What cannot be done
+again; a row `off view` is scrolled into sight by itself. For what takes
+time —saving, loading, a search— use `wait` on what the window will say or hold
+when it is done, instead of looking until it shows. What cannot be done
 is refused with the reason (`? save is inactive`). **`a person's` means the
 scene keeps it for the user's hand** (`agent: no`): it is refused, ask them to
 press it. Prefer this to `look` and `click` for a pleamar window: it is several

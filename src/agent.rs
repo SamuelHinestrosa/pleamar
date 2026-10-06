@@ -536,11 +536,12 @@ pub fn before(scene: &Scene, c: Ctx, texts: &[String], open: Vec<String>) -> Bef
 
 /// What changed since `b`: the events heard, the facts and texts that are
 /// worth something else, the surfaces that opened or closed.
-pub fn what_happened(scene: &Scene, b: &Before, c: Ctx, texts: &[String], open: &[String], events: &[&'static str]) -> String {
+/// `heard`: what happened that is no state —(`event`, its name), (`press`, a zone)—.
+pub fn what_happened(scene: &Scene, b: &Before, c: Ctx, texts: &[String], open: &[String], heard: &[(&str, &str)]) -> String {
     let facts = c.facts;
     let mut out = String::new();
-    for e in events {
-        let _ = writeln!(out, "  event  {e}");
+    for (kind, name) in heard {
+        let _ = writeln!(out, "  {kind:<6} {}", name.split("#screen").next().unwrap_or(name));
     }
     let shown = |n: &str, v: f32| match scene.types.iter().find(|(t, _)| t == n) {
         Some((_, t)) => t.to_text(v),
@@ -582,6 +583,315 @@ pub fn what_happened(scene: &Scene, b: &Before, c: Ctx, texts: &[String], open: 
         out.push_str("  nothing changed\n");
     }
     out
+}
+
+// ── waiting ─────────────────────────────────────────────────────
+
+/// What `wait` waits for: `saving == false and rows.count > 0`,
+/// `status has "saved"`, `mode == critical`. Facts, texts and properties by
+/// their names, numbers, quoted texts, `true`, `false` and an enum's values.
+#[derive(Clone, Debug)]
+pub enum Cond {
+    Or(Box<Cond>, Box<Cond>),
+    And(Box<Cond>, Box<Cond>),
+    Not(Box<Cond>),
+    Cmp(Operand, Op, Operand),
+    Truth(Operand),
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub enum Operand {
+    Num(f32),
+    Str(String),
+    /// A bare word that is no name: an enum's value, `critical`.
+    Word(String),
+    Fact(usize),
+    Text(usize),
+    Prop(usize),
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Op {
+    Eq,
+    Ne,
+    Gt,
+    Lt,
+    Ge,
+    Le,
+    /// A text holds another: `status has "saved"`.
+    Has,
+}
+
+enum Value {
+    N(f32),
+    S(String),
+}
+
+impl Cond {
+    /// `EXPR [TIMEOUT]`: the condition and how long to wait for it (5 s if unsaid).
+    pub fn parse(scene: &Scene, src: &str) -> Result<(Cond, std::time::Duration), String> {
+        let mut tokens = tokenize(src)?;
+        let mut timeout = std::time::Duration::from_secs(5);
+        if let Some(last) = tokens.last() {
+            let t = last.as_str();
+            let secs = t.strip_suffix("ms").and_then(|n| n.parse::<f32>().ok()).map(|n| n / 1000.0).or_else(|| t.strip_suffix('s').and_then(|n| n.parse::<f32>().ok()));
+            if let Some(s) = secs.filter(|s| *s > 0.0 && *s <= 60.0) {
+                timeout = std::time::Duration::from_secs_f32(s);
+                tokens.pop();
+            }
+        }
+        if tokens.is_empty() {
+            return Err("`wait` needs what to wait for: `wait saving == false`, `wait status has \"saved\" 3s`".into());
+        }
+        let mut p = Parser { scene, t: &tokens, i: 0 };
+        let c = p.or()?;
+        if p.i < tokens.len() {
+            return Err(format!("`{}` is left over: join conditions with `and` or `or`", tokens[p.i]));
+        }
+        Ok((c, timeout))
+    }
+
+    pub fn holds(&self, scene: &Scene, c: Ctx, texts: &[String]) -> bool {
+        match self {
+            Cond::Or(a, b) => a.holds(scene, c, texts) || b.holds(scene, c, texts),
+            Cond::And(a, b) => a.holds(scene, c, texts) && b.holds(scene, c, texts),
+            Cond::Not(a) => !a.holds(scene, c, texts),
+            Cond::Truth(o) => match value(o, scene, c, texts) {
+                Value::N(n) => n != 0.0,
+                Value::S(s) => !s.is_empty(),
+            },
+            Cond::Cmp(a, op, b) => {
+                // A fact with names (`mode`, a yes or no) against a word: by its number.
+                let as_fact = |x: &Operand, y: &Operand| match (x, y) {
+                    (Operand::Fact(k), Operand::Word(w) | Operand::Str(w)) => scene.types.iter().find(|(n, _)| n == scene.facts[*k].0).and_then(|(_, t)| t.from_text(w)),
+                    _ => None,
+                };
+                let (va, vb) = match (as_fact(a, b), as_fact(b, a)) {
+                    (Some(n), _) => (value(a, scene, c, texts), Value::N(n)),
+                    (_, Some(n)) => (Value::N(n), value(b, scene, c, texts)),
+                    _ => (value(a, scene, c, texts), value(b, scene, c, texts)),
+                };
+                match (va, vb) {
+                    (Value::N(x), Value::N(y)) => match op {
+                        Op::Eq => (x - y).abs() < 1e-4,
+                        Op::Ne => (x - y).abs() >= 1e-4,
+                        Op::Gt => x > y,
+                        Op::Lt => x < y,
+                        Op::Ge => x >= y,
+                        Op::Le => x <= y,
+                        Op::Has => false,
+                    },
+                    (x, y) => {
+                        let text = |v: Value| match v {
+                            Value::N(n) if n.fract() == 0.0 => format!("{}", n as i64),
+                            Value::N(n) => n.to_string(),
+                            Value::S(s) => s,
+                        };
+                        let (x, y) = (text(x), text(y));
+                        match op {
+                            Op::Eq => x == y,
+                            Op::Ne => x != y,
+                            Op::Has => x.contains(&y),
+                            Op::Gt => x > y,
+                            Op::Lt => x < y,
+                            Op::Ge => x >= y,
+                            Op::Le => x <= y,
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// What the names it reads are worth now: what is said when it did not come.
+    pub fn now(&self, scene: &Scene, c: Ctx, texts: &[String]) -> String {
+        let mut seen: Vec<String> = Vec::new();
+        self.names(&mut |o| {
+            let s = match o {
+                Operand::Fact(k) => {
+                    let (n, v) = (scene.facts[*k].0, c.facts[*k]);
+                    let v = scene.types.iter().find(|(t, _)| t == n).map_or_else(|| number(v), |(_, t)| t.to_text(v));
+                    format!("{n} is {v}")
+                }
+                Operand::Text(k) => format!("{} is \"{}\"", scene.texts[*k].0, texts.get(*k).map_or("", String::as_str)),
+                Operand::Prop(k) => format!("{} is {}", scene.props[*k].0, number(c.props[*k].x)),
+                _ => return,
+            };
+            if !seen.contains(&s) {
+                seen.push(s);
+            }
+        });
+        seen.join(", ")
+    }
+
+    fn names(&self, f: &mut dyn FnMut(&Operand)) {
+        match self {
+            Cond::Or(a, b) | Cond::And(a, b) => {
+                a.names(f);
+                b.names(f);
+            }
+            Cond::Not(a) => a.names(f),
+            Cond::Truth(o) => f(o),
+            Cond::Cmp(a, _, b) => {
+                f(a);
+                f(b);
+            }
+        }
+    }
+}
+
+fn number(v: f32) -> String {
+    if v.fract() == 0.0 { format!("{}", v as i64) } else { format!("{v:.3}") }
+}
+
+fn value(o: &Operand, scene: &Scene, c: Ctx, texts: &[String]) -> Value {
+    let _ = scene;
+    match o {
+        Operand::Num(n) => Value::N(*n),
+        Operand::Str(s) | Operand::Word(s) => Value::S(s.clone()),
+        Operand::Fact(k) => Value::N(c.facts[*k]),
+        Operand::Text(k) => Value::S(texts.get(*k).cloned().unwrap_or_default()),
+        Operand::Prop(k) => Value::N(c.props[*k].x),
+    }
+}
+
+/// Words, numbers, quoted texts and the comparisons.
+fn tokenize(src: &str) -> Result<Vec<String>, String> {
+    let mut out = Vec::new();
+    let mut chars = src.chars().peekable();
+    while let Some(&ch) = chars.peek() {
+        if ch.is_whitespace() {
+            chars.next();
+        } else if ch == '"' {
+            chars.next();
+            let mut s = String::from("\"");
+            loop {
+                match chars.next() {
+                    Some('"') => break,
+                    Some(c) => s.push(c),
+                    None => return Err("a quoted text is not closed".into()),
+                }
+            }
+            out.push(s);
+        } else if "=!<>".contains(ch) {
+            let mut s = String::from(ch);
+            chars.next();
+            if chars.peek() == Some(&'=') {
+                s.push('=');
+                chars.next();
+            }
+            if s == "=" || s == "!" {
+                return Err(format!("`{s}` is not a comparison: ==, !=, >, <, >=, <=, has"));
+            }
+            out.push(s);
+        } else if ch == '(' || ch == ')' {
+            out.push(ch.to_string());
+            chars.next();
+        } else {
+            let mut s = String::new();
+            while let Some(&c) = chars.peek() {
+                if c.is_whitespace() || "=!<>\"()".contains(c) {
+                    break;
+                }
+                s.push(c);
+                chars.next();
+            }
+            out.push(s);
+        }
+    }
+    Ok(out)
+}
+
+struct Parser<'a> {
+    scene: &'a Scene,
+    t: &'a [String],
+    i: usize,
+}
+
+impl Parser<'_> {
+    fn word(&mut self, w: &str) -> bool {
+        let yes = self.t.get(self.i).is_some_and(|t| t == w);
+        if yes {
+            self.i += 1;
+        }
+        yes
+    }
+    fn or(&mut self) -> Result<Cond, String> {
+        let mut a = self.and()?;
+        while self.word("or") {
+            a = Cond::Or(Box::new(a), Box::new(self.and()?));
+        }
+        Ok(a)
+    }
+    fn and(&mut self) -> Result<Cond, String> {
+        let mut a = self.not()?;
+        while self.word("and") {
+            a = Cond::And(Box::new(a), Box::new(self.not()?));
+        }
+        Ok(a)
+    }
+    fn not(&mut self) -> Result<Cond, String> {
+        if self.word("not") {
+            return Ok(Cond::Not(Box::new(self.not()?)));
+        }
+        if self.word("(") {
+            let c = self.or()?;
+            if !self.word(")") {
+                return Err("a `(` is not closed".into());
+            }
+            return Ok(c);
+        }
+        let a = self.operand(false)?;
+        let op = match self.t.get(self.i).map(String::as_str) {
+            Some("==") => Op::Eq,
+            Some("!=") => Op::Ne,
+            Some(">") => Op::Gt,
+            Some("<") => Op::Lt,
+            Some(">=") => Op::Ge,
+            Some("<=") => Op::Le,
+            Some("has") => Op::Has,
+            _ => return Ok(Cond::Truth(a)),
+        };
+        self.i += 1;
+        let b = self.operand(true)?;
+        Ok(Cond::Cmp(a, op, b))
+    }
+    /// A name of the scene, a number, a quoted text; after a comparison also a
+    /// bare word, which an enum's value is.
+    fn operand(&mut self, after_comparison: bool) -> Result<Operand, String> {
+        let Some(t) = self.t.get(self.i).cloned() else {
+            return Err("something to compare is missing at the end".into());
+        };
+        self.i += 1;
+        if let Some(s) = t.strip_prefix('"') {
+            return Ok(Operand::Str(s.to_owned()));
+        }
+        if let Ok(n) = t.parse::<f32>() {
+            return Ok(Operand::Num(n));
+        }
+        match t.as_str() {
+            "true" => return Ok(Operand::Num(1.0)),
+            "false" => return Ok(Operand::Num(0.0)),
+            _ => {}
+        }
+        let s = self.scene;
+        if let Some(k) = s.facts.iter().position(|f| f.0 == t) {
+            return Ok(Operand::Fact(k));
+        }
+        if let Some(k) = s.texts.iter().position(|f| f.0 == t) {
+            return Ok(Operand::Text(k));
+        }
+        if let Some(k) = s.props.iter().position(|f| f.0 == t) {
+            return Ok(Operand::Prop(k));
+        }
+        let enum_value = s.types.iter().any(|(_, ty)| matches!(ty, crate::scene::FactType::Enum(v) if v.contains(&t)));
+        if after_comparison && enum_value {
+            return Ok(Operand::Word(t));
+        }
+        let known: Vec<String> = s.facts.iter().map(|f| f.0).chain(s.texts.iter().map(|f| f.0)).chain(s.props.iter().map(|f| f.0)).filter(|n| !n.contains('·')).map(str::to_owned).collect();
+        let hint = crate::language::closest_match(&t, known.iter()).map_or(String::new(), |m| format!(": did you mean '{m}'?"));
+        Err(format!("there is no fact, text or property called '{t}'{hint}"))
+    }
 }
 
 fn round(v: f32) -> i32 {
@@ -774,6 +1084,23 @@ mod tests {
         assert!(at("save").unwrap_err().contains("inactive"));
         // Hidden is not even there to be found.
         assert_eq!(locate(&scene, "private", &sight.shown), None);
+    }
+
+    #[test]
+    fn a_wait_reads_the_scene_as_it_is() {
+        let (scene, _) = crate::language::read_file(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/agent.plm")).unwrap();
+        let props: Vec<Animated> = scene.props.iter().map(|(_, v, s)| Animated { x: *v, v: 0.0, target: *v, spring: *s }).collect();
+        let mut facts: Vec<f32> = scene.facts.iter().map(|f| f.1).collect();
+        let texts: Vec<String> = scene.texts.iter().map(|t| t.1.clone()).collect();
+        let holds = |src: &str, facts: &[f32]| Cond::parse(&scene, src).unwrap().0.holds(&scene, Ctx { props: &props, facts }, &texts);
+        assert!(holds("dirty == false", &facts));
+        assert!(holds("status has \"Rea\" and not dirty", &facts));
+        assert!(!holds("status == \"Saved\" or dirty", &facts));
+        facts[scene.facts.iter().position(|f| f.0 == "dirty").unwrap()] = 1.0;
+        assert!(holds("(dirty == true) and status != \"\"", &facts));
+        assert_eq!(Cond::parse(&scene, "dirty 2s").unwrap().1, std::time::Duration::from_secs(2));
+        assert!(Cond::parse(&scene, "drity").unwrap_err().contains("did you mean 'dirty'"));
+        assert!(Cond::parse(&scene, "dirty == true extra").is_err());
     }
 
     #[test]

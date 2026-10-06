@@ -385,13 +385,18 @@ pub fn die_with_parent(command: &mut std::process::Command) {
     let _ = command;
 }
 
+/// What answers each line said to the scene. It returns the answer, if any;
+/// one that goes on talking (`watch`) writes its lines with `out`, which says
+/// `false` once whoever asked has gone.
+pub type Commands = std::sync::Arc<dyn Fn(String, &mut dyn FnMut(&str) -> bool) -> Option<String> + Send + Sync>;
+
 /// Commands from outside: a global compositor shortcut, a script, another
 /// application. One line of text per command, through a socket named after the
 /// scene. `pleamar --say "emit toggle"` is the other end.
 ///
 /// On Linux and macOS, a Unix socket. On Windows it will be a named pipe.
 #[cfg(unix)]
-pub fn listen_for_commands(scene: &str, receive: Box<dyn Fn(String) -> Option<String> + Send>) {
+pub fn listen_for_commands(scene: &str, receive: Commands) {
     use std::io::{BufRead, BufReader, Write};
     let Some(mut path) = command_socket_path(scene) else { return };
     let _ = std::fs::create_dir_all(path.parent().unwrap());
@@ -413,12 +418,18 @@ pub fn listen_for_commands(scene: &str, receive: Box<dyn Fn(String) -> Option<St
         .spawn(move || {
             for mut c in listener.incoming().map_while(Result::ok) {
                 let Ok(reader) = c.try_clone() else { continue };
-                for line in BufReader::new(reader).lines().map_while(Result::ok) {
-                    // A question (`get open`) is answered back the way it came.
-                    if let Some(answer) = receive(line) {
-                        let _ = writeln!(c, "{answer}");
+                // Each one on its own: a `wait` or a `watch` that lasts does not
+                // keep the next order waiting (an agent presses while it watches).
+                let receive = receive.clone();
+                let _ = std::thread::Builder::new().name("command".into()).spawn(move || {
+                    for line in BufReader::new(reader).lines().map_while(Result::ok) {
+                        let mut out = |l: &str| writeln!(c, "{l}").and_then(|_| c.flush()).is_ok();
+                        // A question (`get open`) is answered back the way it came.
+                        if let Some(answer) = receive(line, &mut out) {
+                            let _ = writeln!(c, "{}", answer.trim_end_matches('\n'));
+                        }
                     }
-                }
+                });
             }
         })
         .ok();
@@ -502,17 +513,18 @@ pub fn send(scene: Option<&str>, command: &str) -> Result<(), String> {
     writeln!(s, "{command}").map_err(|e| e.to_string())?;
     // Everything has been said: if it was a question, now comes whatever they answer.
     let _ = s.shutdown(std::net::Shutdown::Write);
-    let _ = s.set_read_timeout(Some(std::time::Duration::from_secs(2)));
-    let mut answer = String::new();
-    let _ = std::io::Read::read_to_string(&mut s, &mut answer);
-    if !answer.is_empty() {
-        print!("{answer}");
+    // A `wait` waits up to a minute; a `watch` talks for as long as it was asked.
+    let _ = s.set_read_timeout(if command.starts_with("watch") { None } else { Some(std::time::Duration::from_secs(65)) });
+    // Line by line, as it comes: a `watch` is read while it happens.
+    for line in std::io::BufRead::lines(std::io::BufReader::new(s)).map_while(Result::ok) {
+        println!("{line}");
+        let _ = std::io::stdout().flush();
     }
     Ok(())
 }
 
 #[cfg(not(unix))]
-pub fn listen_for_commands(_: &str, _: Box<dyn Fn(String) -> Option<String> + Send>) {}
+pub fn listen_for_commands(_: &str, _: Commands) {}
 #[cfg(not(unix))]
 pub fn send(_: Option<&str>, _: &str) -> Result<(), String> {
     Err("this system has nowhere to receive commands yet: the named pipe is missing".into())

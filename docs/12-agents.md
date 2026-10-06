@@ -1,6 +1,6 @@
 # Scenes an agent can read — design
 
-**Status:** steps 1, 2 and 4 (`describe`, acting by name, `label:`, `agent:`) implemented on 6 Oct 2026; the rest is design. Each step is measured with [the agent race](../tools/agent-race/results.md). Agreed with Abel on 6 Oct 2026 as the first step towards pleamar as a way to give **any program** its interface. This note is the first stretch of that road: what the scene already knows, handed to whoever drives it from outside.
+**Status:** steps 1 to 4 (`describe`, acting by name, `wait`, `watch`, `label:`, `agent:`) implemented on 6 Oct 2026; the rest is design. Each step is measured with [the agent race](../tools/agent-race/results.md). Agreed with Abel on 6 Oct 2026 as the first step towards pleamar as a way to give **any program** its interface. This note is the first stretch of that road: what the scene already knows, handed to whoever drives it from outside.
 
 ## 1. Why
 
@@ -99,16 +99,32 @@ Most of the time the agent does not need to look again. A press answers in 0.3 t
 
 ## 5. Waiting and watching
 
-`wait EXPR [TIMEOUT]` answers as soon as the expression holds, or says it did not after TIMEOUT (5 s if unsaid). EXPR is an ordinary pleamar expression, checked with the scene's names, so a typo gets the usual "did you mean…?" instead of a wait that never ends:
+Implemented (step 3, 6 Oct 2026).
+
+`wait CONDITION [TIMEOUT]` answers as soon as the condition holds, or says it did not after TIMEOUT (`2s`, `500ms`; 5 s if unsaid, a minute at most), with what the names it reads are worth then. The condition reads facts, texts and properties by name; numbers, quoted texts, `true`, `false` and an enum's values; `== != > < >= <=`, `has` for a text that holds another, `and`, `or`, `not` and brackets. It is checked against the scene's names first, so a typo gets a "did you mean…?" instead of a wait that never ends. It is looked at every frame, so it answers in the frame it becomes true:
 
 ```
-$ pleamar --say notes "wait saving == false and rows.count > 0"
-yes, after 640 ms
-$ pleamar --say notes "wait sync == done 2s"
-? not after 2 s: sync is failed
+$ pleamar --say notes 'wait status == "Saved"'
+yes, after 794 ms
+$ pleamar --say notes "wait dirty == true 1s"
+? not after 1.0 s: dirty is false
+$ pleamar --say notes 'wait sttus has "x"'
+? there is no fact, text or property called 'sttus': did you mean 'status'?
 ```
 
-`watch` keeps the socket open and writes one line per change, the same lines as "what happened", until it is closed. It replaces the loop of looking at the picture, and costs nothing when nothing happens.
+It is not the language's own expressions: those need the compiler's names (`let`s, components), which a running scene no longer has. It is the part an agent asks about: what the scene says and holds.
+
+`watch [SECONDS]` writes a line for each thing that happens, with when, for that long (10 s if unsaid): what a person or an agent presses, the events, and the same lines as "what happened". It costs nothing when nothing happens, and since every connection to the socket is served apart, an agent can watch with one and act with another:
+
+```
+$ pleamar --say notes "watch 3"
+watching for 3 s
++0.50s  press  hit#r2
++0.50s  event  open
++0.52s  fact   sel: -1 → 2
++0.52s  text   status: "No note open" → "Opened: pleamar ideas"
+done watching
+```
 
 ## 6. `agent: no`: for a person's hand
 
@@ -143,7 +159,7 @@ A zone with `agent: no` is described (an agent knows it is there and can tell th
 | --- | --- | --- |
 | 1 ✅ | `describe` with derived roles and labels, `label:`, `agent:`, the warning | `tests/agent*.plm` and `label-not-a-text.plm` in `run-tests.sh`; `src/agent.rs`'s tests build the tree of `tests/agent.plm`; by hand, a notes window and Marea in a headless pleamar-wm |
 | 2 ✅ | `press`, `hold`, `drag`, `wheel`, `type`, `key`, with their refusals and "what happened" | `src/agent.rs`'s tests (reading an action, being refused); every action by hand on the race's window in a headless pleamar-wm; the race, live |
-| 3 | `wait` and `watch` | A test that waits for a fact a rule sets after a timer |
+| 3 ✅ | `wait` and `watch` | `a_wait_reads_the_scene_as_it_is`; by hand in a headless pleamar-wm, watching while pressing; the race now saves, which takes 0.8 s |
 | 4 ✅ | `agent: no` and `agent: hidden` over the socket | `a_hand_is_refused_what_a_person_could_not_do_either` |
 | 5 | `hello`, and pleamar-wm's `agent tree/press/type/wait/watch` | Headless pleamar-wm with Marea |
 | 6 | The seat: pleamar reads `wl_seat.name`, pleamar-wm uses the agent seat for pleamar windows, the press is dropped | Headless pleamar-wm: `agent click` on an `agent: no` zone does nothing |

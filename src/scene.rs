@@ -2033,6 +2033,10 @@ pub enum ToRender {
     /// An agent asks the scene to do something by name, as a hand would
     /// (`press save`); it is answered with what happened.
     Act(crate::agent::Act, std::sync::mpsc::Sender<String>),
+    /// `wait EXPR [TIMEOUT]`: answered as soon as it holds, or when it is late.
+    Wait(String, std::sync::mpsc::Sender<String>),
+    /// `watch`: a line for each thing that happens, until then.
+    Watch(std::sync::mpsc::Sender<String>, std::time::Instant),
     /// `pleamar --report`: measure every frame from now (`None`), or answer
     /// with what was measured and stop (`Some`).
     Probe(Option<std::sync::mpsc::Sender<String>>),

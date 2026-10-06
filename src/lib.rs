@@ -297,11 +297,35 @@ pub fn run_with(options: Vec<String>) {
     {
         let name = std::path::Path::new(&a.scene).file_stem().map_or(a.scene.clone(), |n| n.to_string_lossy().into_owned());
         let tx = Mutex::new((to_render.clone(), to_logic_for_commands));
-        platform::listen_for_commands(&name, Box::new(move |line| {
-            let guard = tx.lock().unwrap();
-            let (tx, to_logic) = &*guard;
+        platform::listen_for_commands(&name, std::sync::Arc::new(move |line: String, out: &mut dyn FnMut(&str) -> bool| {
+            // Copies, and the lock let go at once: a `wait` that lasts does not hold up the others.
+            let (tx, to_logic) = {
+                let guard = tx.lock().unwrap();
+                (guard.0.clone(), guard.1.clone())
+            };
+            let (tx, to_logic) = (&tx, &to_logic);
             let mut p = line.trim().splitn(3, ' ');
             let (what, who, rest) = (p.next().unwrap_or(""), p.next().unwrap_or(""), p.next().unwrap_or(""));
+            let after = line.trim().split_once(' ').map_or("", |x| x.1);
+            // `wait saving == false 3s`: answered as soon as it holds, or when it is late.
+            if what == "wait" {
+                let (question, answer) = std::sync::mpsc::channel();
+                let _ = tx.send(ToRender::Wait(after.to_owned(), question));
+                return Some(answer.recv_timeout(std::time::Duration::from_secs(62)).unwrap_or_else(|_| "? the render does not answer\n".into()));
+            }
+            // `watch [10s]`: a line for each thing that happens, for that long (ten seconds if unsaid).
+            if what == "watch" {
+                let secs = after.trim().trim_end_matches('s').parse::<f32>().ok().filter(|s| *s > 0.0 && *s <= 3600.0).unwrap_or(10.0);
+                let (lines, heard) = std::sync::mpsc::channel();
+                let until = std::time::Instant::now() + std::time::Duration::from_secs_f32(secs);
+                let _ = tx.send(ToRender::Watch(lines, until));
+                while let Ok(l) = heard.recv_timeout(until.saturating_duration_since(std::time::Instant::now()) + std::time::Duration::from_millis(200)) {
+                    if !out(&l) {
+                        break;
+                    }
+                }
+                return None;
+            }
             // `pleamar --report`: measuring starts, and later its report is asked for.
             if what == "probe" {
                 if who == "report" {
@@ -319,7 +343,6 @@ pub fn run_with(options: Vec<String>) {
                 return Some(answer.recv_timeout(std::time::Duration::from_secs(2)).unwrap_or_else(|_| "? the render does not answer".into()));
             }
             // `press save`, `type query words`…: by name, as a hand would. It answers with what happened.
-            let after = line.trim().split_once(' ').map_or("", |x| x.1);
             if let Some(act) = crate::agent::Act::parse(what, after) {
                 return Some(match act {
                     Err(m) => format!("? {m}\n"),
@@ -357,7 +380,7 @@ pub fn run_with(options: Vec<String>) {
                 "quit" => quit_after_render(tx),
                 _ => {
                     eprintln!("orders · I don't understand '{line}'");
-                    return Some(format!("? I don't understand '{}': emit, fact, text, submit, focus, get, describe, press, hold, drag, wheel, type, key, probe, quit", line.trim()));
+                    return Some(format!("? I don't understand '{}': emit, fact, text, submit, focus, get, describe, press, hold, drag, wheel, type, key, wait, watch, probe, quit", line.trim()));
                 }
             };
             None
