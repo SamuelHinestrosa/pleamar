@@ -318,6 +318,18 @@ pub fn run_with(options: Vec<String>) {
                 let _ = tx.send(ToRender::Describe(who == "json", question));
                 return Some(answer.recv_timeout(std::time::Duration::from_secs(2)).unwrap_or_else(|_| "? the render does not answer".into()));
             }
+            // `press save`, `type query words`…: by name, as a hand would. It answers with what happened.
+            let after = line.trim().split_once(' ').map_or("", |x| x.1);
+            if let Some(act) = crate::agent::Act::parse(what, after) {
+                return Some(match act {
+                    Err(m) => format!("? {m}\n"),
+                    Ok(act) => {
+                        let (question, answer) = std::sync::mpsc::channel();
+                        let _ = tx.send(ToRender::Act(act, question));
+                        answer.recv_timeout(std::time::Duration::from_secs(8)).unwrap_or_else(|_| "? the render does not answer\n".into())
+                    }
+                });
+            }
             if what == "get" {
                 let (question, answer) = std::sync::mpsc::channel();
                 let _ = tx.send(ToRender::Query(scene::intern(who), question));
@@ -345,7 +357,7 @@ pub fn run_with(options: Vec<String>) {
                 "quit" => quit_after_render(tx),
                 _ => {
                     eprintln!("orders · I don't understand '{line}'");
-                    return Some(format!("? I don't understand '{}': emit, fact, text, submit, focus, get, describe, probe, quit", line.trim()));
+                    return Some(format!("? I don't understand '{}': emit, fact, text, submit, focus, get, describe, press, hold, drag, wheel, type, key, probe, quit", line.trim()));
                 }
             };
             None

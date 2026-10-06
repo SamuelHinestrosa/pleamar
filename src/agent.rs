@@ -125,7 +125,7 @@ pub fn role_of(scene: &Scene, k: usize, z: &Zone) -> Role {
 }
 
 /// The field a zone belongs to: its text, its placeholder and whether it is secret.
-fn field_of<'s>(scene: &'s Scene, z: &Zone) -> Option<(usize, &'s crate::scene::Content, bool)> {
+pub fn field_of<'s>(scene: &'s Scene, z: &Zone) -> Option<(usize, &'s crate::scene::Content, bool)> {
     match scene.instrs.get(z.at) {
         Some(Instr::Field { text, zone, placeholder, secret, .. }) if *zone == z.id => Some((text.0 as usize, placeholder, *secret)),
         _ => scene.instrs.iter().find_map(|i| match i {
@@ -314,6 +314,276 @@ pub fn unnamed(parts: &[Part]) -> Vec<&'static str> {
     parts.iter().flat_map(|p| &p.nodes).filter(|n| matches!(n.role, Role::Button | Role::Item | Role::Slider) && n.label.is_empty()).map(|n| n.name).collect()
 }
 
+// ── acting by name ──────────────────────────────────────────────
+
+/// What an agent asks the scene to do, by name, as a hand would.
+#[derive(Clone, Debug)]
+pub enum Act {
+    /// A press and release at the zone, `count` times; 0 is the left button.
+    Press { name: String, button: u8, count: u8 },
+    /// Pressed until its `on hold` fires.
+    Hold { name: String },
+    /// Pressed at the zone and moved by so much before letting go.
+    Drag { name: String, by: (f32, f32) },
+    /// Notches of the wheel over it; positive, upwards.
+    Wheel { name: String, notches: f32 },
+    /// The field focused and this left in it, as typing would.
+    Type { name: String, text: String },
+    /// A key to the scene, as the keyboard would send it: `Escape`, `Ctrl+z`.
+    Key { name: String, mods: crate::scene::Mods, typed: Option<String> },
+}
+
+impl Act {
+    /// `press save`, `press row.3 right 2`, `hold card`, `drag knob.1 0 -40`,
+    /// `wheel list -3`, `type query some words`, `key escape`.
+    pub fn parse(what: &str, rest: &str) -> Option<Result<Act, String>> {
+        if !matches!(what, "press" | "hold" | "drag" | "wheel" | "type" | "key") {
+            return None;
+        }
+        let mut w = rest.split_whitespace();
+        let name = w.next().map(str::to_owned);
+        let need = |n: Option<String>| n.ok_or_else(|| format!("`{what}` needs the name of what to {what}"));
+        Some((|| match what {
+            "press" => {
+                let name = need(name)?;
+                let (mut button, mut count) = (0, 1);
+                for x in w {
+                    match x {
+                        "left" => button = 0,
+                        "right" => button = 1,
+                        "middle" => button = 2,
+                        n => count = n.parse::<u8>().ok().filter(|n| (1..=3).contains(n)).ok_or_else(|| format!("`press {name}` takes left, right or middle, and how many times (1 to 3): not `{n}`"))?,
+                    }
+                }
+                Ok(Act::Press { name, button, count })
+            }
+            "hold" => Ok(Act::Hold { name: need(name)? }),
+            "drag" => {
+                let name = need(name)?;
+                let n: Vec<f32> = w.filter_map(|x| x.parse().ok()).collect();
+                match n[..] {
+                    [dx, dy] => Ok(Act::Drag { name, by: (dx, dy) }),
+                    _ => Err(format!("`drag {name}` needs how far, in pixels: `drag {name} 0 -40`")),
+                }
+            }
+            "wheel" => {
+                let name = need(name)?;
+                let n = w.next().and_then(|x| x.parse::<f32>().ok()).ok_or_else(|| format!("`wheel {name}` needs how many notches: 3 up, -3 down"))?;
+                Ok(Act::Wheel { name, notches: n })
+            }
+            "type" => {
+                let name = need(name)?;
+                let text = rest.trim_start().strip_prefix(name.as_str()).unwrap_or("").trim_start().to_owned();
+                Ok(Act::Type { name, text })
+            }
+            "key" => {
+                let combo = need(name)?;
+                let mut mods = crate::scene::Mods::default();
+                let mut key = combo.as_str();
+                while let Some((m, k)) = key.split_once('+').filter(|(_, k)| !k.is_empty()) {
+                    match m.to_ascii_lowercase().as_str() {
+                        "ctrl" | "control" => mods.ctrl = true,
+                        "alt" => mods.alt = true,
+                        "shift" => mods.shift = true,
+                        "super" | "logo" => mods.logo = true,
+                        _ => return Err(format!("`{m}` is not a modifier: ctrl, alt, shift, super")),
+                    }
+                    key = k;
+                }
+                let (name, typed) = key_name(key);
+                Ok(Act::Key { name, mods, typed })
+            }
+            _ => unreachable!(),
+        })())
+    }
+
+    pub fn name(&self) -> &str {
+        match self {
+            Act::Press { name, .. } | Act::Hold { name } | Act::Drag { name, .. } | Act::Wheel { name, .. } | Act::Type { name, .. } | Act::Key { name, .. } => name,
+        }
+    }
+}
+
+/// A key as an agent writes it (`enter`, `escape`, `a`) and as the keyboard
+/// names it (`Return`, `Escape`, `a`), with the letter it writes, if any.
+fn key_name(k: &str) -> (String, Option<String>) {
+    let named = match k.to_ascii_lowercase().as_str() {
+        "enter" | "return" => "Return",
+        "escape" | "esc" => "Escape",
+        "tab" => "Tab",
+        "backspace" => "BackSpace",
+        "delete" | "del" => "Delete",
+        "space" => return ("space".into(), Some(" ".into())),
+        "up" => "Up",
+        "down" => "Down",
+        "left" => "Left",
+        "right" => "Right",
+        "home" => "Home",
+        "end" => "End",
+        "pageup" => "Prior",
+        "pagedown" => "Next",
+        f if f.len() <= 3 && f.starts_with('f') && f[1..].parse::<u8>().is_ok() => return (f.to_ascii_uppercase(), None),
+        _ if k.chars().count() == 1 => return (k.to_owned(), Some(k.to_owned())),
+        _ => return (k.to_owned(), None),
+    };
+    (named.to_owned(), None)
+}
+
+/// The zone a name means: as the scene knows it, or without the `#screen0`
+/// that `describe` leaves out, in the copy that is on screen.
+pub fn locate(scene: &Scene, name: &str, shown: &[Shown]) -> Option<usize> {
+    let hidden = |k: &usize| scene.zones[*k].reach == Reach::Hidden;
+    if let Some(k) = scene.zones.iter().position(|z| z.id == name).filter(|k| !hidden(k)) {
+        return Some(k);
+    }
+    shown.iter().filter_map(|s| scene.surfaces.get(s.surface)).find_map(|s| {
+        let full = format!("{name}#screen{}", s.instance);
+        scene.zones.iter().position(|z| z.id == full).filter(|k| !hidden(k))
+    })
+}
+
+/// Where a hand would press zone `k` now, or why it cannot: the point of
+/// it that is on top, its centre if that is. `Ok(None)`: it is scrolled out
+/// of its list, which has to bring it into sight first.
+pub fn reach_point(scene: &Scene, c: Ctx, k: usize, sight: &Sight) -> Result<Option<(f32, f32)>, String> {
+    let z = &scene.zones[k];
+    let said = z.id.split("#screen").next().unwrap_or(z.id);
+    if z.reach == Reach::Person {
+        return Err(format!("? {said} is for a person's hand (agent: no): ask them to"));
+    }
+    let Some(b) = z.bounds(c).filter(|_| !(sight.gone)(z.at)) else {
+        return Err(format!("? {said} is not there now"));
+    };
+    let centre = ((b[0] + b[2]) * 0.5, (b[1] + b[3]) * 0.5);
+    let on_screen = |x: f32, y: f32| sight.shown.iter().any(|s| inside(s.bounds, x, y) && scene.surfaces.get(s.surface).is_some_and(|f| !f.lock_screen && !f.agent_hidden));
+    if let Some(l) = z.within {
+        let lz = &scene.zones[l.0 as usize];
+        if let Some(w) = lz.bounds(c)
+            && !inside(w, centre.0, centre.1)
+            && on_screen((w[0] + w[2]) * 0.5, (w[1] + w[3]) * 0.5)
+        {
+            return Ok(None);
+        }
+    }
+    if !on_screen(centre.0, centre.1) {
+        return Err(format!("? {said} is not on screen"));
+    }
+    if !z.active.is_true(c) {
+        return Err(format!("? {said} is inactive"));
+    }
+    let rank = |k: usize| sight.rank.map_or((k, 0, 0), |r| r[k]);
+    let top = |x: f32, y: f32| {
+        scene
+            .zones
+            .iter()
+            .enumerate()
+            .filter(|(_, o)| !(sight.gone)(o.at) && o.active.is_true(c) && o.contains(c, x, y))
+            .max_by_key(|(j, _)| (rank(*j), *j))
+            .map(|(j, _)| j)
+    };
+    // The centre if it is its own; if not —a ring, a corner under a badge—
+    // any point of it that is.
+    let mut candidates = vec![centre];
+    for i in 1..6 {
+        for j in 1..6 {
+            candidates.push((b[0] + (b[2] - b[0]) * i as f32 / 6.0, b[1] + (b[3] - b[1]) * j as f32 / 6.0));
+        }
+    }
+    // A list's zone is under its rows, and its wheel and its drag reach it all the same.
+    if let Some(p) = candidates.iter().find(|(x, y)| z.contains(c, *x, *y) && (z.scrolls.is_some() || top(*x, *y) == Some(k))) {
+        return Ok(Some(*p));
+    }
+    let over = top(centre.0, centre.1).filter(|t| *t != k).map_or("something", |t| scene.zones[t].id);
+    Err(format!("? {said} is covered by {}", over.split("#screen").next().unwrap_or(over)))
+}
+
+/// How far its list has to scroll for zone `k` to be in sight, and along
+/// which property: positive brings what is below up.
+pub fn scroll_into_view(scene: &Scene, c: Ctx, k: usize) -> Option<(crate::scene::PropId, f32)> {
+    let z = &scene.zones[k];
+    let l = &scene.zones[z.within?.0 as usize];
+    let (b, w) = (z.bounds(c)?, l.bounds(c)?);
+    let along_x = (b[0] + b[2]) * 0.5 < w[0] || (b[0] + b[2]) * 0.5 > w[2];
+    let (lo, hi, wlo, whi) = if along_x { (b[0], b[2], w[0], w[2]) } else { (b[1], b[3], w[1], w[3]) };
+    let by = if hi > whi { hi - whi + 4.0 } else if lo < wlo { lo - wlo - 4.0 } else { 0.0 };
+    Some((l.scrolls?, by))
+}
+
+/// What the scene is at a moment, to say afterwards what an action changed.
+pub struct Before {
+    facts: Vec<f32>,
+    texts: Vec<String>,
+    open: Vec<String>,
+    /// Where each list was scrolled to.
+    scrolled: Vec<f32>,
+}
+
+fn scrolled(scene: &Scene, c: Ctx) -> Vec<f32> {
+    scene.zones.iter().map(|z| z.scrolls.map_or(0.0, |p| c.props[p.0 as usize].x)).collect()
+}
+
+fn quiet_fact(n: &str) -> bool {
+    n.contains('·')
+        || ["pointer.", "local.", "drag.", "screen.", "cursor.", "lock.", "wheel", "time"].iter().any(|p| n.starts_with(p))
+        || n.ends_with(".grab")
+        || n.ends_with(".hover")
+        || n.ends_with(".pressed")
+}
+
+pub fn before(scene: &Scene, c: Ctx, texts: &[String], open: Vec<String>) -> Before {
+    Before { facts: c.facts.to_vec(), texts: texts.to_vec(), open, scrolled: scrolled(scene, c) }
+}
+
+/// What changed since `b`: the events heard, the facts and texts that are
+/// worth something else, the surfaces that opened or closed.
+pub fn what_happened(scene: &Scene, b: &Before, c: Ctx, texts: &[String], open: &[String], events: &[&'static str]) -> String {
+    let facts = c.facts;
+    let mut out = String::new();
+    for e in events {
+        let _ = writeln!(out, "  event  {e}");
+    }
+    let shown = |n: &str, v: f32| match scene.types.iter().find(|(t, _)| t == n) {
+        Some((_, t)) => t.to_text(v),
+        None if v.fract() == 0.0 => format!("{}", v as i64),
+        None => format!("{v:.3}"),
+    };
+    for (k, (n, _)) in scene.facts.iter().enumerate() {
+        let (was, is) = (b.facts.get(k).copied().unwrap_or(0.0), facts.get(k).copied().unwrap_or(0.0));
+        if was != is && !quiet_fact(n) {
+            let _ = writeln!(out, "  fact   {n}: {} → {}", shown(n, was), shown(n, is));
+        }
+    }
+    let secrets = crate::scene::SECRETS.lock().map(|s| s.clone()).unwrap_or_default();
+    let kept: Vec<&str> = scene.zones.iter().filter(|z| z.reach != Reach::Any).map(|z| z.id).collect();
+    for (k, (n, _)) in scene.texts.iter().enumerate() {
+        let (was, is) = (b.texts.get(k).map_or("", String::as_str), texts.get(k).map_or("", String::as_str));
+        if was != is {
+            if secrets.contains(n) || kept.contains(n) {
+                let _ = writeln!(out, "  text   {n}: changed (hidden)");
+            } else {
+                let _ = writeln!(out, "  text   {n}: \"{was}\" → \"{is}\"");
+            }
+        }
+    }
+    for (k, now) in scrolled(scene, c).into_iter().enumerate() {
+        let was = b.scrolled.get(k).copied().unwrap_or(0.0);
+        if (now - was).abs() >= 1.0 {
+            let n = scene.zones[k].id;
+            let _ = writeln!(out, "  scroll {}: {} → {}", n.split("#screen").next().unwrap_or(n), was.round(), now.round());
+        }
+    }
+    for s in open.iter().filter(|s| !b.open.contains(s)) {
+        let _ = writeln!(out, "  opened {s}");
+    }
+    for s in b.open.iter().filter(|s| !open.contains(s)) {
+        let _ = writeln!(out, "  closed {s}");
+    }
+    if out.is_empty() {
+        out.push_str("  nothing changed\n");
+    }
+    out
+}
+
 fn round(v: f32) -> i32 {
     v.round() as i32
 }
@@ -473,6 +743,37 @@ mod tests {
         assert_eq!((save.label.as_str(), save.inactive), ("Save Ready", false));
         let json: serde_json::Value = serde_json::from_str(&to_json(&parts)).unwrap();
         assert!(json[0]["nodes"].as_array().unwrap().iter().any(|n| n["name"] == "save" && n["label"] == "Save Ready"));
+    }
+
+    #[test]
+    fn an_action_is_read_as_it_is_written() {
+        let p = |w: &str, r: &str| Act::parse(w, r).unwrap();
+        assert!(matches!(p("press", "save"), Ok(Act::Press { button: 0, count: 1, .. })));
+        assert!(matches!(p("press", "row.3 right 2"), Ok(Act::Press { button: 1, count: 2, .. })));
+        assert!(matches!(p("drag", "knob.1 0 -40"), Ok(Act::Drag { by: (0.0, -40.0), .. })));
+        assert!(matches!(p("type", "query  two words"), Ok(Act::Type { ref text, .. }) if text == "two words"));
+        assert!(matches!(p("key", "ctrl+z"), Ok(Act::Key { ref name, mods, .. }) if name == "z" && mods.ctrl));
+        assert!(matches!(p("key", "enter"), Ok(Act::Key { ref name, .. }) if name == "Return"));
+        assert!(p("press", "").is_err());
+        assert!(p("wheel", "list up").is_err());
+        assert!(Act::parse("emit", "x").is_none());
+    }
+
+    #[test]
+    fn a_hand_is_refused_what_a_person_could_not_do_either() {
+        let (scene, _) = crate::language::read_file(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/agent.plm")).unwrap();
+        let props: Vec<Animated> = scene.props.iter().map(|(_, v, s)| Animated { x: *v, v: 0.0, target: *v, spring: *s }).collect();
+        let facts: Vec<f32> = scene.facts.iter().map(|f| f.1).collect();
+        let c = Ctx { props: &props, facts: &facts };
+        let shown = vec![Shown { surface: 0, popup: None, bounds: [0.0, 0.0, 400.0, 300.0], scale: 1.0 }];
+        let never = |_: usize| false;
+        let sight = Sight { shown, texts_seen: &[], gone: &never, rank: None };
+        let at = |n: &str| reach_point(&scene, c, locate(&scene, n, &sight.shown).unwrap(), &sight);
+        assert_eq!(at("knob.1"), Ok(Some((100.0, 100.0))));
+        assert!(at("delete").unwrap_err().contains("a person's hand"));
+        assert!(at("save").unwrap_err().contains("inactive"));
+        // Hidden is not even there to be found.
+        assert_eq!(locate(&scene, "private", &sight.shown), None);
     }
 
     #[test]

@@ -66,24 +66,30 @@ pleamar-wm agent help
    you work, the user's monitor glows; without it the glow waits a minute and
    a half in case you are only thinking.
 
-## A pleamar program tells you what it holds
+## A pleamar program: ask it, and act by name
 
 A window or panel made with pleamar (its program is `pleamar`) can be asked
-what is on it instead of guessed from its picture. Its name is its scene's
-file name, and the sockets of the running ones are in `$PLEAMAR_SOCKETS`
-(`NAME.sock`):
+what is on it and used by name, with no picture and no coordinates. Its name is
+its scene's file name, and the sockets of the running ones are in
+`$PLEAMAR_SOCKETS` (`NAME.sock`):
 
 ```sh
-pleamar --say NAME describe           # every surface on screen, and in it each button, slider, field, list and item
-pleamar --say NAME describe json      # the same, as data
+pleamar --say NAME describe              # every surface on screen: each button, slider, field, list, item and text
+pleamar --say NAME describe json         # the same, as data
+pleamar --say NAME "press save"          # by the name describe gives; also: press X right 2, hold X
+pleamar --say NAME "type query some words"
+pleamar --say NAME "drag knob.1 0 -40"   # and wheel X 3, key escape, key ctrl+z
 ```
 
-Each line is a thing's name, what it is, what it says («Save»), its state
-(`inactive`, `covered by X`, `off view`, `a person's`) and its box in the
-surface's pixels. Use it to know what is there and what each thing is called
-before you look; to act, `look` and `click` as usual for now. **`a person's`
-means the scene keeps it for the user's hand** (`agent: no`): do not press
-it, ask them to.
+Each line of `describe` is a thing's name, what it is, what it says («Save»),
+its state (`inactive`, `covered by X`, `off view`, `a person's`) and its box.
+**Each action answers with what happened** —events, facts and texts that
+changed, lists that scrolled, surfaces that opened—, so you do not need to look
+again; a row `off view` is scrolled into sight by itself. What cannot be done
+is refused with the reason (`? save is inactive`). **`a person's` means the
+scene keeps it for the user's hand** (`agent: no`): it is refused, ask them to
+press it. Prefer this to `look` and `click` for a pleamar window: it is several
+times faster and cannot miss.
 
 ## What works best
 

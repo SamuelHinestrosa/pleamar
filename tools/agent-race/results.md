@@ -19,6 +19,7 @@ characters).
 | Date | Commit | look | describe | A task | B task | A tokens | B tokens | B acts by | Checked | Note |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | 2026-10-06 | 9283a89+ | 220 | 6 | 1596 | 937 | 1731 | 577 | click | ✓ | describe, with loose texts |
+| 2026-10-06 | 3c8606d+ | 280 | 6 | 1832 | 453 | 1731 | 243 | press | ✓ | press by name |
 
 ## With the model in the loop
 
@@ -29,3 +30,4 @@ deciding included. Written by hand.
 | Date | Commit | Model | A (pictures) | B (describe) | What made the difference |
 | --- | --- | --- | --- | --- | --- |
 | 2026-10-06 | 9283a89+ | Claude Opus 5.5 | 16.4 s, 3 pictures of 829×522 (~1700 tokens) | 7.2 s, 814 characters (~250 tokens) | No picture to read; each click and its check in one command. B still clicks at the centre of `describe`'s box: `press` does not exist yet |
+| 2026-10-06 | 3c8606d+ | Claude Opus 5.5 | (as above: 16.4 s) | 3.0 s one command a step, 3.8 s with both presses in one; describe once (~200 tokens) and each `press` answering with what changed (~50 tokens) | `press` by name: no picture, no coordinates, no second describe to check |

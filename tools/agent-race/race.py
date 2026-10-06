@@ -119,22 +119,22 @@ def main():
         a_ms = (time.perf_counter() - a0) * 1000
         a_tokens = 3 * image_tokens(w, h)
 
-        # B: asking the window.
+        # B: asking the window. With `press`, its answer is what happened:
+        # nothing to look at again.
         b0 = time.perf_counter()
         read = say("describe")
         if press_by_name:
-            say("press", "hit#r2")
+            read += say("press", "hit#r2")
+            ok_open = "Opened: pleamar ideas" in read
+            last = say("press", "new")
         else:
             run(*wm, "click", pid, *centre("hit#r2"))
-        settled("Opened: pleamar ideas")
-        read += say("describe")
-        ok_open = "Opened: pleamar ideas" in read
-        if press_by_name:
-            say("press", "new")
-        else:
+            settled("Opened: pleamar ideas")
+            read += say("describe")
+            ok_open = "Opened: pleamar ideas" in read
             run(*wm, "click", pid, *centre("new"))
-        settled("New note created")
-        last = say("describe")
+            settled("New note created")
+            last = say("describe")
         read += last
         b_ms = (time.perf_counter() - b0) * 1000
         b_tokens = text_tokens(read)

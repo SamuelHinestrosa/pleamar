@@ -1,6 +1,6 @@
 # Scenes an agent can read — design
 
-**Status:** step 1 (`describe`, `label:`, `agent:`) implemented on 6 Oct 2026; the rest is design. Agreed with Abel on 6 Oct 2026 as the first step towards pleamar as a way to give **any program** its interface. This note is the first stretch of that road: what the scene already knows, handed to whoever drives it from outside.
+**Status:** steps 1, 2 and 4 (`describe`, acting by name, `label:`, `agent:`) implemented on 6 Oct 2026; the rest is design. Each step is measured with [the agent race](../tools/agent-race/results.md). Agreed with Abel on 6 Oct 2026 as the first step towards pleamar as a way to give **any program** its interface. This note is the first stretch of that road: what the scene already knows, handed to whoever drives it from outside.
 
 ## 1. Why
 
@@ -62,32 +62,40 @@ main · window «Notes» 640×480 · scale 1
 
 ## 4. Acting by name
 
-| Command | What it does | It answers |
-| --- | --- | --- |
-| `press NAME [right\|middle] [N]` | A press and release at the centre of the zone, N times | What happened |
-| `hold NAME` | Press, wait for its `hold`, release | What happened |
-| `drag NAME DX DY` | Press at its centre, move by DX, DY over half a second, release | What happened |
-| `wheel NAME N` | N notches over it (positive, upwards) | What happened |
-| `type FIELD TEXT` | Focus the field and leave TEXT in it, as typing would | What happened |
-| `submit FIELD [TEXT]` | The same, then Enter (it exists already) | What happened |
-| `key NAME` | A key to the surface with the keyboard: `escape`, `ctrl+z` | What happened |
+Implemented (step 2, 6 Oct 2026).
 
-**It goes through the same path as a hand**, not round it. `press save` is a pointer that enters the zone, a button down and a button up, fed into the render as `--mouse` already does: the zone lights up, its gesture plays, `pointer.x` and `local.x` have their values, its rules fire in their order, and the logic hears `press:save` as it always does. That is the point: a scene does not have to be written twice, and what an agent does is what a person would have done. `emit` and `fact` stay for scripts that want to skip all that.
+| Command | What it does |
+| --- | --- |
+| `press NAME [left\|right\|middle] [N]` | The hand goes to the zone, presses and lets go, N times (1 to 3; 60 ms apart, so two are a double click) |
+| `hold NAME` | Pressed for as long as its `on hold` asks, and a little more |
+| `drag NAME DX DY` | Pressed at it, moved by DX, DY over half a second in twelve steps, let go |
+| `wheel NAME N` | N notches over it; positive, upwards |
+| `type FIELD TEXT` | The field gets TEXT as if it were typed over what it had: the logic hears `text:FIELD` |
+| `key NAME` | A key, as the keyboard sends it: `escape`, `enter`, `tab`, `ctrl+z`, `a`. The field being typed in gets it first, then the `on key` rules |
 
-**It refuses what a person could not do either**, and says why: `? save is inactive`, `? save is covered by dialog.backdrop`, `? delete is for a person's hand (agent: no)`. A press that is refused does not happen.
+`submit FIELD TEXT` was there before and stays: it sets the text and presses Enter without going through the field.
 
-**What happened** is the answer to every action, read during the half second after it (or until nothing moves): the events that fired, the facts and texts that changed, and the surfaces that opened or closed.
+**It goes through the same path as a hand**, not round it. A `press` is the hand entering the zone in one frame, the button going down in the next, coming up 40 ms later, and the hand leaving: the zone's `hover` and `pressed` springs move, the touch ripples where a finger would, `pointer.x` and `local.x` have their values, its rules fire in their order and the logic hears `press:save` as it always does. While it lasts the pointer is the hand; the user's comes back after. That is the point: a scene does not have to be written twice, and what an agent does is what a person would have done. `emit` and `fact` stay for scripts that want to skip all that.
+
+**The name** is the one `describe` gives: `hit#r3`, `knob.2`, and in a copy per monitor without its `#screen0`.
+
+**A row scrolled out of its list is brought into sight first**, with the list's own spring, so whoever watches sees it glide there; then it is pressed. The answer starts with `scrolled hit#r4 into sight`.
+
+**It refuses what a person could not do either**, says why, and does nothing: `? save is inactive`, `? save is covered by dialog`, `? delete is for a person's hand (agent: no): ask them to`, `? there is nothing called 'sve' on screen`. Something with `agent: hidden` is not found at all. A stack with `view:` is not covered by its own rows: its wheel and its drag reach it through them, as a hand's do.
+
+**What happened** is the answer, read from when the hand leaves until the scene has been still for 150 ms —its rules, its logic— and never more than 1.2 s: the events that fired, the facts and texts that changed (a secret field's, or one kept for a person, only as «changed»), the lists that scrolled, and the surfaces and popups that opened or closed.
 
 ```
-$ pleamar --say notes "press new"
-pressed new
-  event  created
-  fact   editing: false → true
-  text   title: "" → "Untitled"
-  opened surface editor
+$ pleamar --say notes "press hit#r4"
+scrolled hit#r4 into sight
+pressed hit#r4
+  event  open
+  fact   sel: -1 → 4
+  text   status: "No note open" → "Opened: Fifth note"
+  scroll list: 0 → 82
 ```
 
-Most of the time the agent does not need to look again.
+Most of the time the agent does not need to look again. A press answers in 0.3 to 0.5 s, most of it the scene being given time to answer.
 
 ## 5. Waiting and watching
 
@@ -134,9 +142,9 @@ A zone with `agent: no` is described (an agent knows it is there and can tell th
 | # | Piece | Checked by |
 | --- | --- | --- |
 | 1 ✅ | `describe` with derived roles and labels, `label:`, `agent:`, the warning | `tests/agent*.plm` and `label-not-a-text.plm` in `run-tests.sh`; `src/agent.rs`'s tests build the tree of `tests/agent.plm`; by hand, a notes window and Marea in a headless pleamar-wm |
-| 2 | `press`, `hold`, `drag`, `wheel`, `type`, `key`, with their refusals and "what happened" | The same tests, plus Marea in the test copy: open the control centre by name |
+| 2 ✅ | `press`, `hold`, `drag`, `wheel`, `type`, `key`, with their refusals and "what happened" | `src/agent.rs`'s tests (reading an action, being refused); every action by hand on the race's window in a headless pleamar-wm; the race, live |
 | 3 | `wait` and `watch` | A test that waits for a fact a rule sets after a timer |
-| 4 | `agent: no` and `agent: hidden` over the socket (they already shape `describe`) | A test that is refused |
+| 4 ✅ | `agent: no` and `agent: hidden` over the socket | `a_hand_is_refused_what_a_person_could_not_do_either` |
 | 5 | `hello`, and pleamar-wm's `agent tree/press/type/wait/watch` | Headless pleamar-wm with Marea |
 | 6 | The seat: pleamar reads `wl_seat.name`, pleamar-wm uses the agent seat for pleamar windows, the press is dropped | Headless pleamar-wm: `agent click` on an `agent: no` zone does nothing |
 | 7 | `role:`, `value:` | Tests |
