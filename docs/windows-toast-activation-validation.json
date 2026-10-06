@@ -3,7 +3,7 @@
   "platform": "Windows 11 x64 MSVC",
   "default_luau": true,
   "library_tests": {
-    "passed": 196,
+    "passed": 197,
     "failed": 0,
     "ignored": 41,
     "local_unpublished_ignored_fixtures": 2
@@ -11,8 +11,8 @@
   "native_protocol": {
     "passed": true,
     "command": "python scripts/windows-toast-broker.py --binary <release/pleamar.exe> --tests <paired-library-test.exe> --output <new-owned-directory> --activation protocol",
-    "engine_sha256": "14a43071ceb9a071251f0059a6eba3bda35d9331131ee5df1625b757a30986a6",
-    "broker_sha256": "36b3112bbdb3fc802f567c11782c80826f28b7ff015cde4352117676151f8ecf",
+    "engine_sha256": "9d0d6981a1cc033c994b28e2b2d51a9ed951ae4d615590c36d43789047c5e76c",
+    "broker_sha256": "ab1baf9f643f7290a1d22071f22a1c1ea38b96032f33e2d2a0e40a142f42f054",
     "unicode_shortcut_and_exact_handlers": true,
     "real_shell_execute_startup": true,
     "one_live_action_delivered": true,
@@ -37,12 +37,22 @@
   "legacy_com": {
     "local_automatic_startup": "REGDB_E_CLASSNOTREG 0x80040154; unresolved",
     "local_running_helper_activation": "passed",
-    "windows_server_2022_automatic_startup": "passed at 407f969 in CI run 37515582416"
+    "windows_server_2022_automatic_startup": "passed at fe21fcb in CI run 37518953407"
   },
   "limitations": [
     "Actual notification-center clicks remain pending",
     "Current installer and combined COM/protocol CI are separate checks",
     "Idle samples are not whole-app or sustained-performance measurements",
     "No full GUI or port parity claim"
-  ]
+  ],
+  "ipc_permissions": {
+    "native_logon_dacl_readback": true,
+    "restricted_token_read_client_denied": true,
+    "normal_client_connects_after_denial": true,
+    "old_and_new_runtime_stopped_by_actual_installer_hook": true,
+    "upgrade_probe_visible_windows": 0,
+    "upgrade_probe_foreground_unchanged": true,
+    "full_local_installer_test": false,
+    "real_other_logon_or_rdp_test": false
+  }
 }

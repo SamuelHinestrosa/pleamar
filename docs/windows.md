@@ -237,7 +237,15 @@ Reads and reply acknowledgements retain their bounded waits. With multiple
 running scenes, specify the file stem. Use
 `PLEAMAR_SOCKET_DIR` as an isolated namespace for tests (it is a namespace salt
 on Windows, not a directory of Unix sockets). Sender and receiver must run as
-the same user with access to the pipe. `--screen '\\.\DISPLAY1'` selects a
+the same Windows logon. Both scene and notification pipes use an explicit
+logon-SID access list; remote clients remain rejected. Discovery also includes
+that identity, so separate logons of the same account have separate scene names.
+This is not isolation from administrators or other programs in the same logon.
+Restart manually launched scenes from earlier builds that used account-wide
+names before using the new CLI. Setup stops its old scene with the previously
+installed executable before replacing files.
+
+`--screen '\\.\DISPLAY1'` selects a
 monitor; the runtime logs available names, scale and refresh rate as sheets open.
 If the selected output is absent at startup, the process keeps Luau and IPC
 running and waits for it to appear. `--say ... quit` and `--seconds` still work
@@ -250,6 +258,14 @@ and exclusive ownership. The idle test also checks repeated wakeups, acknowledge
 quit and reusing the released name. Five local executions reported zero thread
 CPU cycles in all ten 350 ms idle samples; no windows or desktop input were used.
 This measures the command listener, not whole-application CPU or RAM usage.
+The ordinary suite also reads the real pipe DACL, checks its single logon grant,
+denies a read-only client with that group disabled in a restricted token, and
+then connects the normal caller. It does not create another account or an RDP
+session; acceptance across real simultaneous logons remains separate.
+The actual Setup stop hook closed both an older runtime with account-wide names
+and the new runtime in isolated package folders. Each ran default Luau without
+an output; neither opened visible windows or changed the foreground. This checks
+the transition between pipe namespaces, not a full local installation or GUI.
 
 ## Capability matrix
 

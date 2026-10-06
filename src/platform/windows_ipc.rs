@@ -8,22 +8,25 @@ use windows::Win32::Storage::FileSystem::{FILE_FLAG_FIRST_PIPE_INSTANCE, PIPE_AC
 use windows::Win32::System::Pipes::*;
 use windows::core::PCWSTR;
 
+#[path = "windows_ipc_security.rs"]
+mod security;
+
 const LIMIT: usize = 65536;
 const DEFAULT_WAIT: Duration = Duration::from_secs(2);
 
-fn prefix() -> String {
-    // Keep different users' scenes and test namespaces separate. The default
-    // process DACL also applies to the pipe; remote clients are rejected.
+fn prefix() -> Result<String, String> {
+    // A second logon of the same account must have its own scene names.
     let identity = format!("{}|{}", super::config_dir().display(), std::env::var("PLEAMAR_SOCKET_DIR").unwrap_or_default());
     let hash = identity.bytes().fold(0xcbf29ce484222325u64, |h, b| (h ^ b as u64).wrapping_mul(0x100000001b3));
-    format!("pleamar-{hash:016x}-")
+    let hash = security::Logon::current()?.hash(hash);
+    Ok(format!("pleamar-{hash:016x}-"))
 }
 
 fn pipe_path(scene: &str) -> Result<String, String> {
     if scene.is_empty() || scene.len() > 120 || scene.chars().any(|c| c.is_control() || "\\/:".contains(c)) {
         return Err("invalid scene name for a command pipe".into());
     }
-    Ok(format!(r"\\.\pipe\{}{scene}", prefix()))
+    Ok(format!(r"\\.\pipe\{}{scene}", prefix()?))
 }
 
 pub(super) fn read_line(file: &mut File, until: Instant) -> Result<String, String> {
@@ -52,10 +55,12 @@ fn bind(scene: &str) -> Result<File, String> {
 
 pub(super) fn bind_path(path: &str) -> Result<File, String> {
     let wide: Vec<u16> = path.encode_utf16().chain([0]).collect();
+    let mut security = security::Security::new()?;
+    let attributes = security.attributes();
     let handle = unsafe {
         CreateNamedPipeW(PCWSTR(wide.as_ptr()), PIPE_ACCESS_DUPLEX | FILE_FLAG_FIRST_PIPE_INSTANCE,
             PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_NOWAIT | PIPE_REJECT_REMOTE_CLIENTS,
-            1, LIMIT as u32, LIMIT as u32, 2000, None)
+            1, LIMIT as u32, LIMIT as u32, 2000, Some(&attributes))
     };
     if handle.is_invalid() { return Err(format!("{path}: {}", std::io::Error::last_os_error())); }
     Ok(unsafe { File::from_raw_handle(handle.0) })
@@ -144,7 +149,10 @@ pub(super) fn ask_path(path: &str, command: &str, wait: Duration) -> Result<Stri
 }
 
 pub fn running_scenes() -> Vec<String> {
-    let prefix = prefix();
+    let prefix = match prefix() {
+        Ok(prefix) => prefix,
+        Err(e) => { eprintln!("orders · {e}"); return Vec::new(); }
+    };
     let Ok(entries) = std::fs::read_dir(r"\\.\pipe\") else { return Vec::new() };
     let mut names: Vec<String> = entries.filter_map(Result::ok)
         .filter_map(|e| e.file_name().to_string_lossy().strip_prefix(&prefix).map(str::to_owned)).collect();
