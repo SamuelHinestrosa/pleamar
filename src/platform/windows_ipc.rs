@@ -3,7 +3,7 @@ use std::fs::{File, OpenOptions};
 use std::io::{Read, Write};
 use std::os::windows::io::{AsRawHandle, FromRawHandle};
 use std::time::{Duration, Instant};
-use windows::Win32::Foundation::{HANDLE, ERROR_PIPE_CONNECTED};
+use windows::Win32::Foundation::{HANDLE, ERROR_PIPE_CONNECTED, ERROR_NO_DATA};
 use windows::Win32::Storage::FileSystem::{FILE_FLAG_FIRST_PIPE_INSTANCE, PIPE_ACCESS_DUPLEX};
 use windows::Win32::System::Pipes::*;
 use windows::core::PCWSTR;
@@ -61,6 +61,20 @@ pub(super) fn bind_path(path: &str) -> Result<File, String> {
     Ok(unsafe { File::from_raw_handle(handle.0) })
 }
 
+pub(super) fn accept_ready(pipe: &File) -> bool {
+    let handle = HANDLE(pipe.as_raw_handle());
+    let status = unsafe { ConnectNamedPipe(handle, None) };
+    // With PIPE_NOWAIT, only ERROR_PIPE_CONNECTED means a client is ready.
+    // Success and ERROR_PIPE_LISTENING merely advertise the listening endpoint.
+    if status.as_ref().err().is_some_and(|e| e.code() == ERROR_PIPE_CONNECTED.to_hresult()) { return true; }
+    if status.as_ref().err().is_some_and(|e| e.code() == ERROR_NO_DATA.to_hresult()) {
+        // A client can time out before we accept it. Without resetting this
+        // state, every future client gets ERROR_PIPE_BUSY indefinitely.
+        unsafe { let _ = DisconnectNamedPipe(handle); }
+    }
+    false
+}
+
 pub fn listen_for_commands(scene: &str, receive: Box<dyn Fn(String) -> Option<String> + Send>) {
     let mut pipe = match bind(scene) {
         Ok(p) => p,
@@ -68,8 +82,7 @@ pub fn listen_for_commands(scene: &str, receive: Box<dyn Fn(String) -> Option<St
     };
     std::thread::spawn(move || loop {
         let handle = HANDLE(pipe.as_raw_handle());
-        let connected = unsafe { ConnectNamedPipe(handle, None) };
-        if connected.is_ok() || connected.as_ref().err().is_some_and(|e| e.code() == ERROR_PIPE_CONNECTED.to_hresult()) {
+        if accept_ready(&pipe) {
             if let Ok(line) = read_line(&mut pipe, Instant::now() + DEFAULT_WAIT) {
                 // A quit must be acknowledged before the UI thread exits.
                 let quitting = line.split_whitespace().next() == Some("quit");
@@ -155,6 +168,28 @@ mod tests {
         assert!(ask(&name, "probe report", Duration::from_millis(25)).is_err());
         assert!(start.elapsed() < Duration::from_secs(1));
         assert!(ask(&format!("missing {}", std::process::id()), "probe", Duration::from_millis(25)).is_err());
+    }
+    #[test]
+    fn abandoned_connection_cannot_block_the_next_command() {
+        let name = format!("abandoned pipe {}", std::process::id());
+        let path = pipe_path(&name).unwrap();
+        let mut pipe = bind(&name).unwrap();
+        assert!(!accept_ready(&pipe));
+        let abandoned = OpenOptions::new().read(true).write(true).open(&path).unwrap();
+        drop(abandoned);
+        let stale = unsafe { ConnectNamedPipe(HANDLE(pipe.as_raw_handle()), None) }.unwrap_err();
+        assert_eq!(stale.code(), ERROR_NO_DATA.to_hresult());
+        assert!(!accept_ready(&pipe));
+        let client = std::thread::spawn(move || ask_path(&path, "after abandoned client", Duration::from_secs(5)));
+        let until = Instant::now() + Duration::from_secs(5);
+        while !accept_ready(&pipe) {
+            assert!(Instant::now() < until, "stale connection still owns the command endpoint");
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        assert_eq!(read_line(&mut pipe, until).unwrap(), "after abandoned client");
+        writeln!(pipe, "\"recovered\"").unwrap();
+        let _ = read_line(&mut pipe, until);
+        assert_eq!(client.join().unwrap().unwrap(), "recovered");
     }
     #[test]
     fn rejects_pipe_path_injection() {

@@ -2,7 +2,7 @@
 use super::{SysValue, windows_toast_activation as activation, windows_toasts as toasts};
 use std::{collections::{HashMap, HashSet, VecDeque}, io::Write, os::windows::io::AsRawHandle,
     sync::{Arc, Condvar, Mutex, OnceLock, atomic::{AtomicBool, AtomicU64, Ordering}}, time::{Duration,Instant}};
-use windows::{core::HSTRING, Win32::{Foundation::{HANDLE, ERROR_PIPE_CONNECTED, ERROR_NO_DATA}, System::Pipes::*}};
+use windows::{core::HSTRING, Win32::{Foundation::HANDLE, System::Pipes::*}};
 
 const LIMIT:usize=64;
 const EXPIRY:Duration=Duration::from_secs(6*60*60);
@@ -85,19 +85,13 @@ fn start(id:&str)->Result<Arc<Control>,String> {
         let mut next_history=Instant::now()+Duration::from_secs(5);
         while shared.running.load(Ordering::Acquire) {
             let handle=HANDLE(pipe.as_raw_handle());
-            let connected=unsafe {ConnectNamedPipe(handle,None)};
-            // bind_path uses PIPE_NOWAIT: success means listening, not connected.
-            if connected.as_ref().err().is_some_and(|e|e.code()==ERROR_PIPE_CONNECTED.to_hresult()) {
+            if super::windows_ipc::accept_ready(&pipe) {
                 if let Ok(token)=super::windows_ipc::read_line(&mut pipe,Instant::now()+Duration::from_millis(500)) {
                     let accepted=activation::route(&token)==Some(shared.route.as_str())
                         && shared.store.lock().unwrap().activate(&token,Instant::now());
                     let _=writeln!(pipe,"{}",if accepted {"\"accepted\""} else {"\"expired\""});
                     let _=super::windows_ipc::read_line(&mut pipe,Instant::now()+Duration::from_millis(100));
                 }
-                unsafe {let _=DisconnectNamedPipe(handle);}
-            } else if connected.as_ref().err().is_some_and(|e|e.code()==ERROR_NO_DATA.to_hresult()) {
-                // An expired activation can close its client while we are idle.
-                // Reset that connection before accepting a later live notice.
                 unsafe {let _=DisconnectNamedPipe(handle);}
             }
             let removed={let mut s=shared.store.lock().unwrap();s.prune(Instant::now());std::mem::take(&mut s.removals)};
