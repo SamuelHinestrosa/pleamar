@@ -492,15 +492,24 @@ fn key_name(k: &str) -> (String, Option<String>) {
 
 /// The zone a name means: as the scene knows it, or without the `#screen0`
 /// that `describe` leaves out, in the copy that is on screen.
-pub fn locate(scene: &Scene, name: &str, shown: &[Shown]) -> Option<usize> {
+pub fn locate(scene: &Scene, c: Ctx, name: &str, sight: &Sight) -> Option<usize> {
     let hidden = |k: &usize| scene.zones[*k].reach == Reach::Hidden;
-    if let Some(k) = scene.zones.iter().position(|z| z.id == name).filter(|k| !hidden(k)) {
-        return Some(k);
-    }
-    shown.iter().filter_map(|s| scene.surfaces.get(s.surface)).find_map(|s| {
+    // As written, and the copy of each monitor's surface that is on screen.
+    let mut candidates: Vec<usize> = scene.zones.iter().position(|z| z.id == name).into_iter().collect();
+    for s in sight.shown.iter().filter_map(|s| scene.surfaces.get(s.surface)) {
         let full = format!("{name}#screen{}", s.instance);
-        scene.zones.iter().position(|z| z.id == full).filter(|k| !hidden(k))
-    })
+        if let Some(k) = scene.zones.iter().position(|z| z.id == full) {
+            candidates.push(k);
+        }
+    }
+    candidates.retain(|k| !hidden(k));
+    // Of the copies, the one that is where a surface is shown: a scene copied per
+    // monitor has the same button on each, and only one of them may be seen.
+    let seen = |k: &usize| {
+        let z = &scene.zones[*k];
+        !(sight.gone)(z.at) && z.bounds(c).is_some_and(|b| sight.shown.iter().any(|s| inside(s.bounds, (b[0] + b[2]) * 0.5, (b[1] + b[3]) * 0.5)))
+    };
+    candidates.iter().find(|k| seen(k)).or(candidates.first()).copied()
 }
 
 /// Where a hand would press zone `k` now, or why it cannot: the point of
@@ -611,7 +620,8 @@ pub fn what_happened(scene: &Scene, b: &Before, c: Ctx, texts: &[String], open: 
     };
     for (k, (n, _)) in scene.facts.iter().enumerate() {
         let (was, is) = (b.facts.get(k).copied().unwrap_or(0.0), facts.get(k).copied().unwrap_or(0.0));
-        if was != is && !quiet_fact(n) {
+        // A change too small to be told apart as it is written (0.181 → 0.181) is not one.
+        if was != is && !quiet_fact(n) && shown(n, was) != shown(n, is) {
             let _ = writeln!(out, "  fact   {n}: {} → {}", shown(n, was), shown(n, is));
         }
     }
@@ -1160,12 +1170,12 @@ mod tests {
         let shown = vec![Shown { surface: 0, popup: None, bounds: [0.0, 0.0, 400.0, 300.0], scale: 1.0 }];
         let never = |_: usize| false;
         let sight = Sight { shown, texts_seen: &[], gone: &never, rank: None };
-        let at = |n: &str| reach_point(&scene, c, locate(&scene, n, &sight.shown).unwrap(), &sight);
+        let at = |n: &str| reach_point(&scene, c, locate(&scene, c, n, &sight).unwrap(), &sight);
         assert_eq!(at("knob.1"), Ok(Some((100.0, 100.0))));
         assert!(at("delete").unwrap_err().contains("a person's hand"));
         assert!(at("save").unwrap_err().contains("inactive"));
         // Hidden is not even there to be found.
-        assert_eq!(locate(&scene, "private", &sight.shown), None);
+        assert_eq!(locate(&scene, c, "private", &sight), None);
     }
 
     #[test]

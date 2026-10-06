@@ -4557,7 +4557,7 @@ impl Acting {
         let mut zone = usize::MAX;
         let name = act.name().to_owned();
         if !matches!(act, Act::Key { .. }) {
-            let Some(k) = crate::agent::locate(scene, &name, &sight.shown) else {
+            let Some(k) = crate::agent::locate(scene, c, &name, sight) else {
                 return Err((reply, format!("? there is nothing called '{name}' on screen: `describe` says what there is")));
             };
             zone = k;
