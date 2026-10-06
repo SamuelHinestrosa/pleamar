@@ -874,6 +874,8 @@ mod windows_ipc;
 #[cfg(target_os = "windows")]
 mod windows_system;
 #[cfg(target_os = "windows")]
+mod windows_images;
+#[cfg(target_os = "windows")]
 mod windows_tray;
 #[cfg(target_os = "windows")]
 mod windows_tray_actions;

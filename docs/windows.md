@@ -704,3 +704,28 @@ to `Pleamar`; a host application can set its own name in its launcher. For examp
 name, not a path: device names, path separators, trailing dots/spaces and names
 longer than 80 UTF-16 units are rejected before writing. The wallpaper catalog
 excludes this folder. Existing media is not renamed or moved.
+
+### Native image previews
+
+With `permissions { services: "images" }`, Windows scenes can call
+`sys.ask_async("images.thumbnail", {absolute_path, width, height, "crop"}, callback)`.
+`crop` fills the requested rectangle from the centre; `fit` preserves aspect
+ratio without enlarging small sources. Sizes are integral, 1–1024 pixels per
+edge. The callback receives a cached JPEG path or a real error. Use the async
+form so image decoding does not block interaction.
+
+The decoder supports JPEG (including EXIF orientation), PNG, WebP, BMP and
+the first GIF frame. Self-contained SVG vectors are supported; SVG text,
+embedded/external images, HEIC and AVIF are not. Inputs are capped at 32 MiB,
+decoded raster pixels at 96 MiB, and SVG source at 2 MiB. Conversion is serialized
+across scenes. Output is at most 512 KiB and cached by source content, size and
+mode under `LOCALAPPDATA/pleamar/image-previews`, with a 64 MiB/1024-file budget.
+No shell, external converter, GPU readback or network request is used by this
+service. Existing files outside that cache are not changed.
+
+Three ordinary Windows tests cover crop/fit geometry, vector rasterization,
+Unicode paths, content invalidation, cache eviction and rejected sizes/paths.
+The Marea integration was also rendered and captured on non-primary DISPLAY2
+at 125% DPI with actual image files, a downloaded YouTube cover and its real
+SQLite worker. These observations do not establish support for the excluded
+formats or a sustained full-desktop performance result.
