@@ -1,0 +1,7 @@
+// expect: error «a group does not keep its `let`s»
+scene LetInGroup {
+    surface { size: 200, 100 }
+    let cx = 50
+    include "parts/dial.plm"
+    zone ellipse body { at: cx, 50; radius: 20 }
+}

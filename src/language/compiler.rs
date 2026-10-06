@@ -180,6 +180,8 @@ struct Scope {
     /// From a `strict` library: in here only what is asked for, what is
     /// declared and what belongs to the library itself are valid.
     strict: bool,
+    /// Its `let`s written outside any group, and on which line.
+    loose: HashMap<String, usize>,
 }
 
 struct Component<'a> {
@@ -286,6 +288,11 @@ struct Compiler<'a> {
     /// On which line each loose `let` was declared: so as not to let another one, further
     /// down, change its meaning without saying anything.
     let_lines: HashMap<String, usize>,
+    /// The scene's `let`s written outside any group, and on which line (inside
+    /// a scope, its own `loose`).
+    loose_lets: HashMap<String, usize>,
+    /// The groups being read: how many scopes were open when each began.
+    groups: Vec<usize>,
     colors: HashMap<String, Color>,
     springs: HashMap<String, Spring>,
     candidates: Vec<Candidate>,
@@ -362,7 +369,7 @@ pub fn compile<'a>(tree: &'a [Entry], files: &'a [String], dirs: &'a [std::path:
         generated: &generated,
         translations: Vec::new(), untranslated: Default::default(),
         props: HashMap::new(), facts: HashMap::new(), signals: HashMap::new(), texts: HashMap::new(), images: HashMap::new(), figures: HashMap::new(), shaders: HashMap::new(), models: HashMap::new(),
-        measurements: HashMap::new(), gestures: HashMap::new(), zones: HashMap::new(), lets: HashMap::new(), let_lines: HashMap::new(), colors: HashMap::new(),
+        measurements: HashMap::new(), gestures: HashMap::new(), zones: HashMap::new(), lets: HashMap::new(), let_lines: HashMap::new(), loose_lets: HashMap::new(), groups: Vec::new(), colors: HashMap::new(),
         springs: vocab::SPRINGS.iter().map(|n| ((*n).to_owned(), match *n {
             "lively" => Spring::LIVELY,
             "calm" => Spring::CALM,
@@ -1891,6 +1898,44 @@ impl<'a> Compiler<'a> {
                         }
                         self.let_lines.insert(name.clone(), n.line);
                     }
+                    // A group does not keep its `let`s: one written in it is seen
+                    // by everything after it, outside too. One with the name of a
+                    // `let` written outside any group took that one's place below:
+                    // Marea's focus page wrote `let cx` for its dial, and her body's
+                    // zone, further down, took the dial's centre for hers —a
+                    // hundred pixels from where she was drawn, and nobody could
+                    // click her—. (Inside a `repeat`, a `for` or a component the
+                    // `let` is theirs, and steps on nothing.)
+                    let in_group = self.groups.iter().any(|&d| d == self.scopes.len());
+                    // In its own scope; and in a monitor's copy of the scene, which
+                    // lasts as long as the scene, the scene's too. In a component
+                    // or a `repeat` it goes with them, and outside it steps on nothing.
+                    let loose = match self.scopes.last() {
+                        Some(e) if e.suffix.starts_with("#screen") => e.loose.get(&name).or_else(|| self.loose_lets.get(&name)),
+                        Some(e) => e.loose.get(&name),
+                        None => self.loose_lets.get(&name),
+                    }
+                    .copied();
+                    match loose {
+                        Some(before) if in_group && before != n.line => {
+                            let at = if before / super::PER_FILE == n.line / super::PER_FILE {
+                                format!("line {}", before % super::PER_FILE)
+                            } else {
+                                let file = self.files.get(before / super::PER_FILE).map_or("", |f| f.rsplit('/').next().unwrap_or(f));
+                                format!("{file}, line {}", before % super::PER_FILE)
+                            };
+                            return Err(CompileError::at(n.line, n.col, format!("there is already a `let {name}` outside any group ({at}), and a group does not keep its `let`s: this one would change what `{name}` means in everything after it, outside the group too. Give this one another name")));
+                        }
+                        _ if !in_group => match self.scopes.last_mut().map(Rc::make_mut) {
+                            Some(e) => {
+                                e.loose.insert(name.clone(), n.line);
+                            }
+                            None => {
+                                self.loose_lets.insert(name.clone(), n.line);
+                            }
+                        },
+                        _ => {}
+                    }
                     c.expect_sym("=")?;
                     // `let mint = #9ed6bd`: a colour with a name.
                     // `mix` works for colours and for arithmetic, so it looks
@@ -2061,7 +2106,9 @@ impl<'a> Compiler<'a> {
         }
         self.zparents.push(self.next_zparent);
         self.next_zparent += 1;
+        self.groups.push(self.scopes.len());
         let result = self.group_body(n, body, p);
+        self.groups.pop();
         self.zparents.pop();
         if let Some(z) = z {
             let k = self.zblock.take().unwrap() as usize;
