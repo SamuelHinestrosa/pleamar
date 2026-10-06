@@ -35,6 +35,8 @@ pub enum Role {
     Field,
     List,
     Region,
+    /// Words drawn outside every zone: a title, a status line.
+    Text,
 }
 
 impl Role {
@@ -46,6 +48,7 @@ impl Role {
             Role::Field => "field",
             Role::List => "list",
             Role::Region => "region",
+            Role::Text => "text",
         }
     }
 }
@@ -53,7 +56,10 @@ impl Role {
 /// One thing to read or touch.
 #[derive(Debug)]
 pub struct Node {
+    /// Its zone; a loose text has none (`usize::MAX`).
     pub zone: usize,
+    /// Where it was written: what the nodes are listed by.
+    pub order: usize,
     pub name: &'static str,
     pub role: Role,
     pub label: String,
@@ -202,6 +208,7 @@ pub fn describe(scene: &Scene, c: Ctx, texts: &[String], sight: &Sight) -> Vec<P
         // the button's, not the panel's around it. A text cut out by a clip
         // only says something for a row scrolled out of sight.
         let mut said: Vec<Vec<&SeenText>> = vec![Vec::new(); scene.zones.len()];
+        let mut loose: Vec<&SeenText> = Vec::new();
         for t in sight.texts_seen {
             let (x, y) = centre(t.bounds);
             // An active zone first: a closed menu's zone, still in its place, does not
@@ -210,8 +217,10 @@ pub fn describe(scene: &Scene, c: Ctx, texts: &[String], sight: &Sight) -> Vec<P
                 .iter()
                 .filter(|k| there[**k].is_some_and(|z| inside(z, x, y)) && scene.zones[**k].scrolls.is_none() && (!t.clipped || off_view(**k)))
                 .min_by(|p, q| (!active[**p], area(there[**p].unwrap())).partial_cmp(&(!active[**q], area(there[**q].unwrap()))).unwrap_or(std::cmp::Ordering::Equal));
-            if let Some(k) = smallest {
-                said[*k].push(t);
+            match smallest {
+                Some(k) => said[*k].push(t),
+                None if !t.clipped && inside(b, x, y) => loose.push(t),
+                None => {}
             }
         }
         let mut nodes: Vec<Node> = Vec::new();
@@ -246,6 +255,7 @@ pub fn describe(scene: &Scene, c: Ctx, texts: &[String], sight: &Sight) -> Vec<P
             };
             nodes.push(Node {
                 zone: k,
+                order: z.at,
                 name: z.id.strip_suffix(suffix.as_str()).unwrap_or(z.id),
                 role,
                 label,
@@ -258,10 +268,29 @@ pub fn describe(scene: &Scene, c: Ctx, texts: &[String], sight: &Sight) -> Vec<P
                 inside: None,
             });
         }
+        // And the words that are no zone's: a title, a status line. Read, not touched.
+        for t in loose {
+            nodes.push(Node {
+                zone: usize::MAX,
+                order: t.at,
+                name: "",
+                role: Role::Text,
+                label: t.text.trim().to_owned(),
+                value: None,
+                inactive: false,
+                covered_by: None,
+                off_view: false,
+                persons: false,
+                at: [t.bounds[0] - b[0], t.bounds[1] - b[1], t.bounds[2] - t.bounds[0], t.bounds[3] - t.bounds[1]],
+                inside: None,
+            });
+        }
+        // As written: a status line under the button that changes it.
+        nodes.sort_by_key(|n| n.order);
         // What is inside a list hangs from it: the rows it scrolls, and
         // whatever else falls inside its window.
         for i in 0..nodes.len() {
-            if let Some(j) = scene.zones[nodes[i].zone].within.and_then(|l| nodes.iter().position(|n| n.zone == l.0 as usize)) {
+            if let Some(j) = scene.zones.get(nodes[i].zone).and_then(|z| z.within).and_then(|l| nodes.iter().position(|n| n.zone == l.0 as usize)) {
                 nodes[i].inside = Some(j);
                 continue;
             }
@@ -339,13 +368,16 @@ pub fn to_json(parts: &[Part]) -> String {
     fn node(nodes: &[Node], i: usize) -> serde_json::Value {
         let n = &nodes[i];
         let mut v = serde_json::json!({
-            "name": n.name,
             "role": n.role.word(),
             "label": n.label,
             "box": [round(n.at[0]), round(n.at[1]), round(n.at[2]), round(n.at[3])],
-            "active": !n.inactive,
-            "agent": if n.persons { "no" } else { "yes" },
         });
+        // A loose text is only read: it has no name to act on.
+        if n.role != Role::Text {
+            v["name"] = n.name.into();
+            v["active"] = (!n.inactive).into();
+            v["agent"] = (if n.persons { "no" } else { "yes" }).into();
+        }
         if let Some(t) = &n.value {
             v["value"] = t.clone().into();
         }
@@ -383,6 +415,10 @@ mod tests {
 
     /// `tests/agent.plm` as it starts, with every surface on screen.
     fn told(dirty: bool) -> Vec<Part> {
+        told_with(dirty, &[])
+    }
+
+    fn told_with(dirty: bool, seen: &[SeenText]) -> Vec<Part> {
         let (scene, _) = crate::language::read_file(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/agent.plm")).unwrap();
         let props: Vec<Animated> = scene.props.iter().map(|(_, v, s)| Animated { x: *v, v: 0.0, target: *v, spring: *s }).collect();
         let mut facts: Vec<f32> = scene.facts.iter().map(|f| f.1).collect();
@@ -397,7 +433,7 @@ mod tests {
             .map(|(k, s)| Shown { surface: k, popup: None, bounds: [s.origin.0, s.origin.1, s.origin.0 + s.width as f32, s.origin.1 + s.height as f32], scale: 1.0 })
             .collect();
         let never = |_: usize| false;
-        let sight = Sight { shown, texts_seen: &[], gone: &never, rank: None };
+        let sight = Sight { shown, texts_seen: seen, gone: &never, rank: None };
         describe(&scene, Ctx { props: &props, facts: &facts }, &texts, &sight)
     }
 
@@ -437,5 +473,22 @@ mod tests {
         assert_eq!((save.label.as_str(), save.inactive), ("Save Ready", false));
         let json: serde_json::Value = serde_json::from_str(&to_json(&parts)).unwrap();
         assert!(json[0]["nodes"].as_array().unwrap().iter().any(|n| n["name"] == "save" && n["label"] == "Save Ready"));
+    }
+
+    #[test]
+    fn words_go_to_their_zone_or_stand_alone() {
+        // «Close» drawn on the close button; «Ready» drawn where no zone is.
+        let seen = [
+            SeenText { at: 0, text: "Close".into(), bounds: [362.0, 15.0, 388.0, 35.0], clipped: false },
+            SeenText { at: 1, text: "Ready".into(), bounds: [20.0, 200.0, 70.0, 220.0], clipped: false },
+            // Cut out by a clip, and no row of a list to be: nobody's.
+            SeenText { at: 2, text: "Gone".into(), bounds: [20.0, 160.0, 70.0, 180.0], clipped: true },
+        ];
+        let parts = told_with(false, &seen);
+        assert_eq!(node(&parts, "close").unwrap().label, "Close");
+        assert!(unnamed(&parts).is_empty());
+        let loose: Vec<&str> = parts[0].nodes.iter().filter(|n| n.role == Role::Text).map(|n| n.label.as_str()).collect();
+        assert_eq!(loose, ["Ready"]);
+        assert!(to_text(&parts).contains("text            «Ready»"), "{}", to_text(&parts));
     }
 }

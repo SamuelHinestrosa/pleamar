@@ -36,6 +36,7 @@ main · window «Notes» 640×480 · scale 1
     item    hit#r2  «pleamar ideas»  at 16,140 608×38
     item    hit#r3  «Fourth note»  · off view  at 16,180 608×38
     item    hit#r4  «Fifth note»  · off view  at 16,220 608×38
+  text            «No note open»  at 16,390 96×20
   button  new     «New note»  at 452,428 80×36
   button  save    «Save»  · inactive  at 544,428 80×36
   button  delete  «Delete»  · a person's  at 360,428 80×36
@@ -48,7 +49,7 @@ main · window «Notes» 640×480 · scale 1
 | --- | --- |
 | **header** | One per surface or popup on screen: its name (`main` for the scene's own), what it is (`window «title»`, `panel`, `popup`), its size and its scale. A copy per monitor says `(screen 0)` there, and its names lose the `#screen0` every one of them carries |
 | **name** | The zone's or the field's own, as the scene knows it: `knob.2` for one written `knob.$k`, `hit#r3` for the `hit` of the fourth copy of a `for r`, `touch#TrayIcon431` for one inside a copy of a component. It is the name `press` will take (step 2) |
-| **role** | Derived: an `input` is a `field`; a stack with `view:` a `list`; a zone with `on drag`, or with `on wheel` and no press, a `slider`; one with a press, `cursor: pointer` or `carries:`, a `button`, or an `item` if it is in a copy of a `for` or a `repeat`; anything else a `region`. `role:` will override it (step 7) |
+| **role** | Derived: an `input` is a `field`; a stack with `view:` a `list`; a zone with `on drag`, or with `on wheel` and no press, a `slider`; one with a press, `cursor: pointer` or `carries:`, a `button`, or an `item` if it is in a copy of a `for` or a `repeat`; anything else a `region`. And the words drawn outside every zone —a title, a status line— are a `text`, with no name: they are read, not touched. `role:` will override it (step 7) |
 | **label** | `label:` if it has one. If not, the texts drawn inside its box this frame, in reading order: each text goes to the smallest **active** zone it falls in, so a button's word is the button's and not the panel's around it, and a closed menu still in its place does not take the words of what is drawn there. A field without text says its `placeholder`. **Nothing is guessed from what is near**: in Marea the slider's name is drawn under its icon, not under the slider, and a guess would have named the icon. When the word is not inside, `label:` says it |
 | **value** | A field's text: `(hidden)` with `secret: true` or `agent: no`. `value:` for the rest will come with step 7 |
 | **state** | `inactive` when its `active:` is false **and** something is drawn in it (a greyed out button; an inactive zone with nothing in it is a closed panel's, and is left out), `covered by X` when another zone is on top at its centre, `off view` when its list has scrolled it out, `a person's` with `agent: no` |
