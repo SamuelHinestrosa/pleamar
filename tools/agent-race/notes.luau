@@ -11,3 +11,12 @@ end)
 on("created", function()
     text.status = "New note created"
 end)
+
+-- Saving takes a while, as it does when there is a disk or a network behind.
+on("save", function()
+    text.status = "Saving…"
+    after(800, function()
+        fact.saving = false
+        text.status = "Saved"
+    end)
+end)

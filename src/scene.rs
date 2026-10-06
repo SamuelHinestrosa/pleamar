@@ -2065,6 +2065,15 @@ pub enum ToRender {
     /// Someone from outside asks what there is to read and touch: the
     /// scene as a tree (`describe`), as text or as JSON.
     Describe(bool, std::sync::mpsc::Sender<String>),
+    /// An agent asks the scene to do something by name, as a hand would
+    /// (`press save`); it is answered with what happened.
+    Act(crate::agent::Act, std::sync::mpsc::Sender<String>),
+    /// `wait EXPR [TIMEOUT]`: answered as soon as it holds, or when it is late.
+    Wait(String, std::sync::mpsc::Sender<String>, std::sync::Weak<()>),
+    /// `watch`: a line for each thing that happens, until then.
+    Watch(std::sync::mpsc::Sender<String>, std::time::Instant, std::sync::Weak<()>),
+    /// Retire disconnected wait/watch clients even when the scene is idle.
+    CommandGone,
     /// `pleamar --report`: measure every frame from now (`None`), or answer
     /// with what was measured and stop (`Some`).
     Probe(Option<std::sync::mpsc::Sender<String>>),

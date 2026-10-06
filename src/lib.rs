@@ -37,6 +37,12 @@ pub use gpu::{Frames, NewSheet, Sent, Target, View};
 pub use wgpu;
 pub use scenes::from_file::read as read_scene;
 
+/// Native scene command clients used by Windows desktop companions.
+#[cfg(target_os = "windows")]
+pub mod commands {
+    pub use crate::platform::{ask, running_scenes, send, stream};
+}
+
 /// Entry point for the windowless Windows COM notification activator.
 #[cfg(target_os = "windows")]
 pub fn run_notification_broker() -> Result<(),String> {platform::run_notification_broker()}
@@ -334,11 +340,52 @@ pub fn run_with(options: Vec<String>) {
     {
         let name = std::path::Path::new(&a.scene).file_stem().map_or(a.scene.clone(), |n| n.to_string_lossy().into_owned());
         let tx = Mutex::new((to_render.clone(), to_logic_for_commands));
-        platform::listen_for_commands(&name, Box::new(move |line| {
-            let guard = tx.lock().unwrap();
-            let (tx, to_logic) = &*guard;
+        let me = name.clone();
+        platform::listen_for_commands(&name, std::sync::Arc::new(move |line: String, out: &mut dyn platform::CommandReply| {
+            // Copies, and the lock let go at once: a `wait` that lasts does not hold up the others.
+            let (tx, to_logic) = {
+                let guard = tx.lock().unwrap();
+                (guard.0.clone(), guard.1.clone())
+            };
+            let (tx, to_logic) = (&tx, &to_logic);
             let mut p = line.trim().splitn(3, ' ');
             let (what, who, rest) = (p.next().unwrap_or(""), p.next().unwrap_or(""), p.next().unwrap_or(""));
+            let after = line.trim().split_once(' ').map_or("", |x| x.1);
+            // Who it is: what a window manager asks to know which window is which scene.
+            if what == "hello" {
+                return Some(format!("pleamar {} · scene {me} · pid {} · language {}.{}", env!("CARGO_PKG_VERSION"), std::process::id(), language::VERSION.0, language::VERSION.1));
+            }
+            // `wait saving == false 3s`: answered as soon as it holds, or when it is late.
+            if what == "wait" {
+                let lease = CommandLease::new(tx.clone());
+                let (question, answer) = std::sync::mpsc::channel();
+                let _ = tx.send(ToRender::Wait(after.to_owned(), question, std::sync::Arc::downgrade(&lease.live)));
+                let until = std::time::Instant::now() + Duration::from_secs(62);
+                loop {
+                    if !out.connected() { return None; }
+                    match answer.recv_timeout(Duration::from_millis(100)) {
+                        Ok(answer) => return Some(answer),
+                        Err(std::sync::mpsc::RecvTimeoutError::Timeout) if std::time::Instant::now() < until => {},
+                        Err(_) => return Some("? the render does not answer\n".into()),
+                    }
+                }
+            }
+            // `watch [10s]`: a line for each thing that happens, for that long (ten seconds if unsaid).
+            if what == "watch" {
+                let lease = CommandLease::new(tx.clone());
+                let secs = after.trim().trim_end_matches('s').parse::<f32>().ok().filter(|s| *s > 0.0 && *s <= 3600.0).unwrap_or(10.0);
+                let (lines, heard) = std::sync::mpsc::channel();
+                let until = std::time::Instant::now() + std::time::Duration::from_secs_f32(secs);
+                let _ = tx.send(ToRender::Watch(lines, until, std::sync::Arc::downgrade(&lease.live)));
+                while out.connected() {
+                    match heard.recv_timeout(Duration::from_millis(100)) {
+                        Ok(l) => if !out.write(&l) { break; },
+                        Err(std::sync::mpsc::RecvTimeoutError::Timeout) if std::time::Instant::now() < until + Duration::from_millis(200) => {},
+                        Err(_) => break,
+                    }
+                }
+                return None;
+            }
             // `pleamar --report`: measuring starts, and later its report is asked for.
             if what == "probe" {
                 if who == "report" {
@@ -354,6 +401,17 @@ pub fn run_with(options: Vec<String>) {
                 let (question, answer) = std::sync::mpsc::channel();
                 let _ = tx.send(ToRender::Describe(who == "json", question));
                 return Some(answer.recv_timeout(std::time::Duration::from_secs(2)).unwrap_or_else(|_| "? the render does not answer".into()));
+            }
+            // `press save`, `type query words`…: by name, as a hand would. It answers with what happened.
+            if let Some(act) = crate::agent::Act::parse(what, after) {
+                return Some(match act {
+                    Err(m) => format!("? {m}\n"),
+                    Ok(act) => {
+                        let (question, answer) = std::sync::mpsc::channel();
+                        let _ = tx.send(ToRender::Act(act, question));
+                        answer.recv_timeout(std::time::Duration::from_secs(8)).unwrap_or_else(|_| "? the render does not answer\n".into())
+                    }
+                });
             }
             if what == "get" {
                 let (question, answer) = std::sync::mpsc::channel();
@@ -380,7 +438,7 @@ pub fn run_with(options: Vec<String>) {
                 "quit" => { if !platform::request_quit() { quit_after_render(tx) } Ok(()) },
                 _ => {
                     eprintln!("orders · I don't understand '{line}'");
-                    return Some(format!("? I don't understand '{}': emit, fact, text, submit, focus, get, describe, probe, quit", line.trim()));
+                    return Some(format!("? I don't understand '{}': emit, fact, text, submit, focus, get, describe, press, hold, drag, wheel, type, key, wait, watch, hello, probe, quit", line.trim()));
                 }
             };
             None
@@ -481,11 +539,24 @@ pub fn run_with(options: Vec<String>) {
     quit();
 }
 
-/// The process goes away whole —the destruction order does not deserve code in a
-/// prototype—, but not without first stopping what the logic left running, nor
-/// what a platform handed over still has working with the card (`provide_before_quit`).
-/// Quitting goes through the render, and waits until it has let the card go (a few
-/// seconds at most): leaving while it still works with it brought the driver down with it.
+struct CommandLease {
+    live: std::sync::Arc<()>,
+    render: std::sync::mpsc::Sender<ToRender>,
+}
+impl CommandLease {
+    fn new(render: std::sync::mpsc::Sender<ToRender>) -> Self { Self { live: std::sync::Arc::new(()), render } }
+}
+impl Drop for CommandLease {
+    fn drop(&mut self) {
+        // Release before waking: the renderer must observe the expired lease.
+        let old = std::mem::replace(&mut self.live, std::sync::Arc::new(()));
+        drop(old);
+        let _ = self.render.send(ToRender::CommandGone);
+    }
+}
+
+/// Quitting goes through the render and waits until it lets the GPU go. Leaving
+/// while it still has submitted work brought the driver down with the process.
 fn quit_after_render(tx: &std::sync::mpsc::Sender<ToRender>) -> ! {
     let _ = tx.send(ToRender::Quit);
     let asked = std::time::Instant::now();

@@ -478,6 +478,15 @@ pub fn run(
     // Who asked what the scene holds (`describe`): answered after the next
     // list is made, which is when where every text went is known.
     let mut describing: Vec<(bool, std::sync::mpsc::Sender<String>)> = Vec::new();
+    // What agents asked to do by name (`press save`), one after the other, and
+    // the one being done: its steps, frame by frame, as a hand would. While it
+    // lasts the pointer is its hand; the user's comes back when it is done.
+    let mut acts: std::collections::VecDeque<(crate::agent::Act, std::sync::mpsc::Sender<String>)> = std::collections::VecDeque::new();
+    let mut acting: Option<Acting> = None;
+    let mut real_pointer: Option<(f32, f32)> = None;
+    // Who waits for a condition (`wait`), and who watches what happens (`watch`).
+    let mut waits: Vec<(crate::agent::Cond, Instant, Instant, std::sync::mpsc::Sender<String>, std::sync::Weak<()>)> = Vec::new();
+    let mut watchers: Vec<Watcher> = Vec::new();
     // The zones that have already been said to have no words: once each.
     let mut unnamed_said: std::collections::HashSet<&'static str> = std::collections::HashSet::new();
     let mut changed: Vec<[f32; 4]> = Vec::new();
@@ -676,10 +685,13 @@ pub fn run(
         }
         if std::mem::take(&mut pointer_later) {
             pointer = None;
+            real_pointer = None;
         }
         // (which one, whether it comes from the logic)
         let mut signals: Vec<(usize, bool, Option<f32>)> = late_signals.drain(..).map(|s| (s.0 as usize, false, None)).collect();
         let mut gestures_asked: Vec<usize> = Vec::new();
+        // What a `watch` is told of this frame besides what changed: events, and presses.
+        let mut heard_events: Vec<(&str, &'static str)> = Vec::new();
         let mut incoming: Vec<ToRender> = std::mem::take(&mut held_back);
         if resting {
             // Still: not a single frame. Only a message or the next appointment wakes it
@@ -765,6 +777,25 @@ pub fn run(
                     }
                 }
                 ToRender::Scene(fresh) => {
+                    // Conditions and action steps contain indices into this
+                    // exact scene. A reload must not reinterpret them as new
+                    // fields, or leave a held button attached to a retired zone.
+                    for (_, _, _, reply, _) in waits.drain(..) {
+                        let _ = reply.send("? scene reloaded while waiting; repeat the condition\n".into());
+                    }
+                    for watcher in watchers.drain(..) {
+                        let _ = watcher.lines.send("scene reloaded; watch ended".into());
+                    }
+                    for (_, reply) in acts.drain(..) {
+                        let _ = reply.send("? scene reloaded before the action; ask describe again\n".into());
+                    }
+                    if let Some(action) = acting.take() {
+                        let _ = action.reply.send("? scene reloaded during the action; ask describe again\n".into());
+                        pointer = real_pointer;
+                        finger_down = false;
+                        drag = None;
+                        buttons.clear();
+                    }
                     selection = None;
                     draw.selectable.clear();
                     // Constant geometry can change while every fact and property stays equal.
@@ -1117,6 +1148,22 @@ pub fn run(
                     };
                     let _ = reply_to.send(r);
                 }
+                ToRender::Act(act, reply_to) => acts.push_back((act, reply_to)),
+                ToRender::CommandGone => {},
+                ToRender::Wait(src, reply_to, live) => match crate::agent::Cond::parse(&scene, &src) {
+                    Ok((cond, timeout)) => {
+                        let now = Instant::now();
+                        waits.push((cond, now, now + timeout, reply_to, live));
+                    }
+                    Err(m) => {
+                        let _ = reply_to.send(format!("? {m}\n"));
+                    }
+                },
+                ToRender::Watch(lines, until, live) => {
+                    let c = Ctx { props: &props, facts: &facts };
+                    let _ = lines.send(format!("watching for {:.0} s", until.saturating_duration_since(Instant::now()).as_secs_f32()));
+                    watchers.push(Watcher { lines, until, live, start: Instant::now(), before: crate::agent::before(&scene, c, &texts, open_surfaces(&scene, &sheets)) });
+                }
                 ToRender::Describe(json, reply_to) => {
                     describing.push((json, reply_to));
                     draw.collect_texts = true;
@@ -1164,6 +1211,7 @@ pub fn run(
                 ToRender::Pointer(None) if !drops.is_empty() => pointer_later = true,
                 ToRender::Pointer(p) => {
                     pointer = p;
+                    real_pointer = p;
                     last_activity = Instant::now();
                 }
                 ToRender::Button(b, down) => {
@@ -1597,6 +1645,143 @@ pub fn run(
                 }
             }
         }
+        // ── an agent's hand ─────────────────────────────────────
+        if acting.is_some() || !acts.is_empty() {
+            let c = Ctx { props: &props, facts: &facts };
+            let absent: Vec<std::ops::Range<usize>> = scene.spans.iter().filter(|t| scene.surfaces.get(t.surface).is_some_and(|s| s.instance > 0) && !sheets.iter().any(|l| l.view.surface == t.surface)).map(|t| t.instrs.clone()).collect();
+            let gone = |at: usize| draw.hidden.get(at).copied().unwrap_or(false) || absent.iter().any(|r| r.contains(&at));
+            let rank = z_memo.as_ref().and_then(|(_, a)| a.as_ref()).map(|a| a.zone_rank.clone());
+            let sight = crate::agent::Sight {
+                shown: sheets.iter().filter(|s| s.open).map(|s| crate::agent::Shown { surface: s.view.surface, popup: s.view.popup, bounds: s.view.bounds(), scale: s.scale }).collect(),
+                texts_seen: &[],
+                gone: &gone,
+                rank: rank.as_deref(),
+            };
+            let now = Instant::now();
+            if acting.is_none()
+                && let Some((act, reply)) = acts.pop_front()
+            {
+                match Acting::plan(&scene, c, &sight, act, reply, &texts, open_surfaces(&scene, &sheets)) {
+                    Ok(a) => acting = Some(a),
+                    Err((reply, m)) => {
+                        let _ = reply.send(m + "\n");
+                    }
+                }
+            }
+            let mut failed = None;
+            if let Some(a) = &mut acting {
+                // One step a frame, as a hand: in, down, up, out. A wait lets frames go by.
+                while let Some(step) = a.steps.front().cloned() {
+                    match step {
+                        Step::Pause(d) => {
+                            a.steps[0] = Step::Wait(now + d);
+                            break;
+                        }
+                        Step::Wait(until) if now < until => break,
+                        Step::Wait(_) => {}
+                        Step::Scroll(deadline) => match crate::agent::reach_point(&scene, c, a.zone, &sight) {
+                            Ok(None) if now < deadline => {
+                                if !a.scrolled
+                                    && let Some((prop, by)) = crate::agent::scroll_into_view(&scene, c, a.zone)
+                                {
+                                    let p = &mut props[prop.0 as usize];
+                                    p.target = (p.target + by).max(0.0);
+                                    a.scrolled = true;
+                                }
+                                break;
+                            }
+                            Ok(None) => {
+                                failed = Some(format!("? {} could not be brought into sight", a.said_name));
+                                break;
+                            }
+                            Ok(Some(_)) | Err(_) => {
+                                if a.scrolled {
+                                    a.said.insert_str(0, &format!("scrolled {} into sight\n", a.said_name));
+                                }
+                            }
+                        },
+                        Step::Point => match crate::agent::reach_point(&scene, c, a.zone, &sight) {
+                            Ok(Some(p)) => {
+                                a.hand = Some(p);
+                                a.from = p;
+                                a.steps.pop_front();
+                                break;
+                            }
+                            Ok(None) => {
+                                failed = Some(format!("? {} is out of sight", a.said_name));
+                                break;
+                            }
+                            Err(m) => {
+                                failed = Some(m);
+                                break;
+                            }
+                        },
+                        Step::Move(dx, dy) => {
+                            a.hand = Some((a.from.0 + dx, a.from.1 + dy));
+                            a.steps.pop_front();
+                            break;
+                        }
+                        Step::Down(b) => {
+                            buttons.push((b, true));
+                            if let (0, Some(p)) = (b, a.hand) {
+                                finger_down = true;
+                                finger = p;
+                                finger_light = 1.0;
+                                if !op.reduced_motion {
+                                    ripple = Some((p, now));
+                                }
+                            }
+                            a.steps.pop_front();
+                            break;
+                        }
+                        Step::Up(b) => {
+                            buttons.push((b, false));
+                            if b == 0 {
+                                finger_down = false;
+                            }
+                            a.steps.pop_front();
+                            break;
+                        }
+                        Step::Wheel(n) => {
+                            wheel += n;
+                            a.steps.pop_front();
+                            break;
+                        }
+                        Step::Leave => {
+                            a.hand = None;
+                            pointer = real_pointer;
+                            a.steps.pop_front();
+                            break;
+                        }
+                        Step::Type(k, text) => {
+                            // As typing over what was there: all of it chosen, then the letters.
+                            editing = Some(Editing { field: k, cursor: texts[k].len(), anchor: 0 });
+                            last_key = now;
+                            key_presses.push(if text.is_empty() { ("BackSpace".into(), None, Mods::default(), 0) } else { ("type".into(), Some(text), Mods::default(), 0) });
+                            a.steps.pop_front();
+                            break;
+                        }
+                        Step::Key(name, mods, typed) => {
+                            key_presses.push((name, typed, mods, 0));
+                            a.steps.pop_front();
+                            break;
+                        }
+                    }
+                    a.steps.pop_front();
+                }
+                if let Some(p) = a.hand {
+                    pointer = Some(p);
+                }
+            }
+            if let Some(m) = failed
+                && let Some(a) = acting.take()
+            {
+                if a.hand.is_some() {
+                    pointer = real_pointer;
+                }
+                let _ = a.reply.send(m + "\n");
+            }
+        }
         profiling = timing || probe.is_some();
         if profiling {
             prof_t = Instant::now();
@@ -1805,6 +1990,9 @@ pub fn run(
                     }
                     selection = None;
                     pressed = hovered;
+                    if let Some(k) = hovered.filter(|_| !watchers.is_empty()) {
+                        heard_events.push(("press", scene.zones[k].id));
+                    }
                     if let (Some(k), Some(p)) = (hovered, pointer) {
                         // Clicking a field focuses it, with the cursor where the click landed.
                         let id = scene.zones[k].id;
@@ -2510,6 +2698,12 @@ pub fn run(
             }
             for (s, from_logic, payload) in std::mem::take(&mut signals) {
                 let id = SignalId(s as u16);
+                if let Some(a) = &mut acting {
+                    a.events.push(("event", scene.signals[s].0));
+                }
+                if !watchers.is_empty() {
+                    heard_events.push(("event", scene.signals[s].0));
+                }
                 // When it last happened: what a `burst:` of particles starts from.
                 if draw.signal_times.len() != scene.signals.len() {
                     draw.signal_times = vec![-1.0; scene.signals.len()];
@@ -3144,6 +3338,60 @@ pub fn run(
             memo.window_tex.clone_from(&draw.window_tex);
             memo.props.clear();
             memo.props.extend(props.iter().map(|a| a.x));
+        }
+        // An agent's action: when its steps are done and the scene has stopped
+        // answering —its rules, its logic—, it is told what happened.
+        if let Some(a) = &mut acting {
+            appointments.push(now + Duration::from_millis(15));
+            if a.steps.is_empty() {
+                let done = *a.done.get_or_insert(now);
+                let open = open_surfaces(&scene, &sheets);
+                let heard = crate::agent::what_happened(&scene, &a.before, c, &texts, &open, &a.events);
+                if heard != a.heard {
+                    a.heard = heard;
+                    a.quiet = now;
+                }
+                let settled = now - done >= Duration::from_millis(150) && now - a.quiet >= Duration::from_millis(150);
+                if settled || now - done >= Duration::from_millis(1200) {
+                    let a = acting.take().unwrap();
+                    let _ = a.reply.send(format!("{}{}", a.said, a.heard));
+                }
+            }
+        }
+        // Conditions waited for: said as soon as they hold.
+        if !waits.is_empty() {
+            waits.retain(|(cond, start, deadline, reply, live)| {
+                if live.strong_count() == 0 { return false; }
+                if cond.holds(&scene, c, &texts) {
+                    let _ = reply.send(format!("yes, after {} ms\n", (now - *start).as_millis()));
+                    false
+                } else if now >= *deadline {
+                    let _ = reply.send(format!("? not after {:.1} s: {}\n", (*deadline - *start).as_secs_f32(), cond.now(&scene, c, &texts)));
+                    false
+                } else {
+                    appointments.push(*deadline);
+                    true
+                }
+            });
+        }
+        // And what is watched: a line for each change, with when it happened.
+        if !watchers.is_empty() {
+            let open = open_surfaces(&scene, &sheets);
+            watchers.retain_mut(|w| {
+                if w.live.strong_count() == 0 { return false; }
+                if now >= w.until {
+                    let _ = w.lines.send("done watching".into());
+                    return false;
+                }
+                appointments.push(w.until);
+                let heard = crate::agent::what_happened(&scene, &w.before, c, &texts, &open, &heard_events);
+                if heard.trim() == "nothing changed" {
+                    return true;
+                }
+                w.before = crate::agent::before(&scene, c, &texts, open.clone());
+                let at = (now - w.start).as_secs_f32();
+                heard.lines().all(|l| w.lines.send(format!("+{at:.2}s{l}")).is_ok())
+            });
         }
         // Particles carry themselves: while one is alive, the scene does not rest.
         alive |= draw.particles_alive;
@@ -4493,4 +4741,155 @@ mod selection_tests {
         let s = TextSelection { at: 0, anchor: 1, cursor: 3, dragging: false };
         assert_eq!(s.bytes("ñandú"), (0, 3));
     }
+}
+
+/// A step of an agent's hand.
+#[derive(Clone)]
+enum Step {
+    /// Its list scrolls until it is in sight, or gives up at that moment.
+    Scroll(Instant),
+    /// The hand goes to the zone: to a point of it that is on top.
+    Point,
+    /// And from there, so far: a drag.
+    Move(f32, f32),
+    Down(u8),
+    Up(u8),
+    Wheel(f32),
+    /// So long from when it is reached: it becomes a `Wait`.
+    Pause(Duration),
+    Wait(Instant),
+    /// The hand goes away, and the user's pointer is the pointer again.
+    Leave,
+    /// A field gets this, as if typed over what it had.
+    Type(usize, String),
+    Key(String, Mods, Option<String>),
+}
+
+/// An action an agent asked for by name, while it is being done.
+struct Acting {
+    reply: std::sync::mpsc::Sender<String>,
+    zone: usize,
+    said_name: String,
+    /// What it answers before what happened: «pressed save».
+    said: String,
+    steps: std::collections::VecDeque<Step>,
+    hand: Option<(f32, f32)>,
+    from: (f32, f32),
+    scrolled: bool,
+    before: crate::agent::Before,
+    events: Vec<(&'static str, &'static str)>,
+    done: Option<Instant>,
+    heard: String,
+    quiet: Instant,
+}
+
+impl Acting {
+    /// The steps for an action, or why it cannot be done (with whom to tell).
+    #[allow(clippy::too_many_arguments, clippy::result_large_err)]
+    fn plan(scene: &Scene, c: Ctx, sight: &crate::agent::Sight, act: crate::agent::Act, reply: std::sync::mpsc::Sender<String>, texts: &[String], open: Vec<String>) -> Result<Acting, (std::sync::mpsc::Sender<String>, String)> {
+        use crate::agent::Act;
+        let now = Instant::now();
+        let ms = |n: u64| now + Duration::from_millis(n);
+        let mut steps = std::collections::VecDeque::new();
+        let mut zone = usize::MAX;
+        let name = act.name().to_owned();
+        if !matches!(act, Act::Key { .. }) {
+            let Some(k) = crate::agent::locate(scene, &name, &sight.shown) else {
+                return Err((reply, format!("? there is nothing called '{name}' on screen: `describe` says what there is")));
+            };
+            zone = k;
+            if let Err(m) = crate::agent::reach_point(scene, c, k, sight) {
+                return Err((reply, m));
+            }
+            steps.push_back(Step::Scroll(ms(1500)));
+        }
+        let said = match &act {
+            Act::Press { button, count, .. } => {
+                steps.push_back(Step::Point);
+                for i in 0..*count {
+                    if i > 0 {
+                        steps.push_back(Step::Pause(Duration::from_millis(60)));
+                    }
+                    steps.push_back(Step::Down(*button));
+                    steps.push_back(Step::Pause(Duration::from_millis(40)));
+                    steps.push_back(Step::Up(*button));
+                }
+                steps.push_back(Step::Leave);
+                let how = match (button, count) {
+                    (0, 1) => String::new(),
+                    (b, n) => format!(" ({}{})", ["left", "right", "middle"][*b as usize], if *n > 1 { format!(", {n} times") } else { String::new() }),
+                };
+                format!("pressed {name}{how}")
+            }
+            Act::Hold { .. } => {
+                // As long as its `on hold` asks, and a little more.
+                let wait = scene.rules.iter().filter_map(|r| match &r.when { crate::scene::Trigger::Hold { zone: z, duration } if z.0 as usize == zone => Some(*duration), _ => None }).max().unwrap_or(Duration::from_millis(600));
+                steps.push_back(Step::Point);
+                steps.push_back(Step::Down(0));
+                steps.push_back(Step::Pause(wait + Duration::from_millis(60)));
+                steps.push_back(Step::Up(0));
+                steps.push_back(Step::Leave);
+                format!("held {name}")
+            }
+            Act::Drag { by, .. } => {
+                steps.push_back(Step::Point);
+                steps.push_back(Step::Down(0));
+                for i in 1..=12 {
+                    let f = i as f32 / 12.0;
+                    steps.push_back(Step::Pause(Duration::from_millis(40)));
+                    steps.push_back(Step::Move(by.0 * f, by.1 * f));
+                }
+                steps.push_back(Step::Up(0));
+                steps.push_back(Step::Leave);
+                format!("dragged {name} by {}, {}", by.0, by.1)
+            }
+            Act::Wheel { notches, .. } => {
+                steps.push_back(Step::Point);
+                steps.push_back(Step::Wheel(*notches));
+                steps.push_back(Step::Pause(Duration::from_millis(60)));
+                steps.push_back(Step::Leave);
+                format!("turned the wheel {notches} over {name}")
+            }
+            Act::Type { text, .. } => {
+                let Some((k, _, _)) = crate::agent::field_of(scene, &scene.zones[zone]) else {
+                    return Err((reply, format!("? {name} is not a field: `type` writes in an `input`")));
+                };
+                steps.push_back(Step::Type(k, text.clone()));
+                format!("typed in {name}")
+            }
+            Act::Key { name, mods, typed } => {
+                steps.push_back(Step::Key(name.clone(), *mods, typed.clone()));
+                format!("key {name}")
+            }
+        };
+        let said_name = name.split("#screen").next().unwrap_or(&name).to_owned();
+        Ok(Acting { reply, zone, said_name, said: said + "\n", steps, hand: None, from: (0.0, 0.0), scrolled: false, before: crate::agent::before(scene, c, texts, open), events: Vec::new(), done: None, heard: String::new(), quiet: now })
+    }
+}
+
+/// The surfaces and popups on screen, by name: what an action opened or closed.
+fn open_surfaces(scene: &Scene, sheets: &[Sheet]) -> Vec<String> {
+    let mut v: Vec<String> = sheets
+        .iter()
+        .filter(|s| s.open)
+        .map(|s| match s.view.popup.and_then(|p| scene.popups.get(p)) {
+            Some(p) => format!("popup {}", p.name),
+            None => {
+                let f = &scene.surfaces[s.view.surface];
+                format!("surface {}", if f.name.is_empty() { "main" } else { &f.name })
+            }
+        })
+        .collect();
+    v.sort();
+    v.dedup();
+    v
+}
+
+/// Someone watching what happens in the scene (`watch`), until then.
+struct Watcher {
+    lines: std::sync::mpsc::Sender<String>,
+    live: std::sync::Weak<()>,
+    until: Instant,
+    start: Instant,
+    before: crate::agent::Before,
 }

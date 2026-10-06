@@ -88,7 +88,6 @@ def main():
         describe_ms = median_ms([pl, "--say", "notes", "describe"])
         scale = float(re.search(r"scale ([\d.]+)", tree.splitlines()[0]).group(1))
         nodes = {n.get("name"): n for part in json.loads(say("describe json")) for n in walk(part["nodes"])}
-        press_by_name = not say("press nothing-at-all").startswith("? I don't understand")
 
         # Both ways wait the same for the window to answer a click —the logic
         # changing the status line— before looking again; what is timed is the
@@ -104,41 +103,50 @@ def main():
             x, y, bw, bh = nodes[name]["box"]
             return str(round((x + bw / 2) * scale)), str(round((y + bh / 2) * scale))
 
-        # ── the task, both ways: open a note, make a new one, check each ──
+        # ── the task, both ways: open a note, make a new one, save it (which
+        # takes 0.8 s, as a disk or a network does) and check each step ──
         # A: as computer use does today. The places to click are the ones a
         # model would read off the picture; here they are given, so only the
-        # hands are timed.
+        # hands are timed. For the save it looks again until «Saved» shows,
+        # every 300 ms: a fast agent.
         a0 = time.perf_counter()
-        run(*wm, "look", pid, shot)
+        looks = 0
+
+        def look():
+            nonlocal looks
+            looks += 1
+            run(*wm, "look", pid, shot)
+
+        look()
         run(*wm, "click", pid, *centre("hit#r1"))
         settled("Opened: Shopping list")
-        run(*wm, "look", pid, shot)
+        look()
         run(*wm, "click", pid, *centre("new"))
         settled("New note created")
-        run(*wm, "look", pid, shot)
+        look()
+        run(*wm, "click", pid, *centre("save"))
+        look()
+        while "Saved" not in say("get status"):
+            time.sleep(0.3)
+            look()
+        look()
         a_ms = (time.perf_counter() - a0) * 1000
-        a_tokens = 3 * image_tokens(w, h)
+        a_tokens = looks * image_tokens(w, h)
 
-        # B: asking the window.
+        # B: asking the window. Each `press` answers with what happened, and
+        # `wait` answers when the save is done: nothing to look at again.
         b0 = time.perf_counter()
         read = say("describe")
-        if press_by_name:
-            say("press", "hit#r2")
-        else:
-            run(*wm, "click", pid, *centre("hit#r2"))
-        settled("Opened: pleamar ideas")
-        read += say("describe")
+        read += say("press", "hit#r2")
         ok_open = "Opened: pleamar ideas" in read
-        if press_by_name:
-            say("press", "new")
-        else:
-            run(*wm, "click", pid, *centre("new"))
-        settled("New note created")
-        last = say("describe")
+        read += say("press", "new")
+        ok_new = "New note created" in read
+        read += say("press", "save")
+        last = say("wait", 'status == "Saved"')
         read += last
+        ok_saved = last.startswith("yes")
         b_ms = (time.perf_counter() - b0) * 1000
         b_tokens = text_tokens(read)
-        ok_new = "New note created" in last
     finally:
         say("quit")
         run(*wm, "done")
@@ -147,16 +155,16 @@ def main():
     dirty = "+" if run("git", "-C", ROOT, "status", "--porcelain", "--", "src").stdout.strip() else ""
     row = (
         f"| {datetime.date.today()} | {commit}{dirty} | {look_ms:.0f} | {describe_ms:.0f} | {a_ms:.0f} | {b_ms:.0f} "
-        f"| {a_tokens} | {b_tokens} | {'press' if press_by_name else 'click'} | {'✓' if ok_open and ok_new else '✗'} | {a.note} |"
+        f"| {a_tokens} ({looks} looks) | {b_tokens} | {'✓' if ok_open and ok_new and ok_saved else '✗'} | {a.note} |"
     )
     print(f"window {w}×{h} at scale {scale}")
     print(f"seeing:  look {look_ms:.0f} ms ({image_tokens(w, h)} tokens)  ·  describe {describe_ms:.0f} ms ({text_tokens(tree)} tokens)")
-    print(f"task:    A pictures {a_ms:.0f} ms, {a_tokens} tokens  ·  B describe {b_ms:.0f} ms, {b_tokens} tokens, acting by {'press' if press_by_name else 'click'}")
-    print(f"checked: opened {'✓' if ok_open else '✗'}  new note {'✓' if ok_new else '✗'}")
+    print(f"task:    A pictures {a_ms:.0f} ms, {a_tokens} tokens in {looks} looks  ·  B by name {b_ms:.0f} ms, {b_tokens} tokens")
+    print(f"checked: opened {'✓' if ok_open else '✗'}  new note {'✓' if ok_new else '✗'}  saved {'✓' if ok_saved else '✗'}")
     # Under the last row of the hands' table.
     path = os.path.join(HERE, "results.md")
     lines = open(path).read().split("\n")
-    start = next(i for i, l in enumerate(lines) if l.startswith("| Date | Commit | look |"))
+    start = next(i for i, l in enumerate(lines) if l.startswith("| Date | Commit | look | describe | A task | B task | A tokens (looks) |"))
     end = next(i for i in range(start + 2, len(lines) + 1) if i == len(lines) or not lines[i].startswith("|"))
     lines.insert(end, row)
     open(path, "w").write("\n".join(lines))
