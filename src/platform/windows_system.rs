@@ -69,6 +69,7 @@ pub fn service(name: &str, notify: Box<dyn Fn(SysValue) + Send>) -> bool {
 }
 
 fn start_service(name: &str, notify: Box<dyn Fn(SysValue) + Send>) -> bool {
+    if name == "thumbnails" { return super::windows_thumbnails::service(notify); }
     if name == "audio" { return super::windows_audio::service(notify); }
     if name == "notifications" { return super::windows_notifications::service(notify); }
     if name == "hotkeys" { return super::windows_hotkeys::service(notify); }

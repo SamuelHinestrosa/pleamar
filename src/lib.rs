@@ -448,7 +448,7 @@ pub fn run_with(options: Vec<String>) {
     let _ = to_render.send(ToRender::Quit);
     if render.join().is_err() {
         #[cfg(target_os = "windows")]
-        platform::finish_recordings();
+        platform::finish_native_services();
         std::process::exit(1);
     }
     quit();
@@ -470,7 +470,7 @@ fn quit_after_render(tx: &std::sync::mpsc::Sender<ToRender>) -> ! {
 
 fn quit() -> ! {
     #[cfg(target_os = "windows")]
-    platform::finish_recordings();
+    platform::finish_native_services();
     if let Some(f) = BEFORE_QUIT.lock().unwrap().take() {
         f();
     }

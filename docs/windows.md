@@ -20,8 +20,8 @@ The additional no-default-features check passed. An owned, passive DX12 scene
 on non-primary DISPLAY2 at 125% DPI passed module edits, syntax-error recovery,
 Unicode-path part edits and retired-module checks; six WGC captures were
 inspected. No physical input was sent and the foreground window was unchanged.
-This does not validate the new Marea pages or complete desktop parity:
-`thumbnails.live` still needs a Windows adapter. The native `audio.apps` list
+This does not validate the new Marea pages or complete desktop parity.
+The native `audio.apps` list
 and per-session controls were added and validated subsequently, as described
 below. Per-player `media.volume` and pleamar-wm WGC previews are separate
 capabilities.
@@ -37,13 +37,67 @@ or exit, independently of idle command-thread retirement. Pending callbacks
 remain valid until delivery; `kill` accepts spawned processes, not asynchronous
 service request identifiers.
 
-The current 0.2.24 revision passes 182 ordinary Windows library tests (39
+The current 0.2.24 revision passes 185 ordinary Windows library tests (39
 desktop helpers skipped in the local checkout), the release build with default
 Luau and 242 language checks, including 34 documentation scenes. The service
 regression visits 40 different families through real asynchronous error replies,
 verifies idle thread exit, protects pending callbacks and retained native state,
 and checks scene ownership survives retirement but ends on reload/exit.
 No physical hotkey or recording interaction is claimed by these unit tests.
+
+### Window thumbnails
+
+`service thumbnails` and `sys.watch("thumbnails", callback)` list eligible
+native application windows. `thumbnails.want` requests small PNG pictures;
+`thumbnails.live` feeds their pixels directly to the existing image renderer.
+Both take string IDs from the list, `"all"`, or no argument to stop requesting
+that kind of picture. Live and still selections are independent; live wins
+when a window belongs to both. A picture becomes a PNG when it is no longer
+requested live, so an overview can retain its last image without an active
+capture. Listening alone never starts a capture.
+
+The adapter uses [Windows Graphics Capture](https://learn.microsoft.com/en-us/windows/apps/develop/media-authoring-processing/screen-capture)
+with one shared D3D11 device, one frame buffer and one staging texture per
+captured window. CPU pictures have a longest edge of at most 400 pixels.
+It reads changed frames at most about 29 times a second for live images,
+or once per 300 ms for PNGs. Unchanged pixels do not bump the picture version.
+GPU readback is asynchronous; neither the Luau thread nor the renderer waits
+for the application to paint. Capture sessions stop when deselected or
+minimized. Scene reload/exit cancels that scene's selections. Normal process
+shutdown closes the sessions and removes its temporary images.
+
+Limits are explicit: at most eight simultaneous captures, 16 megapixels of
+aggregate source surfaces, and 16 MiB of retained CPU pictures. An individual
+source may not exceed 8192 pixels on either axis. Minimized, closed or failed
+captures keep the last picture with `stale = true`; per-window `error` explains
+failures and resource limits. `capturing = false` and the service `error` report
+unavailable capture support. Shell/tool/cloaked windows and the runtime's own
+windows are excluded. `app` identifies the native window class. This is SDR
+capture; HDR fidelity and protected content are not supported, and Windows
+may display its capture border. A forced process termination can leave its
+bounded temporary image directory behind.
+
+Native validation (2026-10-06): two owned, disabled, non-activating windows on
+non-primary DISPLAY2 at 125% DPI passed live repaint, resize, minimize/restore,
+live-to-PNG switching, still repaint, deselection, Luau reload, source closure
+and normal-shutdown cache cleanup. Eight WGC-to-DX12 captures were inspected;
+no physical input was sent and the foreground stayed unchanged. The release
+executable used default Luau; its SHA-256 and the checks are in
+[the evidence](windows-thumbnails/evidence.json). This is functional coverage
+for two sources, not a sustained eight-window/HDR/hardware performance claim.
+The independent pleamar-wm `windows` preview surface remains a separate API
+with its own native window controls.
+
+To repeat it, install Pillow in the test Python environment, build the library
+test executable with `cargo test --release --locked --lib --no-run`, and use
+that executable's printed path as `--harness`:
+
+```powershell
+python scripts/windows-thumbnails.py --binary target/release/pleamar.exe --harness <library-test-exe> --output <new-output-directory>
+```
+
+The test requires an active, non-primary `\\.\DISPLAY2`. It creates and
+captures only its own test windows and does not synthesize desktop input.
 
 Native screenshots use `sys.ask_async("screenshot.freeze", { scope }, callback)`
 followed by `screenshot.finish` with the returned numeric identifier, on the

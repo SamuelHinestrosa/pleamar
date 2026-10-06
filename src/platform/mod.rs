@@ -150,6 +150,8 @@ fn start_service(from: &str, name: &str, notify: Box<dyn Fn(SysValue) + Send>) -
 /// Ask a service to do something: `workspaces.focus`, 3.
 pub fn command(from: &str, name: &str, args: &[SysValue]) -> Result<(), String> {
     #[cfg(target_os = "windows")]
+    if name.starts_with("thumbnails.") { return windows_thumbnails::command(from, name, args); }
+    #[cfg(target_os = "windows")]
     if name.starts_with("credentials.") { return windows_credentials::command(from, name, args); }
     #[cfg(target_os = "windows")]
     if name == "desktop.type_secret" { return windows_desktop::type_secret(from, args); }
@@ -816,7 +818,9 @@ pub struct ThumbnailFrame {
     pub pixels: Vec<u8>,
     pub opaque: bool,
 }
-#[cfg(not(target_os = "linux"))]
+#[cfg(target_os = "windows")]
+pub use windows_thumbnails::frame as thumbnail_frame;
+#[cfg(not(any(target_os = "linux", target_os = "windows")))]
 pub fn thumbnail_frame(_: &str) -> Option<std::sync::Arc<ThumbnailFrame>> {
     None
 }
@@ -888,6 +892,10 @@ pub(crate) use windows_toasts::register_shortcut as register_notification_shortc
 #[cfg(target_os = "windows")]
 mod windows_windows;
 #[cfg(target_os = "windows")]
+mod windows_thumbnails;
+#[cfg(target_os = "windows")]
+pub(crate) use windows_thumbnails::release as release_thumbnail_requests;
+#[cfg(target_os = "windows")]
 mod windows_desktop;
 #[cfg(target_os = "windows")]
 mod windows_credentials;
@@ -918,7 +926,10 @@ mod windows_capture_winrt;
 #[cfg(target_os = "windows")]
 mod windows_recording;
 #[cfg(target_os = "windows")]
-pub(crate) use windows_recording::shutdown as finish_recordings;
+pub(crate) fn finish_native_services() {
+    windows_recording::shutdown();
+    windows_thumbnails::shutdown();
+}
 #[cfg(target_os = "windows")]
 pub(crate) use windows_capture::set_service_lifetime;
 

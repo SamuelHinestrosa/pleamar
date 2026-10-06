@@ -1402,7 +1402,7 @@ fn run_event_loop_with_monitors(
     for v in &live {
         unsafe { remove_appbar(v); let _ = DestroyWindow(v.hwnd()); }
     }
-    if failed { super::finish_recordings(); std::process::exit(1); }
+    if failed { super::finish_native_services(); std::process::exit(1); }
 }
 
 fn retire(v: &WindowState) {

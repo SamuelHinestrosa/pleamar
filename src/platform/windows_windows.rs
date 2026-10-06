@@ -4,10 +4,10 @@ use std::{collections::HashMap, mem::size_of, sync::{Mutex, OnceLock}, time::{Du
 use windows::Win32::{Foundation::*, Graphics::{Dwm::*, Gdi::*}, System::Threading::*, UI::WindowsAndMessaging::*};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-struct Identity { handle: isize, process: u32, thread: u32 }
+pub(super) struct Identity { handle: isize, process: u32, thread: u32 }
 impl Identity {
-    fn hwnd(self) -> HWND { HWND(self.handle as _) }
-    fn current(self) -> bool {
+    pub(super) fn hwnd(self) -> HWND { HWND(self.handle as _) }
+    pub(super) fn current(self) -> bool {
         let mut process = 0;
         let thread = unsafe { GetWindowThreadProcessId(self.hwnd(), Some(&mut process)) };
         process == self.process && thread == self.thread && thread != 0
@@ -72,6 +72,25 @@ fn icon(process: u32) -> String {
 }
 struct Entry { identity: Identity, title: String, class: String, minimized: bool, monitor: String }
 struct Enumeration { entries: Vec<Entry>, started: Instant, truncated: bool }
+pub(super) struct ThumbnailWindow {
+    pub id: u32, pub identity: Identity, pub title: String, pub app: String, pub minimized: bool,
+}
+pub(super) fn thumbnail_catalog() -> Result<Vec<ThumbnailWindow>, String> {
+    let mut enumeration = Enumeration { entries: Vec::new(), started: Instant::now(), truncated: false };
+    let result = unsafe { EnumWindows(Some(enumerate), LPARAM(&mut enumeration as *mut _ as isize)) };
+    if enumeration.truncated { return Err("window catalog exceeded its size or time limit".into()); }
+    result.map_err(|e| e.to_string())?;
+    let mut catalog = registry().lock().unwrap();
+    let ids = catalog.update(&enumeration.entries.iter().map(|e| e.identity).collect::<Vec<_>>());
+    Ok(enumeration.entries.into_iter().zip(ids).map(|(e,id)| ThumbnailWindow {
+        id, identity:e.identity, title:e.title, app:e.class, minimized:e.minimized,
+    }).collect())
+}
+pub(super) fn forget_handle(handle: isize) {
+    let mut catalog=registry().lock().unwrap();
+    catalog.entries.retain(|_,identity| identity.handle!=handle);
+    catalog.icons.retain(|identity,_| identity.handle!=handle);
+}
 unsafe extern "system" fn enumerate(hwnd: HWND, data: LPARAM) -> windows::core::BOOL { unsafe {
     let result = &mut *(data.0 as *mut Enumeration);
     if result.entries.len() >= 1024 || result.started.elapsed() > Duration::from_millis(250) {
