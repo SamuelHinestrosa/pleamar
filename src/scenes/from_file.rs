@@ -166,7 +166,9 @@ pub fn watch(path: String, to_render: Sender<ToRender>, to_logic: Sender<Event>)
             let date = |v: &[String]| v.iter().map(|r| std::fs::metadata(r).and_then(|m| m.modified()).ok()).collect::<Vec<_>>();
             // And the modules it loads with `require`, as it loads them.
             let with_modules = |v: &[String]| -> Vec<String> {
+                #[allow(unused_mut)]
                 let mut v = v.to_vec();
+                #[cfg(feature = "luau")]
                 v.extend(crate::logic_luau::REQUIRED.lock().unwrap().iter().map(|p| p.to_string_lossy().into_owned()));
                 v
             };

@@ -3857,7 +3857,13 @@ pub fn run(
                         "timing · kept: {} window slots, {pieces} pieces, {:.1} MB of their pixels, {} buffers to drop · {}",
                         nest_windows.len(),
                         pixels as f64 / 1e6,
-                        nest_doomed.len(),
+                        {
+                            #[cfg(target_os = "linux")]
+                            let doomed = nest_doomed.len();
+                            #[cfg(not(target_os = "linux"))]
+                            let doomed = 0;
+                            doomed
+                        },
                         gpu.as_ref().map_or(String::new(), |g| g.kept())
                     );
                 }

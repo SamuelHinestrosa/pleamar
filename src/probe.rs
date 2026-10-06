@@ -205,7 +205,7 @@ fn process_cpu_ms() -> Option<f64> {
     #[cfg(target_os = "linux")]
     let hz = unsafe { libc::sysconf(libc::_SC_CLK_TCK) } as f64;
     #[cfg(not(target_os = "linux"))]
-    let hz = 100.0;
+    let hz = 100.0f64;
     Some(ticks * 1000.0 / hz.max(1.0))
 }
 
