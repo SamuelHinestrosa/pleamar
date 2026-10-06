@@ -42,6 +42,11 @@ pub struct DrawList {
     /// The texts that can be selected (`selectable: true`), as they ended up
     /// this frame, in the order they were painted.
     pub selectable: Vec<PlacedText>,
+    /// While someone from outside asks what the scene says (`describe`):
+    /// every text painted this frame and seen, with its box in the scene's
+    /// plane. Only then: it is a copy of every text.
+    pub collect_texts: bool,
+    pub texts_seen: Vec<SeenText>,
     /// What is selected of one of them: its instruction and the bytes from and to.
     pub selected: Option<(usize, usize, usize)>,
     /// Groups painted separately: which elements, and on which layer.
@@ -244,6 +249,15 @@ impl PlacedText {
             ly >= l.top && ly < l.bottom && lx >= a.min(b) - 4.0 && lx <= a.max(b) + 4.0
         })
     }
+}
+
+/// A text as it was painted, for whoever asks what the scene says.
+pub struct SeenText {
+    pub at: usize,
+    pub text: String,
+    pub bounds: [f32; 4],
+    /// Cut out by a clip: a row scrolled out of its list. Only that row's.
+    pub clipped: bool,
 }
 
 pub struct PlacedField {
@@ -765,6 +779,7 @@ impl DrawList {
         self.measurements.clear();
         self.fields.clear();
         self.selectable.clear();
+        self.texts_seen.clear();
         self.size = size;
         self.own_size = (size.0, size.1 - if hud { HUD_HEIGHT } else { 0.0 });
         self.shapes.clear();
@@ -1369,6 +1384,15 @@ impl DrawList {
                     let s = tip_scale;
                     let x0 = ((at.0.eval(c) - m.size.0 * anchor.0) * s).round() / s;
                     let y0 = ((at.1.eval(c) - m.size.1 * anchor.1) * s).round() / s;
+                    if self.collect_texts {
+                        let b = affine.bounds([x0, y0, x0 + m.size.0, y0 + m.size.1]);
+                        let limit = clips.iter().map(|k| k.1).reduce(|a, b| [a[0].max(b[0]), a[1].max(b[1]), a[2].min(b[2]), a[3].min(b[3])]);
+                        // Cut out by a clip, it is not seen: a row scrolled out of its list.
+                        let seen = limit.is_none_or(|l| b[0] < l[2] && b[2] > l[0] && b[1] < l[3] && b[3] > l[1]);
+                        if !text.trim().is_empty() {
+                            self.texts_seen.push(SeenText { at: idx, text: text.to_owned(), bounds: b, clipped: !seen });
+                        }
+                    }
                     if let Some(sel) = select {
                         let limit = clips.iter().map(|k| k.1).reduce(|a, b| [a[0].max(b[0]), a[1].max(b[1]), a[2].min(b[2]), a[3].min(b[3])]);
                         // What is selected of it, behind its letters.

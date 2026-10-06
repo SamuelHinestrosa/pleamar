@@ -347,7 +347,7 @@ When the text changes, the workshop looks for the new image on its own thread an
 pleamar --say launcher "emit toggle"
 ```
 
-Every running scene listens on a socket with its name (the file's). `emit event` or `emit event 3` fires its rules as if the logic had emitted it. Also `fact name value`, `text name whatever it should say` (the logic hears about it, as if someone had typed it), `focus field`, `quit`, and **`get name`, which answers** with whatever that fact, text or property is worth: `pleamar --say launcher "get open"` → `1`.
+Every running scene listens on a socket with its name (the file's). `emit event` or `emit event 3` fires its rules as if the logic had emitted it. Also `fact name value`, `text name whatever it should say` (the logic hears about it, as if someone had typed it), `focus field`, `quit`, and **`get name`, which answers** with whatever that fact, text or property is worth: `pleamar --say launcher "get open"` → `1`. And **`describe`**, which answers with what there is on screen to read and touch, by name: what an agent needs to use the scene without looking at its pixels (`describe json`, as data; see the reference, *Told to an agent*).
 
 **A global shortcut is this**: a compositor bind that runs that order. In Hyprland:
 

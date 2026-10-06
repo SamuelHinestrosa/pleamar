@@ -452,6 +452,11 @@ pub fn run(
     let mut previous = crate::gpu::PreviousFrame::default();
     // What the last list was made from (see `same_scene`).
     let mut compose_memo: Option<ComposeMemo> = None;
+    // Who asked what the scene holds (`describe`): answered after the next
+    // list is made, which is when where every text went is known.
+    let mut describing: Vec<(bool, std::sync::mpsc::Sender<String>)> = Vec::new();
+    // The zones that have already been said to have no words: once each.
+    let mut unnamed_said: std::collections::HashSet<&'static str> = std::collections::HashSet::new();
     let mut changed: Vec<[f32; 4]> = Vec::new();
     let mut sheet_counts = (0u32, 0u32, 0u32);
     let no_lens = std::env::var_os("PLEAMAR_NO_LENS").is_some();
@@ -1088,6 +1093,11 @@ pub fn run(
                         None => "? it was not measuring: `probe start` first".into(),
                     };
                     let _ = reply_to.send(r);
+                }
+                ToRender::Describe(json, reply_to) => {
+                    describing.push((json, reply_to));
+                    draw.collect_texts = true;
+                    compose_memo = None;
                 }
                 ToRender::Query(name, reply_to) => {
                     let number = |v: f32| if v.fract() == 0.0 { format!("{}", v as i64) } else { format!("{v}") };
@@ -2876,6 +2886,8 @@ pub fn run(
             selection = None;
         }
         draw.selected = selection.as_ref().map(|s| (s.at, s.anchor, s.cursor));
+        // Which zone is on top of which stays for `describe`, after the list is made.
+        let zone_rank = arrangement.as_ref().filter(|_| draw.collect_texts).map(|a| a.zone_rank.clone());
         draw.clock = t_total;
         draw.reduced_motion = op.reduced_motion;
         if draw.signal_times.len() != scene.signals.len() {
@@ -3041,6 +3053,28 @@ pub fn run(
             && compose_memo.as_ref().is_some_and(|m| m.matches(size, view, &draw, &facts, &texts, &props));
         if !same_scene {
             draw.compose_prepared(to_paint, composition, c, &texts, &mut letters, view, size, op.hud);
+            if draw.collect_texts {
+                let gone = |at: usize| draw.hidden.get(at).copied().unwrap_or(false) || absent.iter().any(|r| r.contains(&at));
+                let sight = crate::agent::Sight {
+                    shown: sheets.iter().filter(|s| s.open).map(|s| crate::agent::Shown { surface: s.view.surface, popup: s.view.popup, bounds: s.view.bounds(), scale: s.scale }).collect(),
+                    texts_seen: &draw.texts_seen,
+                    gone: &gone,
+                    rank: zone_rank.as_deref(),
+                };
+                let parts = crate::agent::describe(&scene, c, &texts, &sight);
+                // By the name it was written with: `hit`, not each copy's `hit#r3`.
+                for name in crate::agent::unnamed(&parts) {
+                    let written = name.split('#').next().unwrap_or(name);
+                    if unnamed_said.insert(written) {
+                        eprintln!("agent  · '{written}' can be pressed, but nothing says what it is: give it a `label:`");
+                    }
+                }
+                for (json, reply_to) in describing.drain(..) {
+                    let _ = reply_to.send(if json { crate::agent::to_json(&parts) } else { crate::agent::to_text(&parts) });
+                }
+                draw.collect_texts = false;
+                draw.texts_seen.clear();
+            }
             let memo = compose_memo.get_or_insert_with(ComposeMemo::default);
             memo.size = size;
             memo.view = view;

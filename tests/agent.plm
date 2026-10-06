@@ -1,0 +1,31 @@
+// What a scene tells an agent: `label:` says what a zone is, `agent:` who may use it.
+scene Told {
+    surface { size: 400, 300; kind: window; title: "Told" }
+    surface vault { size: 200, 100; agent: hidden }
+
+    model rows max 4 { title: text }
+    text query = ""
+    text pin = ""
+    text status = "Ready"
+    fact dirty = false
+
+    input query { at: 10, 10; width: 200; placeholder: "Search"; label: "Search notes"; agent: yes }
+    input pin { at: 220, 10; width: 100; secret: true; agent: no }
+
+    repeat k in 0..3 {
+        box knob.$k { at: 40 + k * 60, 100; size: 40, 40; label: pick(k, "Brightness", "Volume", "Microphone") }
+        on drag knob.$k { dirty = true }
+    }
+
+    box save { from: 300, 250; size: 80, 30; active: dirty; label: "Save {status}" }
+    on press save { dirty = false }
+
+    box delete { from: 200, 250; size: 80, 30; agent: no; label: "Delete" }
+    on press delete { dirty = false }
+
+    box private { from: 10, 250; size: 80, 30; agent: hidden; label: status }
+    on press private { dirty = false }
+
+    box close { from: 360, 10; size: 30, 30; cursor: pointer }
+    on press close { dirty = false }
+}

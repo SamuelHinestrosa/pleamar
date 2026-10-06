@@ -151,6 +151,12 @@ struct Candidate {
     cursor: Cursor,
     /// What it carries when dragged out to another program (`carries:`).
     carries: Option<Content>,
+    /// `label:` and `agent:`: what it is, said in words, and who may use it.
+    label: Option<Content>,
+    reach: Reach,
+    /// The stack with `view:` it scrolls inside, if any: the zone of a row
+    /// that can be scrolled out of sight.
+    within: Option<String>,
 }
 
 /// What holds inside a component or an iteration of `repeat`: its
@@ -1536,6 +1542,14 @@ impl<'a> Compiler<'a> {
             },
             None => None,
         };
+        let label = match p.get_mut("label") {
+            Some(c) => Some(self.label(c)?),
+            None => None,
+        };
+        let reach = match p.get_mut("agent") {
+            Some(c) => reach(c)?,
+            None => Reach::Any,
+        };
         let mut extent: Option<(Expr, Expr)> = None;
         let mut shape = match class.as_str() {
             "ellipse" => {
@@ -1611,7 +1625,7 @@ impl<'a> Compiler<'a> {
         // which it is painted. Whether it is or not is decided at the end: see `materialize_zones`.
         if let Some(name) = &name {
             let name = &self.declare_zone(name);
-            self.candidates.push(Candidate { name: name.clone(), at: self.e.instrs.len(), zblock: self.zblock, shape: shape.clone(), active, visible: None, under: self.under.clone(), viewports: Vec::new(), forced: carries.is_some(), cursor, carries });
+            self.candidates.push(Candidate { name: name.clone(), at: self.e.instrs.len(), zblock: self.zblock, shape: shape.clone(), active, visible: None, under: self.under.clone(), viewports: Vec::new(), forced: carries.is_some(), cursor, carries, label, reach, within: None });
         }
         Ok(ParsedShape { shape, color, opacity, blend, size: extent, glass_spec })
     }
@@ -2691,6 +2705,40 @@ impl<'a> Compiler<'a> {
         Ok(())
     }
 
+    /// `label: "Save"`, `label: "Delete {n.title}"`, or a live text or a
+    /// component's text: what a zone is, said in words. Translated like any text.
+    fn label(&self, c: &mut Cur) -> R<Content> {
+        let k = match c.peek() {
+            // `label: pick(k, "Brightness", "Volume")`: one per copy, as a `text` does.
+            Some(TokenKind::Id(n)) if n == "pick" && matches!(c.tokens.get(c.i + 1).map(|x| &x.kind), Some(TokenKind::Sym("("))) => self.text_pick(c)?,
+            Some(TokenKind::Str(s)) => {
+                let s = s.clone();
+                let at = c.i;
+                c.i += 1;
+                self.content_of(&s, &c.tokens[at])?
+            }
+            Some(TokenKind::Id(name)) => {
+                let name = name.clone();
+                c.i += 1;
+                if let Some(k) = self.scopes.iter().rev().find_map(|e| e.contents.get(&name)) {
+                    k.clone()
+                } else if let Some(t) = self.scopes.iter().rev().find_map(|e| e.strings.get(&name)).cloned() {
+                    match (self.e.locale, self.versions_of(&t)) {
+                        (Some(locale), Some(v)) => Content::Translated { locale, versions: v.into_iter().map(Content::Literal).collect() },
+                        _ => Content::Literal(t),
+                    }
+                } else if let Some(t) = self.texts.get(&self.global(&name)) {
+                    Content::Live(*t)
+                } else {
+                    return self.unknown(c, "no text", &name, self.texts.keys().collect());
+                }
+            }
+            _ => return c.error("`label:` is a text: `label: \"Save\"`, with holes if it needs them, a live text, or `pick(k, \"One\", \"Other\")`"),
+        };
+        c.expect_end()?;
+        Ok(k)
+    }
+
     fn content_of_one(&self, s: &str, token: &Token) -> R<Content> {
         if !s.contains('{') && !s.contains('}') {
             return Ok(Content::Literal(s.to_owned()));
@@ -3143,6 +3191,14 @@ impl<'a> Compiler<'a> {
             Some(c) => self.color(c)?,
             None => color(0.25, 0.42, 0.62),
         };
+        let label = match p.get_mut("label") {
+            Some(c) => Some(self.label(c)?),
+            None => None,
+        };
+        let reach = match p.get_mut("agent") {
+            Some(c) => reach(c)?,
+            None => Reach::Any,
+        };
         let alpha = match p.get_mut("opacity") {
             Some(c) => self.expr(c)?,
             None => Expr::K(1.0),
@@ -3161,7 +3217,7 @@ impl<'a> Compiler<'a> {
             at: self.e.instrs.len(),
             zblock: self.zblock,
             shape: Shape::Rect { center: (at.0.clone() + width.clone() * 0.5, at.1.clone() + height * 0.5), half_size: (width.clone() * 0.5, (height * 0.5 + 3.0).into()), radius: 0.0.into() },
-            active: None, visible: None, under: self.under.clone(), viewports: Vec::new(), forced: true, cursor: Cursor::Text, carries: None,
+            active: None, visible: None, under: self.under.clone(), viewports: Vec::new(), forced: true, cursor: Cursor::Text, carries: None, label, reach, within: None,
         });
         self.last_size = Some((width.clone(), height.into()));
         self.e.paint(Instr::Field { text, zone: interned(&zone), at, width, style, alpha, placeholder, selection, secret });
@@ -3816,6 +3872,14 @@ impl<'a> Compiler<'a> {
         // `captures: hidden`: on the monitor, not in what is captured of it.
         if let Some(c) = p.get_mut("captures") {
             s.hidden_from_captures = c.one_of(vocab::CAPTURES, "what it does in captures")? == "hidden";
+        }
+        // `agent: hidden`: what it holds is not told to an agent.
+        if let Some(c) = p.get_mut("agent") {
+            match reach(c)? {
+                Reach::Hidden => s.agent_hidden = true,
+                Reach::Person => return c.error("a surface is `agent: hidden` or nothing: `agent: no` goes on the zones a person's hand keeps"),
+                Reach::Any => {}
+            }
         }
         if let Some(c) = p.get_mut("rate") {
             let r = c.num()?;
@@ -4908,7 +4972,7 @@ impl<'a> Compiler<'a> {
                 under.push(t.clone());
             }
             let bounds = Shape::Rect { center: (size.0.clone() * 0.5, size.1.clone() * 0.5), half_size: (size.0.clone() * 0.5, size.1.clone() * 0.5), radius: zone_corner };
-            self.candidates.insert(base_candidates, Candidate { name: name.clone(), at: instr_base, zblock: self.zblock, shape: bounds, active: None, visible: None, under, viewports: Vec::new(), forced: scroller.is_some(), cursor: stack_cursor, carries: None });
+            self.candidates.insert(base_candidates, Candidate { name: name.clone(), at: instr_base, zblock: self.zblock, shape: bounds, active: None, visible: None, under, viewports: Vec::new(), forced: scroller.is_some(), cursor: stack_cursor, carries: None, label: None, reach: Reach::Any, within: None });
             // A hidden stack does not catch the mouse: neither its children nor IT, which with
             // `view:` has a zone of its own —the one for the wheel and dragging— the
             // size of its window. Hidden and in front, that zone
@@ -4919,6 +4983,11 @@ impl<'a> Compiler<'a> {
                 let is_present = shown.clone().gt(0.01);
                 for c in &mut self.candidates[base_candidates..] {
                     c.visible = Some(match c.visible.take() { Some(v) => v * is_present.clone(), None => is_present.clone() });
+                }
+            }
+            if scroller.is_some() {
+                for c in &mut self.candidates[base_candidates + 1..] {
+                    c.within.get_or_insert_with(|| name.clone());
                 }
             }
             if let Some(prop) = &scroller {
@@ -5646,6 +5715,9 @@ impl<'a> Compiler<'a> {
             forced: true,
             cursor: Cursor::Normal,
             carries: None,
+            label: None,
+            reach: Reach::Any,
+            within: None,
         });
         self.e.paint(Instr::Window { slot, target: (x, y, w, h), alpha, ask });
         Ok(())
@@ -5895,6 +5967,9 @@ impl<'a> Compiler<'a> {
                 self.e.zones[z.0 as usize].zblock = k.zblock;
                 self.e.zones[z.0 as usize].carries = k.carries;
                 self.e.zones[z.0 as usize].viewports = k.viewports;
+                self.e.zones[z.0 as usize].label = k.label;
+                self.e.zones[z.0 as usize].reach = k.reach;
+                self.e.zones[z.0 as usize].within = k.within.and_then(|w| self.zones.get(&w).copied());
                 self.zones.insert(k.name, z);
             }
         }
@@ -5909,6 +5984,7 @@ impl<'a> Compiler<'a> {
         let (dx, dy) = (self.facts["drag.dx"].e(), self.facts["drag.dy"].e());
         for (name, prop, until, step, spring, grab) in std::mem::take(&mut self.scrolls) {
             let Some(zone) = self.zones.get(&name).copied() else { continue };
+            self.e.zones[zone.0 as usize].scrolls = Some(prop);
             let a = (prop.e() - wheel.clone() * step).max(Expr::K(0.0)).min(until.clone());
             self.e.rule(Trigger::Wheel(zone), vec![Effect::Animate(Transition { prop, to: a, spring, delay: Duration::ZERO })]);
             // Dragging it: on press, where it was is noted, and while it moves it goes from there.
@@ -6385,6 +6461,15 @@ fn type_name(t: &str) -> &'static str {
         "gesture" => "a gesture",
         _ => "something",
     }
+}
+
+/// `agent: yes | no | hidden`.
+fn reach(c: &mut Cur) -> R<Reach> {
+    Ok(match c.one_of(vocab::AGENT, "what an agent may do with it")?.as_str() {
+        "no" => Reach::Person,
+        "hidden" => Reach::Hidden,
+        _ => Reach::Any,
+    })
 }
 
 fn read_cursor(c: &mut Cur) -> R<Cursor> {

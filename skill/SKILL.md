@@ -169,6 +169,13 @@ scene Name {
   only while the scene is alive.
 - **Zones are what catch the mouse.** A named shape only becomes a zone if a rule
   names it, if it carries `active`, or if it is declared with `zone`.
+- **Say what a zone is when no word is drawn in it.** An agent or a screen
+  reader reads a scene with `pleamar --say NAME describe`: every zone by its
+  name, what it is and what it says, which is the texts drawn inside it. An
+  icon-only button says nothing, and the log names it the first time someone
+  asks: give it `label: "Close"` (or `label: pick(k, "Brightness", "Volume")`
+  in a copy). Put `agent: no` on what only a person's hand should press
+  —pay, delete, send—, and `agent: hidden` on what is private.
 - **A press goes to the zone declared LAST**, not to the smallest one. So a
   grace zone —the big invisible rectangle that keeps a panel open while the
   pointer crosses a gap— goes **before** what it wraps, or it swallows every
@@ -271,6 +278,7 @@ pleamar --scene scene.plm --seconds 8         # opens, closes by itself
 pleamar --scene scene.plm --record open,x     # what a fact or spring is worth, frame by frame
 pleamar --say NAME "fact open true"           # talk to a running scene (NAME: its scene name, lower case)
 pleamar --say NAME "get open"                 # ask it
+pleamar --say NAME describe                   # what it holds, by name: every zone should say what it is
 ```
 
 To **see** it without taking over the user's screen, run it inside a

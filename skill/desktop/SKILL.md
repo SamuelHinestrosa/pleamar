@@ -66,6 +66,25 @@ pleamar-wm agent help
    you work, the user's monitor glows; without it the glow waits a minute and
    a half in case you are only thinking.
 
+## A pleamar program tells you what it holds
+
+A window or panel made with pleamar (its program is `pleamar`) can be asked
+what is on it instead of guessed from its picture. Its name is its scene's
+file name, and the sockets of the running ones are in `$PLEAMAR_SOCKETS`
+(`NAME.sock`):
+
+```sh
+pleamar --say NAME describe           # every surface on screen, and in it each button, slider, field, list and item
+pleamar --say NAME describe json      # the same, as data
+```
+
+Each line is a thing's name, what it is, what it says («Save»), its state
+(`inactive`, `covered by X`, `off view`, `a person's`) and its box in the
+surface's pixels. Use it to know what is there and what each thing is called
+before you look; to act, `look` and `click` as usual for now. **`a person's`
+means the scene keeps it for the user's hand** (`agent: no`): do not press
+it, ask them to.
+
 ## What works best
 
 - **The keyboard before the mouse**, where there is a shortcut: in a browser

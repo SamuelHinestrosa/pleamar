@@ -1,0 +1,64 @@
+// The window of the agent race (race.py): a small notes app with the things
+// an agent meets —a field, a secret one, a list that scrolls, buttons, one kept
+// for a person, one with no word on it— and a status line that says what happened.
+
+scene Notes {
+    let ink  = #f5f7f5
+    let mint = #9ed6bd
+    let sand = #e8c07a
+    let coal = #151616
+    surface { size: 640, 480; kind: window; title: "Notes" }
+
+    model rows max 8 { title: text }
+    fact saving = false
+    fact dirty = false
+    text query = ""
+    text pin = ""
+    event created ->
+    event open ->
+    fact sel = -1
+    text status = "No note open"
+
+    box { from: 0, 0; size: 640, 480; color: coal }
+
+    input query { at: 16, 12; width: 240; size: 16; color: ink; placeholder: "Search notes" }
+    input pin { at: 300, 12; width: 120; size: 16; color: ink; placeholder: "PIN"; secret: true }
+
+    column list {
+        at: 16, 60
+        gap: 0
+        view: 608, 120
+        step: 40
+        for r in rows {
+            group {
+                size: 608, 40
+                box hit { from: 0, 0; size: 608, 38; corner: 8; color: if(sel == r.index, #2f5f52, #202222); cursor: pointer }
+                text r.title { at: 12, 19; anchor: left center; size: 14; color: ink }
+                on press hit { emit open(r.index) }
+            }
+        }
+    }
+
+    text status { at: 16, 390; size: 15; color: mint }
+
+    box new { from: 452, 428; size: 80, 36; corner: 10; color: mint; cursor: pointer }
+    text "New note" { at: 492, 446; anchor: center; size: 13; color: coal }
+    on press new { dirty = true; emit created }
+
+    box save { from: 544, 428; size: 80, 36; corner: 10; color: sand; active: dirty }
+    text "Save" { at: 584, 446; anchor: center; size: 13; color: coal; opacity: if(dirty, 1, 0.4) }
+    on press save { dirty = false }
+
+    box delete { from: 360, 428; size: 80, 36; corner: 10; color: #c0504d; agent: no }
+    text "Delete" { at: 400, 446; anchor: center; size: 13; color: ink }
+    on press delete { dirty = false }
+
+    ellipse close { at: 610, 24; radius: 10; color: ink; cursor: pointer }
+    on press close { dirty = false }
+
+    box private { from: 16, 300; size: 200, 40; color: #333; agent: hidden; label: "Private" }
+    on press private { dirty = false }
+
+    box icon { from: 240, 300; size: 40, 40; color: #444; label: "Pin {rows.0.title}" }
+    on press icon { dirty = true }
+}

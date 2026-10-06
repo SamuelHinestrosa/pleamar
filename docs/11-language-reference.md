@@ -435,7 +435,7 @@ surface { size: 460, 320;  kind: window;  title: "pleamar · settings" }
 box { from: 0, 0;  size: screen.width, screen.height;  color: coal }
 ```
 
-**`surface`**: `size: width, height` (`full` as the width is the whole monitor, and as the height too: `size: full, full` is all of it; a named surface publishes what it really measures as `name.width` and `name.height`, which with `full` is the only way to know it) · `kind:` `panel` `window` `lock` · `title:` (a window only) · `anchor:` `top` `bottom` `left` `right` `top_left` `top_right` `bottom_left` `bottom_right` `center` — or **the name of a fact whose values are anchors** (`fact corner: top_left | top_right = top_right`, `anchor: corner`), and then it moves from edge to edge while it runs, without being recreated · `margin: n` or `top, right, bottom, left` · `level:` `background` `bottom` `top` `overlay` — or two, **`level: top, overlay while open`**: the first as a rule, the second while that holds, changed on the fly (a panel above the rest while it has something open, so a full-screen catcher can sit under it; in its place the rest of the time, so a full-screen video still covers it) · `reserve: n` (the room windows leave it; a surface `size: full, full` anchored to one edge keeps it too —a bar and its panels on one surface as tall as the monitor—: it sticks to that edge and the two across it, not to all four, where the compositor would ignore any reserve), or **`reserve: n while expr`**, only while that holds (a shell that lets you choose whether windows go under it or leave it its strip) · `rate: 60` (at most that many frames a second, on any monitor: what a scene costs is then the same on a 60 Hz screen and on a 165 Hz one; without it, the monitor's) · `screens: all` or `"HDMI-A-1", "DP-3"` · `captures:` `shown` `hidden` (hidden: seen on the monitor but left out of what is captured of it —a screenshot, a recording, a shared screen, a remote desktop—, for what is meant only for whoever sits in front of it; pleamar-wm does it, other compositors show it in captures too) · `keyboard:` `none` `on_demand` `exclusive`, and with `while expr` it only asks for it while that is true. With `on_demand` the compositor hands the keyboard over on a click; so when the scene does `focus` on a field without having the keyboard —a search opened from a shortcut, which nobody clicked— it is asked for as `exclusive` for as long as the `while` holds, and let go when it stops: that is how a launcher behaves, and Esc closing it is what gives it back.
+**`surface`**: `size: width, height` (`full` as the width is the whole monitor, and as the height too: `size: full, full` is all of it; a named surface publishes what it really measures as `name.width` and `name.height`, which with `full` is the only way to know it) · `kind:` `panel` `window` `lock` · `title:` (a window only) · `anchor:` `top` `bottom` `left` `right` `top_left` `top_right` `bottom_left` `bottom_right` `center` — or **the name of a fact whose values are anchors** (`fact corner: top_left | top_right = top_right`, `anchor: corner`), and then it moves from edge to edge while it runs, without being recreated · `margin: n` or `top, right, bottom, left` · `level:` `background` `bottom` `top` `overlay` — or two, **`level: top, overlay while open`**: the first as a rule, the second while that holds, changed on the fly (a panel above the rest while it has something open, so a full-screen catcher can sit under it; in its place the rest of the time, so a full-screen video still covers it) · `reserve: n` (the room windows leave it; a surface `size: full, full` anchored to one edge keeps it too —a bar and its panels on one surface as tall as the monitor—: it sticks to that edge and the two across it, not to all four, where the compositor would ignore any reserve), or **`reserve: n while expr`**, only while that holds (a shell that lets you choose whether windows go under it or leave it its strip) · `rate: 60` (at most that many frames a second, on any monitor: what a scene costs is then the same on a 60 Hz screen and on a 165 Hz one; without it, the monitor's) · `screens: all` or `"HDMI-A-1", "DP-3"` · `captures:` `shown` `hidden` (hidden: seen on the monitor but left out of what is captured of it —a screenshot, a recording, a shared screen, a remote desktop—, for what is meant only for whoever sits in front of it; pleamar-wm does it, other compositors show it in captures too) · `agent: hidden` (what it holds is left out of what the scene tells an agent: §13, *Told to an agent*) · `keyboard:` `none` `on_demand` `exclusive`, and with `while expr` it only asks for it while that is true. With `on_demand` the compositor hands the keyboard over on a click; so when the scene does `focus` on a field without having the keyboard —a search opened from a shortcut, which nobody clicked— it is asked for as `exclusive` for as long as the `while` holds, and let go when it stops: that is how a launcher behaves, and Esc closing it is what gives it back.
 
 **A lock screen: `kind: lock`.** It is not a surface painted over everything: it is `ext-session-lock`, where the *compositor* guarantees that nothing else is seen or touched while it lasts, on every monitor. So it does not exist until its `open:` is true —which is mandatory: without it the session would be locked from the start— and it goes when `open:` stops being true. Its `size:` is the box that gets centred on each monitor; what lies around it shows too, so paint the backdrop large. `lock.held`, a name that always exists, is 1 once the compositor **confirms** the session is locked: a drawn padlock certifies nothing, this does. The password goes in an `input` with `secret: true` and is checked by the logic, `sys.ask("auth.check", text.password)`. It has one copy per monitor, and its `name.width` and `name.height` are the **largest** of them, each way: a backdrop that big, centred on the box, covers every monitor, a portrait one beside a landscape one included. `screens:` puts it only on those monitors (`screens: "DP-2"`): the protocol still wants every monitor covered, so the others get plain black, and the pointer over them touches nothing. If none of those is plugged in, it goes on all of them: a lock with nowhere to type the password would be no way back.
 
@@ -500,14 +500,14 @@ Each element accepts these properties and no others; another one is an error, wi
 | `arc` (like "∩") | `at` · `radius` · `span` (the whole angle it covers) · `width`. It opens **upwards and symmetrically**; a progress ring is `span: p * 360deg` with `rotate: p * 180deg` |
 | `line` | `from` · `to` · `width` |
 | `path` | `at` (what its points hang from) · `size: w, h` (what it takes up in a layout), and inside it its steps: `move x, y` (once, the first one) · `line x, y` · `curve x, y via cx, cy` · `close`. Closed, it is filled; open, or with `stroke`, it is a line |
-| …and every shape | `color` · `opacity` · `rotate` · `stroke` (the outline only) · `blend` (inside a `body`: how much it melts into what came before) · `active` · `cursor` · `carries` (below) · `show` |
+| …and every shape | `color` · `opacity` · `rotate` · `stroke` (the outline only) · `blend` (inside a `body`: how much it melts into what came before) · `active` · `cursor` · `carries` (below) · `show` · `label` · `agent` (§13, *Told to an agent*) |
 | `body` | `color` or `gradient` (below) · `rim` · `light: amount, from_y, height` · `shadow: dx, dy, blur, alpha[, color]` · `border: width, #color` · `glass` · `lens` · `opacity` · `show`, and inside it its shapes, melted into one silhouette |
 | `text` | `at` · `anchor` · `width` · `lines` · `size` · `weight` · `color` · `opacity` · `align:` `left` `center` `right` · `line_height` · `family` · `measure` · `show` · and its effects: `gradient` · `outline` · `shadow` · `letter_move` · `letter_opacity` · `letter_scale` (§8.4) · `selectable` · `selection` |
 | `image` | `at` (its **top-left corner**, not its centre: it is a rectangle of pixels, not a shape) · `size` · `opacity` · `tint` · `show` |
 | `particles` | `at` · `area` · `count` · `life` · `speed` · `direction` · `spread` · `gravity` · `drag` · `size` · `colors` · `opacity` · `shape` · `emit` or `burst` · `show`: §8.3 |
 | `shader` | `at` (its top left corner) · `size: w, h` · `corner` · `opacity` · `show` · `values: a, b, …` (up to eight numbers, any expression) · `colors: c1, c2` (up to two). What it is and how it is written: §8.1 |
 | `figure` | `at` (where the piece's centre goes) · `size: w, h` or `scale:` (without either, one unit of the svg is one pixel) · `pivot: x, y` (in the svg's units, from its centre: the point it **turns** around, which does not move it) · `rotate` · `color` (instead of the one in the file) · `opacity` · `blend` · `stroke` · `show` |
-| `input` | `at` · `width` · `size` · `weight` · `color` · `opacity` · `family` · `placeholder` · `selection` · `secret` · `show` |
+| `input` | `at` · `width` · `size` · `weight` · `color` · `opacity` · `family` · `placeholder` · `selection` · `secret` · `show` · `label` · `agent` |
 | `group` | `pivot` · `rotate` · `scale: s` or `sx, sy` · `move: dx, dy` · `opacity` (they melt as a single thing) · `size` (for whoever lays it out) · `show` · `z` (see below) · and its **effects**: `blur` · `glow` · `saturation` · `brightness` · `contrast` · `hue` · `mask` · `mode` (§8.2) |
 | `popup` | `at` (inside the surface) · `size` · `open:` a fact |
 | `row` `column` | `at` · `anchor` · `gap` · `padding` · `align:` `start` `center` `end` · `fill` · `corner` · `opacity` · `cursor` · `show` · `size: w, h` · `view: w, h` · `step` · `content` · `wrap: n` |
@@ -1266,6 +1266,19 @@ fact of its own called `locale`, are errors.
 
 **And the other way: `carries:`.** A zone with `carries: "{file.$k.path}"` can be dragged out to another program: pressed and moved more than a few pixels, the compositor takes the drag and whatever it is let go on gets that. A path or an address (`/…`, `file://…`, `https://…`, one per line for several) goes as a list of files or links —a browser uploads it, a file manager copies it— and as text too; anything else, as text. From then on the pointer is the compositor's, so the zone's own `drag` rules stop there; `on carry zone` says it has gone —a panel it came out of can close then, and let the drop reach what is underneath—. It works on any compositor with drag and drop (Hyprland, pleamar-wm); not yet from pleamar-wm's own scene.
 
+**Told to an agent: `label:` and `agent:`.** A running scene can be asked what there is to read and touch: `pleamar --say notes describe` answers with each surface that is on screen and, inside it, every zone and field by its name, what it is (`button`, `slider`, `field`, `list`, `item` or `region`, from what its rules do), what it says, whether it is inactive or covered by another one, and its box in the surface's pixels, together with the words drawn outside every zone —a title, a status line—, in the order they were written; `describe json`, the same as data. What it says is the texts drawn inside it, or a field's text and its `placeholder`. When that is not enough —an icon with no word in it, a slider whose name is drawn beside it—, **`label:`** says it: a text, with holes if it needs them (`label: "Delete {n.title}"`), a live text, or `pick(k, "Brightness", "Volume")` in a copy. The first time it is asked, a zone that can be pressed and says nothing is named in the log, so that nobody has to guess what it is. **`agent: no`** keeps a zone or a field for a person's hand: it is described, but an agent cannot use it, and a field's text is not given; a field with `secret: true` never gives it either. **`agent: hidden`** leaves it out altogether, and on a `surface` everything it holds. A `kind: lock` surface and one with `captures: hidden` are never told. What else comes, and why: [note 12](12-agents.md).
+
+```plm
+scene Told {
+    surface { size: 300, 120; kind: window; title: "told" }
+    fact armed = false
+    image trash = icon "user-trash", 24, 24
+    box delete { from: 20, 40; size: 40, 40; cursor: pointer; label: "Delete"; agent: no }
+    image trash { at: 28, 48; size: 24, 24 }
+    on press delete { toggle armed }
+}
+```
+
 **Any rule accepts `while expr`** at the end of its header: it is looked at at the moment of firing — **at the state the frame began with**, so two rules that fire in the same frame both see the same one, and the one declared last is the one whose value stays. In `idle` and `every` it also decides whether the wait counts.
 
 | Effect | |
@@ -1433,9 +1446,9 @@ This is the output of `pleamar --grammar`, copied. It is not a second list: thes
 language: 0.2
 statements: surface permissions model service spring prop pose fact event text image figure shader particles measure let zone body ellipse box arc line path input clip group popup component children repeat for row column grid pages space between layer on every blink wave spin follow look gesture posture translations windows window
 library: let spring component permissions fact text model service event image figure shader prop pose gesture posture layer translations
-properties.surface: size anchor margin level reserve screens keyboard open kind title rate captures
+properties.surface: size anchor margin level reserve screens keyboard open kind title rate captures agent
 properties.permissions: run services
-properties.shape: rotate stroke color opacity blend glass lens shine refraction dispersion dome ripple active show cursor carries grow
+properties.shape: rotate stroke color opacity blend glass lens shine refraction dispersion dome ripple active show cursor carries grow label agent
 properties.ellipse: at radius scale
 properties.box: at from size corner
 properties.arc: at radius span width
@@ -1448,7 +1461,7 @@ properties.window: at size ask opacity show
 properties.figure: at size scale rotate pivot color opacity blend stroke show grow
 properties.shader: at size corner opacity show values colors grow
 properties.particles: at area count life speed direction spread gravity drag size colors opacity shape emit burst show
-properties.input: at width size weight color opacity family placeholder selection secret show
+properties.input: at width size weight color opacity family placeholder selection secret show label agent
 properties.group: pivot rotate scale move opacity size show z grow span blur glow saturation brightness contrast hue mask mode shader
 properties.popup: at size open
 properties.children: move
@@ -1491,6 +1504,7 @@ surface.level: background bottom top overlay
 surface.kind: panel window lock
 surface.keyboard: none on_demand exclusive
 surface.captures: shown hidden
+agent: yes no hidden
 text.align: left center right
 layout.align: start center end
 group.mode: normal add screen multiply

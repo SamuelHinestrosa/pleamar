@@ -71,7 +71,8 @@ mod tests {
 
     fn zone(shape: Shape) -> Zone {
         Zone { id: "cached", shape, active: 1.0.into(), cursor: Cursor::Normal,
-            under: Vec::new(), viewports: Vec::new(), at: 0, zblock: None, carries: None }
+            under: Vec::new(), viewports: Vec::new(), at: 0, zblock: None, carries: None,
+            label: None, reach: crate::scene::Reach::Any, scrolls: None, within: None }
     }
 
     fn compare(cache: &mut Geometry, zone: &Zone, c: Ctx) {
