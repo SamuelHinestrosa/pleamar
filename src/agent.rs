@@ -150,8 +150,13 @@ pub fn describe(scene: &Scene, c: Ctx, texts: &[String], sight: &Sight) -> Vec<P
     let there: Vec<Option<[f32; 4]>> = scene
         .zones
         .iter()
-        .map(|z| if z.reach == Reach::Hidden || (sight.gone)(z.at) { None } else { z.bounds(c) })
+        .map(|z| if z.reach == Reach::Hidden || (sight.gone)(z.at) { None } else { z.layout_bounds(c) })
         .collect();
+    // A hidden zone's words must not be reassigned to its parent or become
+    // loose text after the zone itself has been removed from the tree.
+    let private: Vec<[f32; 4]> = scene.zones.iter()
+        .filter(|z| z.reach == Reach::Hidden && !(sight.gone)(z.at))
+        .filter_map(|z| z.layout_bounds(c)).collect();
     let active: Vec<bool> = scene.zones.iter().map(|z| z.active.is_true(c)).collect();
     let rank = |k: usize| sight.rank.map_or((k, 0, 0), |r| r[k]);
     // The one on top at a point: what a press there would reach.
@@ -192,7 +197,12 @@ pub fn describe(scene: &Scene, c: Ctx, texts: &[String], sight: &Sight) -> Vec<P
         });
         // Scrolled out of its list: its centre is not inside the list's window.
         let off_view = |k: usize| {
-            scene.zones[k].within.is_some_and(|l| match (there[l.0 as usize], there[k]) {
+            let z = &scene.zones[k];
+            if !z.viewports.is_empty() && there[k].is_some_and(|b| {
+                let (x, y) = centre(b);
+                z.bounds(c).is_none_or(|visible| !inside(visible, x, y))
+            }) { return true; }
+            z.within.is_some_and(|l| match (there[l.0 as usize], there[k]) {
                 (Some(w), Some(z)) => {
                     let (x, y) = centre(z);
                     !inside(w, x, y)
@@ -211,6 +221,7 @@ pub fn describe(scene: &Scene, c: Ctx, texts: &[String], sight: &Sight) -> Vec<P
         let mut loose: Vec<&SeenText> = Vec::new();
         for t in sight.texts_seen {
             let (x, y) = centre(t.bounds);
+            if private.iter().any(|b| inside(*b, x, y)) { continue; }
             // An active zone first: a closed menu's zone, still in its place, does not
             // take the words of what is drawn where it would be.
             let smallest = mine
@@ -490,5 +501,37 @@ mod tests {
         let loose: Vec<&str> = parts[0].nodes.iter().filter(|n| n.role == Role::Text).map(|n| n.label.as_str()).collect();
         assert_eq!(loose, ["Ready"]);
         assert!(to_text(&parts).contains("text            «Ready»"), "{}", to_text(&parts));
+    }
+
+    #[test]
+    fn hidden_zone_words_do_not_reappear_as_loose_text() {
+        let seen = [SeenText { at: 0, text: "Private account".into(), bounds: [20.0, 252.0, 80.0, 272.0], clipped: false }];
+        let parts = told_with(false, &seen);
+        assert!(!to_text(&parts).contains("Private account"));
+        assert!(!to_json(&parts).contains("Private account"));
+    }
+
+    #[test]
+    fn descriptions_keep_scrolled_rows_without_making_them_clickable() {
+        let (scene, _) = crate::language::read_file(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/agent-scroll.plm")).unwrap();
+        let mut props: Vec<Animated> = scene.props.iter().map(|(_, v, s)| Animated::at(*v, *s)).collect();
+        let facts: Vec<f32> = scene.facts.iter().map(|f| f.1).collect();
+        let texts: Vec<String> = scene.texts.iter().map(|t| t.1.clone()).collect();
+        let scroll = scene.props.iter().position(|(n, _, _)| n.starts_with("·scroll")).unwrap();
+        let never = |_: usize| false;
+        for offset in [0.0, 40.0] {
+            props[scroll].x = offset;
+            let c = Ctx { props: &props, facts: &facts };
+            let sight = Sight { shown: vec![Shown { surface: 0, popup: None, bounds: [0.0, 0.0, 400.0, 300.0], scale: 1.25 }], texts_seen: &[], gone: &never, rank: None };
+            let parts = describe(&scene, c, &texts, &sight);
+            let third = node(&parts, "third").expect("a scrolled row must remain in its list");
+            assert!(third.off_view);
+            assert_eq!(third.at, [20.0, 110.0 - offset, 100.0, 40.0]);
+            assert!(third.inside.is_some());
+            let zone = scene.zones.iter().find(|z| z.id == "third").unwrap();
+            assert!(!zone.contains(c, 30.0, 120.0 - offset));
+            assert_eq!(node(&parts, "second").unwrap().off_view, offset == 0.0);
+            assert_eq!(node(&parts, "first").unwrap().off_view, offset == 40.0);
+        }
     }
 }

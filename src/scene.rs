@@ -1301,11 +1301,16 @@ impl Scene {
 }
 
 impl Zone {
-    /// The box that contains it, to tell the compositor where the mouse comes in.
-    pub fn bounds(&self, c: Ctx) -> Option<[f32; 4]> {
+    /// The whole row remains describable even when its viewport clips it out.
+    pub fn layout_bounds(&self, c: Ctx) -> Option<[f32; 4]> {
         let mut p = self.shape.flatten_into(c, &mut Vec::new());
         p.affine = self.under.iter().fold(Affine::IDENTITY, |a, t| a.mul(t.affine(c)));
-        let mut bounds = p.bounds()?;
+        p.bounds()
+    }
+
+    /// The box that contains it, to tell the compositor where the mouse comes in.
+    pub fn bounds(&self, c: Ctx) -> Option<[f32; 4]> {
+        let mut bounds = self.layout_bounds(c)?;
         for viewport in &self.viewports {
             let mut clip = viewport.shape.flatten_into(c, &mut Vec::new());
             clip.affine = self.under[..viewport.under].iter().fold(Affine::IDENTITY, |a, t| a.mul(t.affine(c)));
