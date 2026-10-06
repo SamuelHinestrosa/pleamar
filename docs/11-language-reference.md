@@ -3,7 +3,7 @@
 **What this note is.** The complete, exact description of what the language accepts. [The language — the guide](09-language-v0.md) is the guide —read straight through, with the reason behind each thing—; this is where a doubt gets looked up. It comes from the compiler (`src/language/`), not from memory, and **it cannot fall behind without `./run-tests.sh` saying so**: its whole examples compile, and its vocabulary (§17) is compared against the one the compiler consults.
 
 ```sh
-pleamar --version                  # pleamar 0.2.23 · language 0.2
+pleamar --version                  # pleamar 0.2.24 · language 0.2
 pleamar --check scene.plm      # reads it, with whatever it imports; says whether it is fine, exits
 ./run-tests.sh                        # tests/*.plm, examples/*.plm and the examples in this note
 ```
@@ -204,7 +204,7 @@ A library can also bring **what moves inside** —`prop`, `pose`, `gesture`, `po
 
 **The file is read in four passes** —declarations; `let` and layers; drawing; rules—, so the order of what is written is whatever suits the reader: a rule can come before the shape it names, and a `prop` at the end. Two exceptions: a `let` has to come before whoever uses it, and **things are painted in the order they are written** (and of two zones, the one declared later ends up on top).
 
-**Every name is global**, except inside a component or inside one turn of a `repeat` or a `for`: there, what is declared belongs to that copy (two copies of `Note` each have their own `lit` and their own `hit` zone), and the inner things are looked up first —parameters, the component's `let`— and then the outer ones. A `let` of the scene with the name of an imported one treads on it: that is how a tone is changed. Two components with the same name do not coexist.
+**Every name is global**, except inside a component or inside one turn of a `repeat` or a `for`: there, what is declared belongs to that copy (two copies of `Note` each have their own `lit` and their own `hit` zone), and the inner things are looked up first —parameters, the component's `let`— and then the outer ones. A `let` of the scene with the name of an imported one treads on it: that is how a tone is changed. Two components with the same name do not coexist. **A `group` does not keep its `let`s**: one written inside a group is seen by everything after it, outside too, so a group's `let` with the name of one written outside any group is an error (it would have changed that one in everything below). It is so too when they are in different parts, or in a scene copied per monitor. Inside a component, a `repeat` or a `for` the `let` is theirs.
 
 **Names that always exist**, read like facts: `screen.width`, `screen.height` (what the real surface measures), `screen.index` (which monitor copy this is, with `screens: each`; 0 otherwise), and during a rule, the mouse's: `pointer.x`, `pointer.y` (on the surface), `local.x`, `local.y` (inside the zone), `drag.dx`, `drag.dy` (since the press), `wheel` (notches; positive is upwards). And the `demo` event, which `--demo` fires.
 

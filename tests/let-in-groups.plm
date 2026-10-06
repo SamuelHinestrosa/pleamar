@@ -1,0 +1,20 @@
+// A group's `let` inside a component or a `repeat` is theirs: no error.
+scene LetInGroups {
+    surface { size: 300, 100 }
+    let cx = 150
+    component Dot(x: number) {
+        size: 20, 20
+        group {
+            let cx = 10
+            ellipse { at: cx, 10; radius: 8; color: #fff }
+        }
+    }
+    repeat k in 0..2 {
+        group {
+            let cx = 40 + k * 200
+            ellipse { at: cx, 50; radius: 10; color: #fff }
+        }
+    }
+    Dot(1)
+    ellipse { at: cx, 50; radius: 10; color: #9ed6bd }
+}

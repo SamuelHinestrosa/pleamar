@@ -1,0 +1,7 @@
+// A part whose group names its centre `cx`, which the scene already uses.
+part Dial {
+    group {
+        let cx = 150
+        ellipse { at: cx, 50; radius: 10; color: #fff }
+    }
+}
