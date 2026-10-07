@@ -9,6 +9,7 @@ thread_local! {
     static LIFETIME: RefCell<Option<Arc<AtomicBool>>> = const { RefCell::new(None) };
 }
 pub(crate) fn set_service_lifetime(active: Arc<AtomicBool>) { LIFETIME.with(|v| *v.borrow_mut() = Some(active)); }
+pub(crate) fn clear_service_lifetime() { LIFETIME.with(|v| v.borrow_mut().take()); }
 pub(crate) fn service_lifetime() -> Option<Arc<AtomicBool>> { LIFETIME.with(|v| v.borrow().clone()) }
 pub(super) fn has_thread_state() -> bool { FROZEN.with(|v| v.borrow().is_some()) }
 fn active() -> bool { LIFETIME.with(|v| v.borrow().as_ref().is_none_or(|v| v.load(Ordering::Acquire))) }

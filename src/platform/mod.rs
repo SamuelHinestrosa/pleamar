@@ -1024,7 +1024,7 @@ mod windows_thumbnails;
 #[cfg(target_os = "windows")]
 pub(crate) use windows_thumbnails::release as release_thumbnail_requests;
 #[cfg(target_os = "windows")]
-mod windows_desktop;
+pub(crate) mod windows_desktop;
 #[cfg(target_os = "windows")]
 mod windows_credentials;
 #[cfg(target_os = "windows")]
@@ -1046,7 +1046,7 @@ mod windows_brightness_wmi;
 #[cfg(target_os = "windows")]
 mod windows_backdrop;
 #[cfg(target_os = "windows")]
-mod windows_capture;
+pub(crate) mod windows_capture;
 #[cfg(target_os = "windows")]
 mod windows_media_paths;
 #[cfg(target_os = "windows")]

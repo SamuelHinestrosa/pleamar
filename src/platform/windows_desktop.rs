@@ -26,15 +26,15 @@ struct Entry { identity: Identity, owner: isize, title: String, program: String,
 struct Shot { target: Identity, rect: RECT, created: Instant, epoch: u64 }
 static EPOCH: AtomicU64 = AtomicU64::new(1);
 #[derive(Default)]
-struct Catalog { entries: HashMap<String, Entry>, shots: HashMap<String, Shot>, monitors: Vec<Monitor>, hook: Option<Hook> }
+struct Catalog { entries: HashMap<String, Entry>, shots: HashMap<String, Shot>, monitors: Vec<Monitor>, hook: Option<Hook>, exact_targets: bool }
 struct Hook(HWINEVENTHOOK);
 impl Drop for Hook { fn drop(&mut self) { unsafe { let _ = UnhookWinEvent(self.0); } } }
 thread_local! {
     static CATALOG: RefCell<Catalog> = RefCell::default();
     static DESTROYED: RefCell<Vec<isize>> = RefCell::default();
 }
-pub(super) fn has_thread_state() -> bool {
-    CATALOG.with(|catalog| { let catalog = catalog.borrow(); !catalog.entries.is_empty() || !catalog.shots.is_empty() || !catalog.monitors.is_empty() })
+pub(crate) fn has_thread_state() -> bool {
+    CATALOG.with(|catalog| { let catalog = catalog.borrow(); !catalog.entries.is_empty() || !catalog.shots.is_empty() || !catalog.monitors.is_empty() || catalog.hook.is_some() })
 }
 struct Dpi(DPI_AWARENESS_CONTEXT);
 impl Dpi {
@@ -195,6 +195,9 @@ fn target(id: &str) -> Result<Entry, String> {
         let c = c.borrow();
         let entry = c.entries.get(id).ok_or("the window is no longer in this desktop catalog; list windows again")?;
         if !entry.identity.current() { return Err("the window closed or its handle was reused".into()); }
+        if c.exact_targets && !unsafe { windows::Win32::UI::Input::KeyboardAndMouse::IsWindowEnabled(entry.identity.window()) }.as_bool() {
+            return Err("the selected window is blocked by a dialog; companion input never changes targets implicitly".into());
+        }
         let mut entry = entry.clone();
         // Follow a disabled owner's active modal dialog. An unrelated popup
         // never becomes an input target merely because it is in front.
@@ -217,6 +220,28 @@ fn target(id: &str) -> Result<Entry, String> {
 fn rect_values(r: RECT) -> SysValue { SysValue::Map(vec![
     ("x".into(), SysValue::Num(r.left as f64)), ("y".into(), SysValue::Num(r.top as f64)),
     ("width".into(), SysValue::Num((r.right-r.left) as f64)), ("height".into(), SysValue::Num((r.bottom-r.top) as f64))]) }
+
+pub(crate) fn validate_exact_target(id: &str) -> Result<(), String> {
+    let _dpi = prepare()?;
+    let entry = target(id)?;
+    // Companion focus is shared input too: respect Escape and held input
+    // before attempting activation, as the other desktop actions already do.
+    input::idle_keyboard(&entry, EPOCH.load(Ordering::Acquire))
+}
+
+pub(crate) fn exact_targets(enabled: bool) { CATALOG.with(|c| c.borrow_mut().exact_targets = enabled); }
+
+pub(crate) fn clear_catalog() {
+    CATALOG.with(|c| { let mut c = c.borrow_mut(); c.shots.clear(); c.entries.clear(); c.monitors.clear(); c.hook.take(); });
+}
+
+pub(crate) fn catalog_id(hwnd: usize, process: u32, thread: u32) -> Result<String, String> {
+    let _dpi = prepare()?;
+    CATALOG.with(|c| c.borrow().entries.iter()
+        .find(|(_,e)|e.identity.hwnd as usize == hwnd && e.identity.process == process
+            && e.identity.thread == thread && e.identity.current())
+        .map(|(id,_)|id.clone()).ok_or_else(||"window is absent from the current desktop catalog".into()))
+}
 
 pub fn query(name: &str, args: &[SysValue]) -> Result<SysValue, String> {
     let _dpi = prepare()?;
@@ -263,7 +288,7 @@ pub fn command(name: &str, args: &[SysValue]) -> Result<(), String> {
     if name == "desktop.cancel" && args.is_empty() { EPOCH.fetch_add(1, Ordering::AcqRel); return Ok(()); }
     let _dpi = prepare()?;
     if name == "desktop.done" && args.is_empty() {
-        CATALOG.with(|c| { let mut c = c.borrow_mut(); c.shots.clear(); c.entries.clear(); c.monitors.clear(); c.hook.take(); });
+        clear_catalog();
         return Ok(());
     }
     let (epoch, args) = args.split_first().ok_or("desktop action requires the catalog epoch")?;

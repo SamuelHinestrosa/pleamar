@@ -23,7 +23,7 @@ fn fresh(id: &str, entry: &Entry) -> Result<(), String> {
         Ok(())
     })
 }
-fn idle_keyboard(entry: &Entry, epoch: u64) -> Result<(), String> { unsafe {
+pub(super) fn idle_keyboard(entry: &Entry, epoch: u64) -> Result<(), String> { unsafe {
     check_epoch(epoch)?;
     if !entry.identity.current() { return Err("the input window closed".into()); }
     if !IsWindowEnabled(entry.identity.window()).as_bool() { return Err("the window is blocked by a dialog; list and look again".into()); }
@@ -229,6 +229,11 @@ fn input_command(name: &str, args: &[SysValue], epoch: u64, secret: Option<&str>
             for c in secret.unwrap().encode_utf16() { inputs.extend([key(VIRTUAL_KEY(0), false, Some(c)), key(VIRTUAL_KEY(0), true, Some(c))]); }
         }
         ("desktop.hotkey", [keys]) => inputs.0 = hotkey(string(keys)?)?,
+        ("desktop.move", [x, y]) => {
+            let p = point(x, y, entry.rect)?;
+            points.push(p);
+            inputs.push(move_mouse(p)?);
+        }
         ("desktop.click", [x, y, button, count]) => {
             let p = point(x, y, entry.rect)?;
             points.push(p);
@@ -276,7 +281,7 @@ fn input_command(name: &str, args: &[SysValue], epoch: u64, secret: Option<&str>
             pointer_ready(&current, &points)?;
             check_epoch(epoch)?;
             // Keep the remaining balanced gesture in one insertion.
-            send(&inputs[1..])
+            if inputs.len() > 1 { send(&inputs[1..]) } else { Ok(()) }
         } else {
             send(&inputs)
         }

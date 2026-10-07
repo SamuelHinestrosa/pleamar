@@ -245,8 +245,20 @@ fn owned_input_fixture() {
         let wc = WNDCLASSW { lpfnWndProc: Some(input_procedure), hInstance: instance.into(), lpszClassName: class, ..Default::default() };
         assert_ne!(RegisterClassW(&wc), 0);
         let title = HSTRING::from(format!("Pleamar input fixture {} — Español 日本語", std::process::id()));
-        let hwnd = CreateWindowExW(WINDOW_EX_STYLE(0), class, &title, WS_OVERLAPPEDWINDOW,
+        let mut hwnd = CreateWindowExW(WINDOW_EX_STYLE(0), class, &title, WS_OVERLAPPEDWINDOW,
             screen.work.left + 80, screen.work.top + 90, 560, 420, None, None, Some(instance.into()), None).unwrap();
+        // A separate CLI acceptance case selects this owned modal explicitly.
+        // The normal engine-input fixture keeps its original single-window setup.
+        let parent_window = if std::env::var("PLEAMAR_INPUT_TEST_DIALOG").as_deref() == Ok("1") {
+            let owner = hwnd;
+            SetWindowTextW(owner, &HSTRING::from(format!("Owned input parent {}", std::process::id()))).unwrap();
+            let _ = ShowWindow(owner, SW_SHOWNOACTIVATE);
+            let _ = EnableWindow(owner, false);
+            hwnd = CreateWindowExW(WS_EX_TOOLWINDOW, class, &title, WS_OVERLAPPEDWINDOW,
+                screen.work.left + 160, screen.work.top + 140, 560, 420,
+                Some(owner), None, Some(instance.into()), None).unwrap();
+            Some(owner)
+        } else { None };
         // Rich Edit implements Ctrl+A itself. A plain EDIT control does not
         // promise that shortcut, so it cannot verify the replacement gesture.
         let rich_edit = LoadLibraryExW(w!("Msftedit.dll"), None, LOAD_LIBRARY_SEARCH_SYSTEM32).unwrap();
@@ -308,6 +320,7 @@ fn owned_input_fixture() {
             std::thread::sleep(Duration::from_millis(10));
         }
         let _ = DestroyWindow(hwnd);
+        if let Some(owner) = parent_window { let _ = DestroyWindow(owner); }
         FreeLibrary(rich_edit).unwrap();
     }
 }

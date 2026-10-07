@@ -17,6 +17,8 @@ mod lsp;
 pub mod gpu;
 #[cfg(target_os = "windows")]
 pub mod windows_texture;
+#[cfg(target_os = "windows")]
+pub mod windows_desktop;
 mod agent;
 #[cfg(target_os = "linux")]
 pub mod dmabuf;
