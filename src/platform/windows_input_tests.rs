@@ -384,22 +384,36 @@ fn native_panels_keep_per_monitor_copies_and_retire_removed_outputs() {
 #[test]
 #[ignore = "subprocess helper for scripts/windows-display-lifecycle.py; requires a native desktop/GPU"]
 fn native_display_lifecycle_helper() {
+    fn secondary(monitor: &Monitor) -> bool {
+        let primary = monitor_details(unsafe { MonitorFromWindow(HWND::default(),
+            windows::Win32::Graphics::Gdi::MONITOR_DEFAULTTOPRIMARY) }).expect("primary monitor");
+        monitor.name != primary.name
+    }
     let scene = std::env::var("PLEAMAR_DISPLAY_TEST_SCENE").expect("rehearsal scene path");
     let control = std::path::PathBuf::from(std::env::var_os("PLEAMAR_DISPLAY_TEST_CONTROL").expect("rehearsal control path"));
     assert!(std::path::Path::new(&scene).is_file() && control.is_file());
-    struct Rehearsal(std::path::PathBuf);
+    let ci = std::env::var("GITHUB_ACTIONS").as_deref() == Ok("true")
+        && std::env::var("RUNNER_ENVIRONMENT").as_deref() == Ok("github-hosted")
+        && std::env::var("PLEAMAR_CI_DISPLAY_LIFECYCLE").as_deref() == Ok("1");
+    let monitor = if ci { monitors().into_iter().next().expect("CI monitor").name }
+        else {
+            let name = std::env::var("PLEAMAR_DISPLAY_TEST_MONITOR").expect("explicit secondary monitor");
+            assert!(monitors().iter().any(|m| m.name == name && secondary(m)), "secondary monitor required");
+            name
+        };
+    struct Rehearsal(std::path::PathBuf, String, bool);
     impl super::super::Platform for Rehearsal {
         fn run(self: Box<Self>, wanted: Vec<Surface>, extra: u32, instance: wgpu::Instance, tx: Sender<ToRender>) {
             run_event_loop_with_monitors(wanted, extra, instance, tx, || {
-                // Only hide/reveal the first real output for this process. No
+                // Only hide/reveal the selected real output for this process. No
                 // fictitious geometry, display settings or production override.
                 if std::fs::read_to_string(&self.0).is_ok_and(|s| s.trim() == "connected") {
-                    monitors().into_iter().take(1).collect()
+                    monitors().into_iter().filter(|m| m.name == self.1 && (self.2 || secondary(m))).collect()
                 } else { Vec::new() }
             });
         }
     }
-    crate::provide_platform(Box::new(Rehearsal(control)));
+    crate::provide_platform(Box::new(Rehearsal(control, monitor, ci)));
     crate::run_with(vec!["--scene".into(), scene, "--no-hud".into(), "--stall".into(), "0".into(), "--seconds".into(), "300".into()]);
 }
 

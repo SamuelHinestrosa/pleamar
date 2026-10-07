@@ -69,6 +69,25 @@ jobs:
           if-no-files-found: warn
       - name: Unit tests with Luau
         run: cargo test --locked
+      - name: Publish native monitor arrival and removal to Luau
+        if: runner.os == 'Windows'
+        env:
+          PLEAMAR_CI_DISPLAY_LIFECYCLE: '1'
+        shell: pwsh
+        run: |
+          $messages = cargo test --locked --lib --no-run --message-format=json | ForEach-Object { $_ | ConvertFrom-Json }
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $tests = @($messages | Where-Object { $_.reason -eq 'compiler-artifact' -and $_.profile.test -and $_.target.kind -contains 'lib' -and $_.executable })
+          if ($tests.Count -ne 1) { throw 'Expected one pleamar library test executable' }
+          python scripts/windows-display-lifecycle.py --binary target/release/pleamar.exe --harness $tests[0].executable --ci-owned-desktop --output "${{ runner.temp }}/native monitor lifecycle"
+          if ($LASTEXITCODE -ne 0) { throw 'Native monitor lifecycle failed' }
+      - name: Preserve native monitor and Luau lifecycle evidence
+        if: always() && runner.os == 'Windows'
+        uses: actions/upload-artifact@v4
+        with:
+          name: native-monitor-lifecycle
+          path: ${{ runner.temp }}/native monitor lifecycle
+          if-no-files-found: warn
       - name: Reject named input when the rendered target becomes covered
         if: runner.os == 'Windows'
         env:

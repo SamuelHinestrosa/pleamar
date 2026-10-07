@@ -1,9 +1,14 @@
 // expect: ok
 scene NativeDisplayLifecycle {
-    surface { size: 440, 250; anchor: center; keyboard: on_demand }
+    surface { size: 440, 250; anchor: center; keyboard: none }
     fact clicks = 0
     fact ticks = 0
     fact open = false
+    fact logic_screens = -1
+    fact screen_events = 0
+    fact hosted = false
+    fact logic_reloaded = false
+    text logic_monitor = ""
     box button { from: 0, 0; size: 440, 250; color: #183a40 }
     text "Monitor lifecycle" { at: 24, 30; size: 24; color: #ffffff }
     text "Clicks {clicks} · Ticks {ticks}" { at: 24, 86; size: 18; color: #ffffff }

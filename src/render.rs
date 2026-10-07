@@ -888,7 +888,7 @@ pub fn run(
                         fresh.gestures.len(), fresh.rules.len(), fresh.zones.len()
                     );
                     scene = fresh;
-                    update_screen_count(&scene, &mut facts, &sheets);
+                    update_screen_count(&scene, &mut facts, &to_logic, &sheets);
                     z_memo = None;
                     window_instrs = None;
                     draw.reset_composition();
@@ -1008,13 +1008,13 @@ pub fn run(
                         println!("render · surface {} on {} · {}×{} · scale {} · {:.0} Hz{which}", n.id, n.name, n.size.0, n.size.1, n.scale, n.mhz as f32 / 1000.0);
                     }
                     sheets.push(g.sheet(*n, size));
-                    update_screen_count(&scene, &mut facts, &sheets);
+                    update_screen_count(&scene, &mut facts, &to_logic, &sheets);
                     assign_pace(g, &mut sheets, size, op.no_vsync);
                     region = vec![[i32::MIN; 4]];
                 }
                 ToRender::SheetGone(id) => {
                     sheets.retain(|l| l.id != id);
-                    update_screen_count(&scene, &mut facts, &sheets);
+                    update_screen_count(&scene, &mut facts, &to_logic, &sheets);
                     crate::platform::sheet_released(id);
                     println!("render · surface {id} gone; {} left", sheets.len());
                     if let Some(g) = &gpu {
@@ -1031,7 +1031,7 @@ pub fn run(
                             nest_text(&scene, &mut texts, &to_logic,
                                 &format!("screen.{}.name", surface.instance), l.name.clone());
                         }
-                        update_screen_count(&scene, &mut facts, &sheets);
+                        update_screen_count(&scene, &mut facts, &to_logic, &sheets);
                         if let Some(g) = &gpu { assign_pace(g, &mut sheets, size, op.no_vsync); }
                     }
                 }
@@ -1121,7 +1121,7 @@ pub fn run(
                         // not to try again until the scene releases it itself.
                         for &k in &locks {
                             sheets.retain(|l| !(l.view.surface == k && l.view.popup.is_none()));
-                            update_screen_count(&scene, &mut facts, &sheets);
+                            update_screen_count(&scene, &mut facts, &to_logic, &sheets);
                             crate::platform::lock_screen(k, None);
                         }
                         if let Some(g) = &gpu {
@@ -3155,7 +3155,7 @@ pub fn run(
             } else if !wants && was {
                 locks.retain(|x| *x != k);
                 sheets.retain(|l| !(l.view.surface == k && l.view.popup.is_none()));
-                update_screen_count(&scene, &mut facts, &sheets);
+                update_screen_count(&scene, &mut facts, &to_logic, &sheets);
                 crate::platform::lock_screen(k, None);
                 if let Some(g) = &gpu {
                     assign_pace(g, &mut sheets, size, op.no_vsync);
@@ -4371,16 +4371,17 @@ fn publish_surface_size(surface: &Surface, props: &mut [Animated], size: (f32, f
     }
 }
 
-fn update_screen_count(scene: &Scene, facts: &mut [f32], sheets: &[Sheet]) {
-    if let Some(i) = scene.facts.iter().position(|h| h.0 == "screens.count") {
-        // Several panels can share an output; popups add no monitor. Recompute
-        // after removal too, including the transition to no visible outputs.
-        facts[i] = sheets.iter().filter(|l| l.view.popup.is_none())
-            // Keep the previous surface-based fallback for hosts that do not
-            // provide output names, instead of merging all unnamed outputs.
-            .map(|l| if l.name.is_empty() { (None, l.view.surface) } else { (Some(l.name.as_str()), 0) })
-            .collect::<std::collections::HashSet<_>>().len() as f32;
-    }
+fn update_screen_count(scene: &Scene, facts: &mut [f32], to_logic: &Sender<Event>, sheets: &[Sheet]) {
+    // Several panels can share an output; popups add no monitor. Recompute
+    // after removal too, including the transition to no visible outputs.
+    let count = sheets.iter().filter(|l| l.view.popup.is_none())
+        // Keep the previous surface-based fallback for hosts that do not
+        // provide output names, instead of merging all unnamed outputs.
+        .map(|l| if l.name.is_empty() { (None, l.view.surface) } else { (Some(l.name.as_str()), 0) })
+        .collect::<std::collections::HashSet<_>>().len() as f32;
+    // Lua chooses the visible monitor from this fact. Updating only the
+    // renderer leaves its initial zero in Lua and can hide every scene copy.
+    nest_fact(scene, facts, to_logic, "screens.count", count);
 }
 
 /// A capture of what is behind a sheet arrives: the background is unmixed with the
