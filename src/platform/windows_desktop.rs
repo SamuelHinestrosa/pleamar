@@ -302,3 +302,7 @@ mod scene_tests;
 #[cfg(test)]
 #[path = "windows_capture_tests.rs"]
 mod capture_tests;
+
+#[cfg(test)]
+#[path = "windows_desktop_ci_tests.rs"]
+mod ci_input_tests;

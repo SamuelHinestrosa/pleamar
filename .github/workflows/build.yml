@@ -44,6 +44,19 @@ jobs:
           name: native-agent-input-guard
           path: ${{ runner.temp }}/agent guard ñ
           if-no-files-found: warn
+      - name: Real native input to owned disposable CI windows
+        if: runner.os == 'Windows'
+        env:
+          PLEAMAR_CI_DESKTOP_INPUT: '1'
+          PLEAMAR_DESKTOP_TEST_DIR: ${{ runner.temp }}/native desktop input ñ
+        run: cargo test --locked --lib platform::windows_desktop::ci_input_tests::native_positive_input -- --ignored --exact --nocapture
+      - name: Preserve native input screenshots and observed application state
+        if: always() && runner.os == 'Windows'
+        uses: actions/upload-artifact@v4
+        with:
+          name: native-desktop-input
+          path: ${{ runner.temp }}/native desktop input ñ
+          if-no-files-found: warn
       - name: Windows D3D11 to D3D12 shared-image pixels and lifetimes (no desktop input)
         if: runner.os == 'Windows'
         run: cargo test --locked --lib windows_texture::tests::shared_capture_reuses_native_pixels_without_cpu_upload -- --ignored --exact --nocapture

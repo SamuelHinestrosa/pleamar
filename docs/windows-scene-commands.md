@@ -181,3 +181,14 @@ Remaining validation before declaring this integration accepted:
 - Validate WM scene discovery and routing, including ambiguous identities.
 - Repeat the relevant language/Luau, Windows/Linux CI and paired installer
   checks when subsequent source changes require them.
+
+### Disposable CI desktop input
+
+The native-build workflow also exercises the Windows desktop service against an
+owned child application: left/right/middle clicks, Unicode text, Backspace,
+Ctrl+A, vertical/horizontal scrolling, dragging, and returning from an owned
+approval window. Each action requires a fresh capture and verifies the child's
+reported state. The `native-desktop-input` artifact retains the captures and
+`result.json`. This sends real OS input on a disposable GitHub-hosted runner; both
+fixture entry points reject execution without that environment and its explicit
+opt-in. It is not an installed-product, elevated-window, or independent-seat test.
