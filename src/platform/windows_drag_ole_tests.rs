@@ -63,12 +63,15 @@ fn native_ole_file_source() -> Result<(), Box<dyn std::error::Error>> {
     if !target(POINT { x: x + 20, y: y + 20 }, std::process::id()) { return Err("source is not the owned window".into()); }
     if !button(MOUSEEVENTF_LEFTDOWN) { return Err("mouse press was rejected".into()); }
     let until = Instant::now() + Duration::from_secs(1);
-    while unsafe { GetAsyncKeyState(VK_LBUTTON.0 as i32) } >= 0 {
-        if Instant::now() >= until { return Err("mouse press did not enter the input queue".into()); }
+    loop {
         let mut message = MSG::default();
         while unsafe { PeekMessageW(&mut message, None, 0, 0, PM_REMOVE) }.as_bool() {
             unsafe { let _ = TranslateMessage(&message); DispatchMessageW(&message); }
         }
+        // DoDragDrop observes this thread's queued key state. The asynchronous
+        // state changes before WM_LBUTTONDOWN has necessarily been removed.
+        if unsafe { GetAsyncKeyState(VK_LBUTTON.0 as i32) < 0 && GetKeyState(VK_LBUTTON.0 as i32) < 0 } { break; }
+        if Instant::now() >= until { return Err("mouse press did not enter the input queue".into()); }
         std::thread::sleep(Duration::from_millis(5));
     }
     let data = source_data(&paths.join("\n"))?;
@@ -82,7 +85,9 @@ fn native_ole_file_source() -> Result<(), Box<dyn std::error::Error>> {
         moved && released
     });
     let mut effect = DROPEFFECT_NONE;
+    let started = Instant::now();
     let result = unsafe { DoDragDrop(&data, &source, DROPEFFECT_COPY, &mut effect) };
+    println!("OLE completed in {} ms: {result:?}, effect {effect:?}", started.elapsed().as_millis());
     let moved = mover.join().map_err(|_| "OLE pointer helper panicked")?;
     assert!(moved, "refused a stale destination or failed to release the pointer");
     assert_eq!(result, DRAGDROP_S_DROP, "OS drag did not finish as a drop");
