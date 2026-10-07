@@ -303,6 +303,7 @@ fn activate_owned_approval(window: HWND) {
                 (((point.x-left) as i64*65536+32768)/width as i64) as i32,
                 (((point.y-top) as i64*65536+32768)/height as i64) as i32);
         assert_eq!(SendInput(&[movement],size_of::<INPUT>() as i32),1);
+        input::await_cursor(point).expect("approval cursor movement did not arrive; no click sent");
         let mut actual = POINT::default();
         GetCursorPos(&mut actual).unwrap();
         assert_eq!(actual,point,"approval cursor movement was redirected; no click sent");
@@ -352,6 +353,7 @@ fn native_positive_input() {
     let name = format!("Pleamar input fixture {} — Español 日本語", child.0.id());
     let id = catalog_id(&name);
     let entry = assert_owned_target(&id, child.0.id());
+    std::fs::write(folder.join("geometry-before-focus.json"), capture_geometry(&id).to_string()).unwrap();
     let approval = unsafe {
         let instance = GetModuleHandleW(None).unwrap();
         let class = w!("PleamarOwnedApprovalFixture");

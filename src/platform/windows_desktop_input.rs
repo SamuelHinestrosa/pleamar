@@ -121,6 +121,25 @@ fn at_requested_point(expected: POINT, actual: POINT) -> Result<(), String> {
     }
     Ok(())
 }
+fn wait_for_point(expected: POINT, timeout: Duration, mut observe: impl FnMut() -> Result<POINT, String>, mut pause: impl FnMut()) -> Result<(), String> {
+    let started = Instant::now();
+    loop {
+        let actual = observe()?;
+        if actual == expected { return Ok(()); }
+        if started.elapsed() >= timeout { return at_requested_point(expected, actual); }
+        pause();
+    }
+}
+pub(super) fn await_cursor(expected: POINT) -> Result<(), String> {
+    // SendInput queues the movement; it need not have reached the input state
+    // when the call returns. Observe its arrival without resending any input.
+    wait_for_point(expected, Duration::from_millis(250), || {
+        check_active()?;
+        let mut actual = POINT::default();
+        unsafe { GetCursorPos(&mut actual) }.map_err(|error| error.to_string())?;
+        Ok(actual)
+    }, || { pump(); std::thread::sleep(Duration::from_millis(5)); })
+}
 fn send(inputs: &[INPUT]) -> Result<(), String> {
     let sent = unsafe { SendInput(inputs, size_of::<INPUT>() as i32) } as usize;
     if sent == inputs.len() { return Ok(()); }
@@ -237,9 +256,7 @@ fn input_command(name: &str, args: &[SysValue], epoch: u64, secret: Option<&str>
             // movement while SendInput reports acceptance. Never include a
             // click in the first insertion: check where the cursor arrived.
             send(&inputs[..1])?;
-            let mut actual = POINT::default();
-            unsafe { GetCursorPos(&mut actual) }.map_err(|error| error.to_string())?;
-            at_requested_point(*first, actual)?;
+            await_cursor(*first)?;
             check_epoch(epoch)?;
             keyboard_ready(&entry)?;
             let current = target(&id)?;
@@ -276,6 +293,20 @@ mod tests {
         assert!(at_requested_point(wanted, wanted).is_ok());
         assert!(at_requested_point(wanted, POINT { x: 1280, y: 720 }).is_err());
         assert!(at_requested_point(wanted, POINT { x: -1599, y: 400 }).is_err());
+    }
+    #[test] fn queued_cursor_movement_can_arrive_after_the_first_observation() {
+        let wanted = POINT { x: -1600, y: 400 };
+        let previous = POINT { x: 1280, y: 720 };
+        let mut observations = [previous, previous, wanted].into_iter();
+        let mut pauses = 0;
+        assert!(wait_for_point(wanted, Duration::from_secs(1), || Ok(observations.next().unwrap()), || pauses += 1).is_ok());
+        assert_eq!(pauses, 2);
+    }
+    #[test] fn cursor_arrival_timeout_and_observation_failure_do_not_allow_input() {
+        let wanted = POINT { x: -1600, y: 400 };
+        assert!(wait_for_point(wanted, Duration::ZERO, || Ok(POINT::default()), || panic!("deadline passed")).is_err());
+        let error = wait_for_point(wanted, Duration::from_secs(1), || Err("cancelled".into()), || panic!("observation failed"));
+        assert_eq!(error.unwrap_err(), "cancelled");
     }
     #[test] fn physical_points_respect_negative_monitor_origins_and_edges() {
         let rect = RECT { left: -1920, top: -180, right: 0, bottom: 900 };
