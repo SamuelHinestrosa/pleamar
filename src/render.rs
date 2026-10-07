@@ -97,6 +97,10 @@ struct Desks {
     stack: [Vec<u32>; 4],
     /// The one each monitor shows.
     shown: [u32; 4],
+    /// The one each monitor stopped showing because its windows went to
+    /// another monitor (one unplugged, the phone's): when they come back, it
+    /// is shown again, as it was left (0: none).
+    left: [u32; 4],
     /// The window that last had the keyboard in each pool.
     last: std::collections::HashMap<u32, usize>,
     next: u32,
@@ -131,7 +135,7 @@ struct DockItem {
 
 impl Default for Desks {
     fn default() -> Self {
-        Desks { pool: Vec::new(), alive: Vec::new(), stack: [vec![1], vec![2], vec![3], vec![4]], shown: [1, 2, 3, 4], last: Default::default(), next: 5, apps: Vec::new(), icons: Vec::new(), names: Vec::new(), execs: Vec::new(), dialog: Vec::new(), minimized: Vec::new(), floating: Vec::new(), born: Vec::new(), stamp: 0, focus: None, pins: Vec::new(), items: Default::default() }
+        Desks { pool: Vec::new(), alive: Vec::new(), stack: [vec![1], vec![2], vec![3], vec![4]], shown: [1, 2, 3, 4], left: [0; 4], last: Default::default(), next: 5, apps: Vec::new(), icons: Vec::new(), names: Vec::new(), execs: Vec::new(), dialog: Vec::new(), minimized: Vec::new(), floating: Vec::new(), born: Vec::new(), stamp: 0, focus: None, pins: Vec::new(), items: Default::default() }
     }
 }
 
@@ -1615,9 +1619,16 @@ pub fn run(
                                 if id != 0 && desks.index(to, id) == 0 {
                                     desks.stack[to].push(id);
                                 }
+                                // Back where it was shown, and nothing shown there since:
+                                // that pool is shown again.
+                                if from != to && id != 0 && desks.left[to] == id && !desks.holds(to, desks.shown[to], &nest_screens) {
+                                    desks.shown[to] = id;
+                                    desks.left[to] = 0;
+                                }
                                 // Left behind with nothing in it, the one it showed there
                                 // is not shown any more: the one beside it is.
                                 if from != to && desks.shown[from] == id && !desks.holds(from, id, &nest_screens) {
+                                    desks.left[from] = id;
                                     desks.stack[from].retain(|p| *p != id);
                                     desks.shown[from] = match desks.stack[from].first() {
                                         Some(p) => *p,
