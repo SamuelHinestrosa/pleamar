@@ -296,7 +296,7 @@ the transition between pipe namespaces, not a full local installation or GUI.
 | Monitor hot plug and DPI changes while running | Reconciliation implemented; physical unplug/mixed-DPI validation pending |
 | Popups | Native owned HWNDs; real opening click, option activation and dismissal tested |
 | Input regions and click-through | GPU visual window plus a region-clipped input HWND; tested against a separate process, including region removal |
-| Popup placement | Uses the surface that last received input, falling back to a live surface; edge constraint and parent-move tracking remain limited |
+| Popup placement | Uses the surface that last received input; slides inside the target monitor work area, follows owner movement/DPI and closes with a hidden/minimized/retired owner. Oversized menus retain their declared size and need scene scrolling. Physical mixed-DPI validation remains pending |
 | Global cursor outside surfaces | GetCursorPos with monitor-relative DPI conversion; no global mouse hook |
 | Audio | Native master/input levels, output/input selection and per-session application mixer. Three owned silent WASAPI sessions passed independent control/readback/callback tests; all three default roles were changed and restored in earlier hardware validation |
 | Network | WinRT connection status; native WLAN scan, radio, saved-profile connection/disconnection and new open/WPA2-Personal profiles; no Wi-Fi hardware on the validation host |

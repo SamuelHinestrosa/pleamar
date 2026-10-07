@@ -44,6 +44,8 @@ use windows::core::{BOOL, PCWSTR, w};
 
 #[path = "windows_drag.rs"]
 mod drag;
+#[path = "windows_popup.rs"]
+mod popup_position;
 pub fn start_drag(text: &str) -> bool { drag::queue(text) }
 
 const WM_PLEAMAR_CURSOR: u32 = WM_APP + 1;
@@ -1360,6 +1362,7 @@ fn run_event_loop_with_monitors(
     let platform = PLATFORM.get_or_init(|| WindowsPlatform { windows: Mutex::default() });
     let _ = to_render.send(ToRender::KeyRepeat(None));
     let mut live: Vec<Arc<WindowState>> = Vec::new();
+    let mut popup_anchors: Vec<popup_position::Tracked> = Vec::new();
     let mut next_id = 0;
     let mut desktop = observe_monitors();
     reconcile(&wanted, &desktop, extra_height, module, &instance, &to_render, &mut live, &mut next_id);
@@ -1406,17 +1409,21 @@ fn run_event_loop_with_monitors(
             let parent = live.iter().filter(|v| v.popup.is_none() && !v.gone.load(Ordering::Relaxed))
                 .max_by_key(|v| v.hwnd.load(Ordering::Relaxed) == INPUT_PARENT.load(Ordering::Relaxed));
             if let Some(parent) = parent {
-                let scale = parent.scale();
-                let mut corner = POINT { x: px(x, scale), y: px(y, scale) };
-                unsafe { let _ = ClientToScreen(parent.hwnd(), &mut corner); }
-                let monitor = Monitor { rect: RECT { left: corner.x, top: corner.y, right: corner.x + px(w, scale), bottom: corner.y + px(h, scale) }, name: parent.output.lock().unwrap().name.clone(), scale, mhz: 0 };
+                let monitor = match popup_position::placement(parent,[x,y,w,h]) {
+                    Ok(monitor) => monitor,
+                    Err(error) => { eprintln!("popup · {error}"); let _ = to_render.send(ToRender::PopupClosed(k)); continue; }
+                };
                 let spec = Surface { width: w.max(1) as u32, height: h.max(1) as u32, origin, anchor: SurfaceAnchor::TopLeft, right_click_quits: false, keyboard: Keyboard::OnDemand, hidden_from_captures: parent.hidden_from_captures.load(Ordering::Relaxed), ..Surface::default() };
                 match create(&spec, parent.which, &monitor, 0, next_id, module, &instance, &to_render, 0, Some((k, parent.hwnd()))) {
-                    Ok(v) => { live.push(v); next_id += 1; }
+                    Ok(v) => {
+                        popup_anchors.push(popup_position::Tracked::new(parent,&v,[x,y,w,h]));
+                        live.push(v); next_id += 1;
+                    }
                     Err(e) => { eprintln!("popup · {e}"); let _ = to_render.send(ToRender::PopupClosed(k)); }
                 }
-            }
+            } else { let _ = to_render.send(ToRender::PopupClosed(k)); }
         }
+        popup_anchors.retain(|anchor| anchor.refresh());
         let down = unsafe { GetAsyncKeyState(VK_LBUTTON.0 as i32) < 0 || GetAsyncKeyState(VK_RBUTTON.0 as i32) < 0 };
         if !down {
             // The press that opened a popup belongs to its parent. Dismiss only
@@ -1437,7 +1444,8 @@ fn run_event_loop_with_monitors(
         }
         was_down = down;
         live.retain(|v| {
-            if v.gone.load(Ordering::Relaxed) && v.released.load(Ordering::Acquire) {
+            if v.gone.load(Ordering::Relaxed) && v.released.load(Ordering::Acquire)
+                && !popup_anchors.iter().any(|anchor| anchor.blocks_parent(v)) {
                 unsafe { let _ = DestroyWindow(v.hwnd()); }
                 false
             } else { true }

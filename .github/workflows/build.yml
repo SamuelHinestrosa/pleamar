@@ -42,6 +42,18 @@ jobs:
           name: native-retained-canvas
           path: ${{ runner.temp }}/retained canvas ñ
           if-no-files-found: warn
+      - name: Native popup placement and owner lifecycle
+        if: runner.os == 'Windows'
+        env:
+          PLEAMAR_CI_POPUP: '1'
+        run: python scripts/windows-popup-ci.py --binary target/release/pleamar.exe --output "${{ runner.temp }}/popup placement ñ"
+      - name: Preserve native popup placement images
+        if: always() && runner.os == 'Windows'
+        uses: actions/upload-artifact@v4
+        with:
+          name: native-popup-placement
+          path: ${{ runner.temp }}/popup placement ñ
+          if-no-files-found: warn
       - name: Unit tests with Luau
         run: cargo test --locked
       - name: Reject named input when the rendered target becomes covered

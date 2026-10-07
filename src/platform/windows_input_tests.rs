@@ -402,3 +402,42 @@ fn native_display_lifecycle_helper() {
     crate::provide_platform(Box::new(Rehearsal(control)));
     crate::run_with(vec!["--scene".into(), scene, "--no-hud".into(), "--stall".into(), "0".into(), "--seconds".into(), "300".into()]);
 }
+
+
+#[test]
+fn native_hidden_popup_tracks_client_moves_and_defers_owner_destruction() {
+    let parent = Probe::new();
+    let popup = Probe::configured(|state| {
+        state.is_window = false;
+        state.popup = Some(0);
+        *state.placement.lock().unwrap() = Some(Placement { monitor:RECT::default(),
+            anchor:SurfaceAnchor::TopLeft, margin:[0;4], width:160, height:100,
+            exclusive_zone:0, level:Level::Overlay });
+    });
+    let anchor = popup_position::Tracked::new(&parent._state,&popup._state,[20,30,160,100]);
+    let foreground = unsafe { GetForegroundWindow() };
+    let screen = monitor_details(unsafe { MonitorFromWindow(parent.hwnd,MONITOR_DEFAULTTONEAREST) }).unwrap();
+    let mut positions = Vec::new();
+    for offset in [50,130] {
+        unsafe { SetWindowPos(parent.hwnd,None,screen.rect.left+offset,screen.rect.top+offset,120,100,
+            SWP_NOACTIVATE|SWP_NOZORDER|SWP_NOOWNERZORDER) }.unwrap();
+        anchor.move_with_parent(&parent._state,&popup._state).unwrap();
+        let expected = popup_position::placement(&parent._state,[20,30,160,100]).unwrap().rect;
+        let mut actual = RECT::default();
+        unsafe { GetWindowRect(popup.hwnd,&mut actual) }.unwrap();
+        assert_eq!(actual,expected);
+        positions.push(actual);
+    }
+    assert_ne!(positions[0],positions[1]);
+    parent._state.removed();
+    assert!(anchor.refresh());
+    assert!(popup._state.gone.load(Ordering::Relaxed));
+    assert!(popup.drain().iter().any(|e| matches!(e,ToRender::PopupClosed(0))));
+    assert!(anchor.blocks_parent(&parent._state));
+    popup._state.released.store(true,Ordering::Release);
+    assert!(!anchor.blocks_parent(&parent._state));
+    assert!(!anchor.refresh());
+    assert!(!unsafe { IsWindowVisible(parent.hwnd) }.as_bool());
+    assert!(!unsafe { IsWindowVisible(popup.hwnd) }.as_bool());
+    assert_eq!(unsafe { GetForegroundWindow() },foreground);
+}
