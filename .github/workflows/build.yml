@@ -35,6 +35,9 @@ jobs:
       - name: Windows D3D11 to D3D12 shared-image pixels and lifetimes (no desktop input)
         if: runner.os == 'Windows'
         run: cargo test --locked --lib windows_texture::tests::shared_capture_reuses_native_pixels_without_cpu_upload -- --ignored --exact --nocapture
+      - name: Windows preview texture retirement and fresh pixels (no desktop input)
+        if: runner.os == 'Windows'
+        run: cargo test --locked --lib gpu::windows_memory_tests::retired_preview_capacity_reopens_with_fresh_pixels -- --ignored --exact --nocapture
       - name: Windows media paths and Unicode filenames
         if: runner.os == 'Windows'
         shell: pwsh

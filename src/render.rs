@@ -3848,15 +3848,10 @@ pub fn run(
         if !op.no_vsync && !op.naive {
             let right_now = Instant::now();
             if g.uses_mailbox() {
-                let mhz = sheets.iter().find(|l| l.drives_pace).map_or(60_000, |l| l.mhz.max(1));
                 // With `rate:`, the scene decides the step and not the monitor: a bar
                 // that breathes does not need 165 frames per second, and painting them is what
                 // costs. Never faster than the screen, which would be no use.
-                let mhz = match scene.surface().max_fps {
-                    0 => mhz,
-                    r => mhz.min(r as i32 * 1000),
-                };
-                let period = Duration::from_secs_f64(1000.0 / mhz as f64);
+                let period = frame_period(sheets.iter().find(|l| l.drives_pace).map(|l| l.mhz), scene.surface().max_fps);
                 // The clock gives the step: one deadline per period. The compositor's
                 // notice is no use as a metronome —Hyprland notifies when it composes,
                 // and if a frame reaches it right after, it composes again and notifies
@@ -4144,6 +4139,13 @@ pub fn run(
                 }
             }
         }
+        #[cfg(target_os = "windows")]
+        if nest_visible.as_ref().is_some_and(|slots| slots.is_empty())
+            && nest_windows.iter().all(|w| w.pieces.is_empty()) {
+            // Do not shrink during page switches: a newly visible page can
+            // still be waiting for its first capture. All demand must be gone.
+            if let Some(g) = gpu.as_mut() { g.release_windows(); }
+        }
         // What the windows drew has been shown: they may draw the next one.
         if painted > 0 {
             if let Some(send) = &nest {
@@ -4281,11 +4283,7 @@ pub fn run(
             // The LEARNT period is no good here: a scene that is always
             // late teaches it that the screen gives 28 ms and then it is never
             // late. It is compared with the monitor's real refresh.
-            let mut real = sheets.iter().find(|l| l.drives_pace).map_or(16.7, |l| 1_000_000.0 / l.mhz.max(1) as f32);
-            if scene.surface().max_fps > 0 {
-                real = real.max(1000.0 / scene.surface().max_fps as f32);
-            }
-            Some(real)
+            Some(frame_period(sheets.iter().find(|l| l.drives_pace).map(|l| l.mhz), scene.surface().max_fps).as_secs_f32() * 1000.0)
         } else { None };
         if frame_ms.is_some() { cycle.frame(ms, blocked, watched_period); }
         // The screen's period, learnt from the first good frames.
@@ -4435,6 +4433,14 @@ fn assign_pace(g: &Gpu, sheets: &mut [Sheet], size: (f32, f32), no_vsync: bool) 
             g.reconfigure(l, size);
         }
     }
+}
+
+fn frame_period(mhz: Option<i32>, max_fps: u32) -> Duration {
+    // An unknown refresh must not become a 1 mHz (1000-second) deadline.
+    // Keep the reported metadata unknown; only the pacing uses this fallback.
+    let hz = f64::from(mhz.filter(|r| *r > 0).unwrap_or(60_000)) / 1000.0;
+    let hz = if max_fps == 0 { hz } else { hz.min(f64::from(max_fps)) };
+    Duration::from_secs_f64(1.0 / hz)
 }
 
 /// What is selected of a text that can be: its instruction, and the bytes
@@ -4763,6 +4769,18 @@ impl ComposeMemo {
 #[cfg(test)]
 mod cadence_tests {
     use super::*;
+
+    #[test]
+    fn refresh_fallback_and_scene_rate_have_finite_deadlines() {
+        for refresh in [None, Some(0), Some(-1)] {
+            assert!((frame_period(refresh, 0).as_secs_f64() - 1.0 / 60.0).abs() < 1e-9);
+            assert_eq!(frame_period(refresh, 1), Duration::from_secs(1));
+        }
+        for (mhz, rate, hz) in [(59_940, 0, 59.94), (144_000, 0, 144.0),
+            (144_000, 30, 30.0), (24_000, 60, 24.0), (144_000, u32::MAX, 144.0)] {
+            assert!((frame_period(Some(mhz), rate).as_secs_f64() - 1.0 / hz).abs() < 1e-9);
+        }
+    }
 
     #[test]
     fn initialization_and_sleep_are_not_frame_delays() {

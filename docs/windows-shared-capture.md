@@ -72,6 +72,35 @@ initialization was corrected and its original removal assertion still passes.
 Both hidden-window metadata/client-position regressions passed. The real
 multi-monitor and frame-pacing walkthrough remains pending.
 
+### Native preview texture retirement (2026-10-07)
+
+After all preview demand ends and the provider has retired every picture,
+the Windows renderer replaces its peak window texture array with a 1x1x1
+placeholder. A page switch with outstanding demand retains the array. Queued
+shared copies prevent retirement; submitted work retains its resources until
+the GPU finishes, and any CPU uploads are submitted before replacement.
+Reopening allocates room for the new pictures and rebuilds their binding.
+
+The default-Luau release library suite passes 218 ordinary tests. The separate
+`gpu::windows_memory_tests::retired_preview_capacity_reopens_with_fresh_pixels`
+passes on the native D3D12 adapter: four close/reopen cycles, sixteen exact BGRA
+layer images, pending shared-copy rejection, transparent replacement and fresh
+pixels after reopening. The fixture's texel capacity falls from 1280x768x4
+(15 MiB) to one BGRA pixel. This is resource capacity, not a measurement of
+driver allocation, process RAM or whole-Marea VRAM. The existing twelve-copy
+D3D11-to-D3D12 pixel/lifetime regression also passes. Neither test opens a
+window or sends desktop input; actual overview close/reopen acceptance remains
+pending a non-primary test display. CI explicitly runs both GPU regressions.
+
+Windows refresh values 0 and 1 mean an unspecified hardware default, according
+to Microsoft's [DEVMODE contract](https://learn.microsoft.com/en-us/windows/win32/api/wingdi/ns-wingdi-devmodea).
+They now stay unknown in output metadata. The shared frame clock uses a 60 Hz
+fallback for an unknown refresh instead of treating it as 1 mHz and scheduling
+a 1000-second mailbox wait. Tests cover unknown and negative values, fractional
+59.94 Hz, 144 Hz and scene rate limits, including an overflowing integer limit.
+Valid reported rates retain their existing pacing. This does not establish
+mixed-refresh presentation quality or a measured 60 Hz hardware refresh.
+
 ### Capture transport
 
 Windows x64/MSVC with default Luau was exercised on 2026-10-06. The engine's
@@ -107,7 +136,8 @@ The evidence retains the outlier and the repeat's two-second memory samples.
 
 These are process measurements for this short capture workload, not whole-Marea
 performance, UI frame time, sustained load or total VRAM. Closing the sources
-released capture handles; the renderer can retain its texture-array capacity.
+released capture handles; that measured revision retained its texture-array
+capacity. The later retirement change above has separate component evidence.
 See the [commands, source hashes and structured evidence](windows-shared-capture-validation.json),
 [shared-image scene](windows-shared-capture/shared-scene-reloaded.png),
 [CPU comparison](windows-shared-capture/cpu-scene-reloaded.png) and

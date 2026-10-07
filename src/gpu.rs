@@ -2217,6 +2217,24 @@ impl Gpu {
         true
     }
 
+    /// After the native provider has retired every picture, discard the peak
+    /// overview allocation. Pending shared copies still need the old layers.
+    #[cfg(target_os = "windows")]
+    pub fn release_windows(&mut self) -> bool {
+        if self.windows_dims == (1, 1, 1) || !self.windows_copies.borrow().is_empty() {
+            return false;
+        }
+        // Submit any queued CPU uploads before dropping their destination.
+        // Already submitted work retains its resources until the GPU is done.
+        self.queue.submit([]);
+        let (texture, view) = Self::windows_texture(&self.device, (1, 1, 1));
+        self.windows = texture;
+        self.windows_view = view;
+        self.windows_dims = (1, 1, 1);
+        self.scene_group = Self::build_scene_group(&self.device, &self.pipeline, &self.shapes_buffer, &self.elements_buffer, &self.points_buffer, &self.stops_buffer, &self.atlas_view, &self.sampler, &self.windows_view);
+        true
+    }
+
     /// A window's picture, back from the card: its pieces (layer, where in the
     /// picture, in pixels, how many pixels, and whether it is opaque —XRGB,
     /// whose fourth byte means nothing—), put together over transparent in a
@@ -2975,6 +2993,9 @@ pub const N_UNIFORMS: usize = 8 + 120 + 4 + 4;
 
 #[cfg(test)]
 mod effect_tests;
+
+#[cfg(all(test, target_os = "windows"))]
+mod windows_memory_tests;
 
 #[cfg(test)]
 mod tests {

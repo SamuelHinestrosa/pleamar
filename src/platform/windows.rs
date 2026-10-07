@@ -364,6 +364,12 @@ unsafe extern "system" fn enumerate_monitor(
     BOOL(1)
 }
 
+fn display_refresh_mhz(hz: u32) -> i32 {
+    // DEVMODE's 0 and 1 mean the hardware default, not a measured refresh.
+    if hz <= 1 { return 0; }
+    hz.checked_mul(1000).and_then(|r| i32::try_from(r).ok()).unwrap_or(0)
+}
+
 fn monitor_details(monitor: HMONITOR) -> Option<Monitor> {
     let mut info = MONITORINFOEXW::default();
     info.monitorInfo.cbSize = size_of::<MONITORINFOEXW>() as u32;
@@ -387,7 +393,7 @@ fn monitor_details(monitor: HMONITOR) -> Option<Monitor> {
     }
     .as_bool()
     {
-        mode.dmDisplayFrequency as i32 * 1000
+        display_refresh_mhz(mode.dmDisplayFrequency)
     } else {
         0
     };
@@ -1562,6 +1568,14 @@ mod input_tests;
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn default_display_refresh_stays_unknown() {
+        for hz in [0, 1, u32::MAX, i32::MAX as u32 / 1000 + 1] {
+            assert_eq!(display_refresh_mhz(hz), 0);
+        }
+        for hz in [24, 60, 144, 240] { assert_eq!(display_refresh_mhz(hz), hz as i32 * 1000); }
+    }
 
     fn placement(anchor: SurfaceAnchor, width: u32, margin: [i32; 4]) -> Placement {
         Placement {
