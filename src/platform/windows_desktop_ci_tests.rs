@@ -1,7 +1,8 @@
 //! Real desktop input, only on an explicitly opted-in disposable CI runner.
 use super::*;
 use std::{path::{Path, PathBuf}, process::{Child, Command}, os::windows::process::CommandExt};
-use windows::{core::{w, HSTRING}, Win32::System::LibraryLoader::GetModuleHandleW};
+use windows::{core::{w, HSTRING}, Win32::System::LibraryLoader::{GetModuleHandleW, LoadLibraryExW, LOAD_LIBRARY_SEARCH_SYSTEM32}};
+const EM_GETSEL: u32 = 0x00b0;
 fn field<'a>(value: &'a SysValue, name: &str) -> &'a SysValue {
     let SysValue::Map(entries) = value else { panic!("expected a map") };
     &entries.iter().find(|(key, _)| key == name).unwrap().1
@@ -13,12 +14,14 @@ fn command(name: &str, args: &[SysValue]) -> Result<(), String> {
     super::command(name, &values)
 }
 fn state(folder: &Path) -> serde_json::Value { std::fs::read(folder.join("state.json")).ok().and_then(|v| serde_json::from_slice(&v).ok()).unwrap_or(serde_json::Value::Null) }
+#[track_caller]
 fn wait(mut ready: impl FnMut() -> bool) {
     let started = Instant::now();
     while !ready() { assert!(started.elapsed() < Duration::from_secs(12), "fixture timeout"); std::thread::sleep(Duration::from_millis(25)); }
 }
 fn request(folder: &Path, command: &str) {
-    std::fs::write(folder.join("control"), command).unwrap();
+    std::fs::write(folder.join("control.pending"), command).unwrap();
+    std::fs::rename(folder.join("control.pending"), folder.join("control")).unwrap();
     wait(|| state(folder)["command"] == command);
 }
 struct OwnedChild(Child);
@@ -225,7 +228,10 @@ fn owned_input_fixture() {
         let title = HSTRING::from(format!("Pleamar input fixture {} — Español 日本語", std::process::id()));
         let hwnd = CreateWindowExW(WINDOW_EX_STYLE(0), class, &title, WS_OVERLAPPEDWINDOW,
             screen.work.left + 80, screen.work.top + 90, 560, 420, None, None, Some(instance.into()), None).unwrap();
-        let edit = CreateWindowExW(WS_EX_CLIENTEDGE, w!("EDIT"), w!(""), WS_CHILD | WS_VISIBLE | WS_TABSTOP | WINDOW_STYLE(ES_AUTOHSCROLL as u32),
+        // Rich Edit implements Ctrl+A itself. A plain EDIT control does not
+        // promise that shortcut, so it cannot verify the replacement gesture.
+        let rich_edit = LoadLibraryExW(w!("Msftedit.dll"), None, LOAD_LIBRARY_SEARCH_SYSTEM32).unwrap();
+        let edit = CreateWindowExW(WS_EX_CLIENTEDGE, w!("RICHEDIT50W"), w!(""), WS_CHILD | WS_VISIBLE | WS_TABSTOP | WINDOW_STYLE(ES_AUTOHSCROLL as u32),
             20, 180, 480, 40, Some(hwnd), Some(HMENU(41usize as _)), Some(instance.into()), None).unwrap();
         let _button = CreateWindowExW(WINDOW_EX_STYLE(0), w!("BUTTON"), w!("Count a click"), WS_CHILD | WS_VISIBLE | WS_TABSTOP,
             320, 25, 170, 60, Some(hwnd), Some(HMENU(42usize as _)), Some(instance.into()), None).unwrap();
@@ -254,7 +260,11 @@ fn owned_input_fixture() {
             let mut origin = POINT::default();
             assert!(ClientToScreen(hwnd, &mut origin).as_bool());
             let rect = bounds(hwnd).unwrap();
+            let (mut selection_start, mut selection_end) = (0u32, 0u32);
+            SendMessageW(edit, EM_GETSEL, Some(WPARAM(&mut selection_start as *mut u32 as usize)),
+                Some(LPARAM(&mut selection_end as *mut u32 as isize)));
             let report = serde_json::json!({"ready":true,"command":control,"text":caption(edit),
+                "text_control":"RICHEDIT50W","selection":[selection_start,selection_end],
                 "clicks":observed.clicks,"right_clicks":observed.right_clicks,"middle_clicks":observed.middle_clicks,
                 "wheel":observed.wheel,"horizontal_wheel":observed.horizontal_wheel,"drags":observed.drags,
                 "moves":observed.moves,"dragging":observed.dragging,"patch":[observed.x,observed.y],
@@ -268,6 +278,7 @@ fn owned_input_fixture() {
             std::thread::sleep(Duration::from_millis(10));
         }
         let _ = DestroyWindow(hwnd);
+        FreeLibrary(rich_edit).unwrap();
     }
 }
 
@@ -392,6 +403,7 @@ fn native_positive_input() {
     action("04-backspace", "desktop.key", &[SysValue::Text("backspace".into())]);
     wait(|| state(&folder)["text"] == "Hola, España 🎵 日本");
     action("05-select", "desktop.hotkey", &[SysValue::Text("ctrl+a".into())]);
+    wait(|| state(&folder)["selection"] == serde_json::json!([0,"Hola, España 🎵 日本".encode_utf16().count()]));
     action("06-replace", "desktop.type", &[SysValue::Text("Nuevo: café ☕".into())]);
     wait(|| state(&folder)["text"] == "Nuevo: café ☕");
 
