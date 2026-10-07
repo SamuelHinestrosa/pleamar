@@ -28,12 +28,52 @@ fn catalog_id(title: &str) -> String {
     text(field(list(field(&catalog,"windows")).iter().find(|entry| text(field(entry,"title")) == title).expect("owned fixture was not cataloged"), "id")).into()
 }
 fn picture(id: &str, output: &Path) -> image::RgbaImage {
-    let result = query("desktop.look", &[SysValue::Text(id.into())]).unwrap();
+    // Activation can change DWM's frame while its animation is still in flight.
+    // Retry only the read-only capture; never resend an input action on failure.
+    let started = Instant::now();
+    let result = loop {
+        match query("desktop.look", &[SysValue::Text(id.into())]) {
+            Ok(result) => break result,
+            Err(error) => {
+                let geometry = capture_geometry(id);
+                let report = serde_json::json!({"picture":output.file_name().unwrap().to_string_lossy(),
+                    "seconds":started.elapsed().as_secs_f64(),"error":error,"geometry":geometry});
+                let mut log = std::fs::OpenOptions::new().create(true).append(true)
+                    .open(output.parent().unwrap().join("look-attempts.jsonl")).unwrap();
+                use std::io::Write;
+                writeln!(log, "{report}").unwrap();
+                assert!(error.contains("capture and window frame coordinates differ")
+                    && started.elapsed() < Duration::from_secs(3), "owned capture failed: {report}");
+                std::thread::sleep(Duration::from_millis(50));
+            }
+        }
+    };
     use base64::Engine;
     let png = base64::engine::general_purpose::STANDARD.decode(text(field(&result,"data"))).unwrap();
     let mut file = std::fs::OpenOptions::new().write(true).create_new(true).open(output).unwrap();
     std::io::Write::write_all(&mut file, &png).unwrap();
     image::load_from_memory(&png).unwrap().to_rgba8()
+}
+
+fn capture_geometry(id: &str) -> serde_json::Value {
+    let Ok(entry) = target(id) else { return serde_json::json!({"target":"unavailable"}); };
+    let hwnd = entry.identity.window();
+    let mut outer = RECT::default();
+    let native = unsafe { GetWindowRect(hwnd, &mut outer) }.is_ok();
+    let pixels = (|| -> windows::core::Result<_> {
+        let _apartment = crate::platform::windows_system::Apartment::new()
+            .map_err(|message| windows::core::Error::new(E_FAIL, &message))?;
+        use windows::{Graphics::Capture::GraphicsCaptureItem,
+            Win32::System::WinRT::Graphics::Capture::IGraphicsCaptureItemInterop};
+        let interop: IGraphicsCaptureItemInterop = windows::core::factory::<GraphicsCaptureItem, _>()?;
+        let item: GraphicsCaptureItem = unsafe { interop.CreateForWindow(hwnd) }?;
+        let size = item.Size()?;
+        Ok([size.Width,size.Height])
+    })();
+    serde_json::json!({"dwm":[entry.rect.left,entry.rect.top,entry.rect.right,entry.rect.bottom],
+        "outer":native.then_some([outer.left,outer.top,outer.right,outer.bottom]),
+        "capture":pixels.as_ref().ok(),"capture_error":pixels.as_ref().err().map(ToString::to_string),
+        "dpi":unsafe { GetDpiForWindow(hwnd) }})
 }
 
 use windows::Win32::UI::Input::KeyboardAndMouse::*;
