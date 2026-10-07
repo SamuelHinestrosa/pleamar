@@ -12,6 +12,7 @@ SOURCE = '''scene RetainedSurfaceCI {
     fact x = 90
     fact fade = 0.65
     box { from: 8, 8; size: 624, 464; corner: 36; color: #172127; opacity: 85% }
+    box { from: 32, 28; size: 580, 45; color: #172127 }
     text "Retained canvas · España 日本語" { at: 40, 35; size: 22; color: #ffffff }
     body {
         color: #9ed6bd; opacity: 60%; shadow: 3, 6, 12, 45%
@@ -31,7 +32,8 @@ SOURCE = '''scene RetainedSurfaceCI {
 
 def title_ready(picture):
     # The first frame can precede asynchronous font discovery by several seconds.
-    # Only the white title can exceed this brightness over the dark fixture body.
+    # The opaque title plate prevents text behind this transparent window from
+    # satisfying readiness before the fixture's own glyphs have been rendered.
     width,height,pixels=picture
     if width<400 or height<65:return False
     return sum(min(pixels[(y*width+x)*4:(y*width+x)*4+3])>200
