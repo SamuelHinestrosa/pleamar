@@ -30,6 +30,18 @@ jobs:
           Invoke-WebRequest -Uri 'https://github.com/microsoft/DirectXShaderCompiler/releases/download/v1.9.2609/dxc_2026_09_29.zip' -OutFile $archive
           ./scripts/prepare-windows-runtime.ps1 -Archive $archive
           ./scripts/test-windows-runtime.ps1 -Archive $archive
+      - name: Native retained canvas pixels against full repaint
+        if: runner.os == 'Windows'
+        env:
+          PLEAMAR_CI_RETAINED: '1'
+        run: python scripts/windows-retained-ci.py --binary target/release/pleamar.exe --output "${{ runner.temp }}/retained canvas ñ"
+      - name: Preserve retained canvas reference and comparison images
+        if: always() && runner.os == 'Windows'
+        uses: actions/upload-artifact@v4
+        with:
+          name: native-retained-canvas
+          path: ${{ runner.temp }}/retained canvas ñ
+          if-no-files-found: warn
       - name: Unit tests with Luau
         run: cargo test --locked
       - name: Reject named input when the rendered target becomes covered

@@ -8,6 +8,8 @@ use std::ops::Range;
 
 pub(crate) mod composition;
 use composition::Composition;
+#[cfg(target_os = "windows")]
+mod windows_retained;
 
 const PER_SHAPE: usize = 20;
 const PER_ELEMENT: usize = 60;
@@ -1603,6 +1605,8 @@ pub struct Sheet {
     pub cleared: bool,
     pub view: View,
     target: Target,
+    #[cfg(target_os = "windows")]
+    retained: Option<windows_retained::Canvas>,
     window: Box<dyn PlatformWindow>,
     px: (u32, u32),
     uniforms: wgpu::Buffer,
@@ -1660,6 +1664,8 @@ pub struct Gpu {
     no_backdrop_group: wgpu::BindGroup,
     /// Whether the screen accepts having a canvas copied to it: without that, there is no lens.
     can_copy: bool,
+    #[cfg(target_os = "windows")]
+    retained_budget: windows_retained::Budget,
     adapter: wgpu::Adapter,
     pub device: wgpu::Device,
     pub queue: wgpu::Queue,
@@ -1843,7 +1849,7 @@ impl Gpu {
         }).create_view(&Default::default());
         let no_backdrop_group = Self::build_backdrop_group(&device, &pipeline, &nothing, &nothing, &sampler);
         #[allow(unused_mut)]
-        let mut g = Gpu { lens, no_backdrop_group, can_copy, adapter, device, queue, format, alpha, non_blocking, pipeline, particles, screen, multiply, erase, pipeline_layout, user_code: base, shapes_buffer, elements_buffer, points_buffer, stops_buffer, atlas, atlas_view, windows, windows_view, windows_dims: (1, 1, 1), #[cfg(target_os = "linux")] dmabufs: Default::default(), #[cfg(target_os = "linux")] copies: Default::default(), #[cfg(target_os = "linux")] yuv: None, #[cfg(target_os = "windows")] windows_copies: Default::default(), last_submission: Default::default(), render_modifiers: Vec::new(), sampler, capacity: (INITIAL_SHAPES * PER_SHAPE, INITIAL_ELEMENTS * PER_ELEMENT, INITIAL_POINTS, INITIAL_STOPS), limit, limit_warned: false, scene_group, no_layers_group };
+        let mut g = Gpu { lens, no_backdrop_group, can_copy, #[cfg(target_os = "windows")] retained_budget: Default::default(), adapter, device, queue, format, alpha, non_blocking, pipeline, particles, screen, multiply, erase, pipeline_layout, user_code: base, shapes_buffer, elements_buffer, points_buffer, stops_buffer, atlas, atlas_view, windows, windows_view, windows_dims: (1, 1, 1), #[cfg(target_os = "linux")] dmabufs: Default::default(), #[cfg(target_os = "linux")] copies: Default::default(), #[cfg(target_os = "linux")] yuv: None, #[cfg(target_os = "windows")] windows_copies: Default::default(), last_submission: Default::default(), render_modifiers: Vec::new(), sampler, capacity: (INITIAL_SHAPES * PER_SHAPE, INITIAL_ELEMENTS * PER_ELEMENT, INITIAL_POINTS, INITIAL_STOPS), limit, limit_warned: false, scene_group, no_layers_group };
         #[cfg(target_os = "linux")]
         if first.is_none() {
             g.render_modifiers = g.bgra_modifiers(ash::vk::FormatFeatureFlags::COLOR_ATTACHMENT);
@@ -2104,7 +2110,7 @@ impl Gpu {
         let (layer_views, layer_group) = Self::make_layers(&self.device, &self.pipeline, self.format, 1, 1, 1);
         let mut l = Sheet {
             id: n.id, frame_no: 0, painted_as: Vec::new(), damage_log: Default::default(), name: n.name, mhz: n.mhz, scale: n.scale, drives_pace: true, open: true, cleared: false, view: n.view,
-            target: n.target, window: n.window, px: (0, 0), uniforms, uniform_group, layer_views, layer_group, layers: 0, idle_layer_frames: 0, blur_rects: Vec::new(), lens: None, wants_lens: false, capture: BackdropCapture::Idle, glass_box: None, asked_box: [0; 4], capture_asked: std::time::Instant::now(), capture_taken: long_ago(), painted_now: false, painted: None, input_region: vec![[-1, -1, -1, -1]], presented: false, keyboard_mode: None,
+            target: n.target, #[cfg(target_os = "windows")] retained: None, window: n.window, px: (0, 0), uniforms, uniform_group, layer_views, layer_group, layers: 0, idle_layer_frames: 0, blur_rects: Vec::new(), lens: None, wants_lens: false, capture: BackdropCapture::Idle, glass_box: None, asked_box: [0; 4], capture_asked: std::time::Instant::now(), capture_taken: long_ago(), painted_now: false, painted: None, input_region: vec![[-1, -1, -1, -1]], presented: false, keyboard_mode: None,
         };
         self.reconfigure(&mut l, size);
         l
@@ -2115,6 +2121,8 @@ impl Gpu {
         let size = l.view.size;
         let px = ((size.0 * l.scale).round().max(1.0) as u32, (size.1 * l.scale).round().max(1.0) as u32);
         self.configure_surface(l, px);
+        #[cfg(target_os = "windows")]
+        { l.retained = None; }
         l.painted = None;
         l.cleared = false;
         if px != l.px {
@@ -2638,6 +2646,16 @@ impl Gpu {
         } else if l.lens.is_none() {
             l.lens = Some(crate::lens::Lens::new(&self.device, self.format, l.px));
         }
+        #[cfg(target_os = "windows")]
+        let expanded_damage = damage.map(|rects| windows_retained::effect_damage(d, rects));
+        #[cfg(target_os = "windows")]
+        let damage = expanded_damage.as_deref();
+        #[cfg(target_os = "windows")]
+        windows_retained::prepare(&mut l.retained, &self.retained_budget, &self.device, self.format,
+            l.px, l.view.bounds(), l.scale, damage,
+            l.open && l.lens.is_none() && self.can_copy && matches!(&l.target, Target::Surface(_))
+                && std::env::var("PLEAMAR_RETAINED_SURFACE").as_deref() == Ok("1")
+                && std::env::var_os("PLEAMAR_FULL_REPAINT").is_none());
         let mut u = uniforms.to_vec();
         u[3] = l.scale;
         u[128] = l.lens.as_ref().is_some_and(|x| x.ready) as u8 as f32;
@@ -2654,6 +2672,8 @@ impl Gpu {
             Target::Surface(surface) => match surface.get_current_texture() {
                 wgpu::CurrentSurfaceTexture::Success(t) | wgpu::CurrentSurfaceTexture::Suboptimal(t) => Frame::Surface(t),
                 wgpu::CurrentSurfaceTexture::Outdated | wgpu::CurrentSurfaceTexture::Lost => {
+                    #[cfg(target_os = "windows")]
+                    { l.retained = None; }
                     self.configure_surface(l, l.px);
                     return false;
                 }
@@ -2671,6 +2691,9 @@ impl Gpu {
         // Only for lent frames: which piece of it has to be painted again —what
         // changed now, and since that buffer was last painted— in pixels.
         let scissor: Option<[u32; 4]> = match &frame {
+            #[cfg(target_os = "windows")]
+            Frame::Surface(_) if l.retained.as_ref().is_some_and(|canvas| canvas.valid) =>
+                damage.and_then(|rects| windows_retained::region(rects, l.view.bounds(), l.scale, l.px)).filter(|r| *r != [0;4]),
             Frame::Surface(_) => None,
             // `PLEAMAR_FULL_REPAINT=1`: every frame whole, to compare.
             Frame::Lent(_, _) if std::env::var_os("PLEAMAR_FULL_REPAINT").is_some() => None,
@@ -2791,11 +2814,15 @@ impl Gpu {
         // share one, so there can be as many as the scene wants and they cost
         // the memory of one. The target is cleared once, at the start; the
         // following stretches paint on top of it.
+        #[cfg(target_os = "windows")]
+        let surface_view = l.retained.as_ref().map_or(&view, |canvas| &canvas.view);
+        #[cfg(not(target_os = "windows"))]
+        let surface_view = &view;
         let target = match &l.lens {
             // With a lens, on its canvas, which is then copied to the screen: one
             // has to know exactly what was painted to unmix what is behind.
             Some(lens) => lens.canvas(),
-            None => &view,
+            None => surface_view,
         };
         // Closed, it is cleared: transparent and nothing on top. Painting what
         // is in the draw list will not do, because it closes in the middle of
@@ -2844,6 +2871,11 @@ impl Gpu {
         pass_to(&mut encoder, target, &l.layer_group, &onto, keep, scissor, erase);
         if let Some(lens) = &mut l.lens {
             lens.copy_to(&mut encoder, frame_texture);
+        }
+        #[cfg(target_os = "windows")]
+        if let Some(canvas) = &mut l.retained {
+            canvas.copy_to(&mut encoder, frame_texture);
+            canvas.valid = true;
         }
         let t1 = timing.then(std::time::Instant::now);
         let commands = encoder.finish();
