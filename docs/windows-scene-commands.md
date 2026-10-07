@@ -1,8 +1,11 @@
 # Native scene commands
 
-This work integrates upstream `4a51a07`: named actions, wait/watch, hello,
-language 0.3 and explicit control roles, values and states. Windows validation
-of the final input-guard correction is in progress. The preceding
+This work integrates upstream `700bfb2` (0.2.27): named actions, wait/watch,
+hello, language 0.3, explicit control roles, values and states, and Linux's
+panel-cursor routing. The Windows x64/MSVC engine build, 213 unit tests,
+250 language checks (35 documentation scenes), isolated Luau checks and
+Marea profile/logic checks pass on the final `v5` sources. The native rerun
+of the input-guard correction is pending. The preceding
 shared-capture CI and preview.34 installer do not validate this integration.
 
 The Windows client supports `describe`, `describe json`, `press`, `hold`,
@@ -105,10 +108,51 @@ the native `report.json` files under `agent-integration-native-20261006-v3`,
 both failed-regression images were inspected. These are local evidence,
 not files needed by the installed application.
 
-Checks to complete before publication:
+The checked-in `tests/agent-changing-target.plm` reproduces both cases. On a
+test display, launch it with the native executable and `--screen` set to that
+display. From a second PowerShell terminal:
 
-- Run the complete engine and WM test suites with default Luau, including the
-  pipe concurrency, Unicode, cancellation, saturation and shutdown regressions.
+```powershell
+pleamar --say agent-changing-target 'type query Original'
+pleamar --say agent-changing-target 'press target'
+# Hover opens the person-only overlay. The press must be rejected.
+pleamar --say agent-changing-target 'get forbidden' # false
+pleamar --say agent-changing-target 'key !'
+# The covered field must reject the key, preserving Original.
+pleamar --say agent-changing-target 'get query'
+pleamar --say agent-changing-target 'quit'
+```
+
+The input-point and field-access unit regression passed in the 213-test `v5`
+engine run, including upstream 0.2.27/WM 0.2.28. It needs its final native rerun.
+At the latest attempt Windows reported only DISPLAY2,
+marked primary; the non-primary-only harness refused to start a scene. No
+primary-display substitute, physical input or installed-product acceptance
+is claimed.
+
+Final engine commands (default Luau enabled):
+
+```powershell
+cargo test --release --locked --features windows-notifications --lib -- --test-threads=2
+cargo build --release --locked --features windows-notifications --bins --example luau-test
+python scripts/run-tests.py --binary target/release/pleamar.exe
+python scripts/test-luau-runner.py --runner target/release/examples/luau-test.exe
+```
+
+These passed on 2026-10-07. The engine executable SHA-256 is
+`e7ac7ed2d07daff57da6c6ab144520016b7b179b2b0bddfb38bb6902b61aeaa7`.
+Forty-two opt-in library tests were skipped in the local checkout; they are
+not included in the 213 passed count. The complete Marea logic suite passed
+with that engine and the paired Luau runner. Windows/Linux CI of the exact
+published revisions and the paired installer are still pending.
+
+The matching WM CLI and console-free host also build with default Luau.
+Its CLI unit suite passed 20 tests, with nine desktop helpers skipped. Its
+executable SHA-256 is
+`d6e046081738cb0080bc8e4760d2846ee3652d65c902a5fe39b16a9abb6c5cae`.
+
+Remaining validation before declaring this integration accepted:
+
 - Exercise named actions, concurrent wait/watch, Luau and reload through a
   real passive scene on the secondary monitor; inspect the captured result.
 - Validate WM scene discovery and routing, including ambiguous identities.

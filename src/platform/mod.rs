@@ -590,13 +590,22 @@ pub enum CursorTrip {
     Nowhere,
 }
 
+/// Where the agent's cursor is sent: this program's window, in the pixels of
+/// its picture; or one of its surfaces that is no window (a panel), of that
+/// size, in its units.
+#[derive(Clone, Copy, Debug)]
+pub enum CursorOn {
+    Window,
+    Panel(u32, u32),
+}
+
 /// The agent's own cursor of the session (pleamar-wm, `cua-inject v1`), glided
-/// to (x, y) of this program's window, in the pixels of its picture: whoever
+/// to (x, y) of this program's window or panel: whoever
 /// watches sees it reach what it is about to press before it is pressed. Fast,
 /// as a decided hand: 60 to 180 ms by how far it goes; `glide: false`, at once
 /// (the steps of a drag, which already come one by one).
 #[cfg(unix)]
-pub fn agent_cursor_to(x: f32, y: f32, glide: bool) -> std::sync::Arc<std::sync::Mutex<CursorTrip>> {
+pub fn agent_cursor_to(on: CursorOn, x: f32, y: f32, glide: bool) -> std::sync::Arc<std::sync::Mutex<CursorTrip>> {
     use std::io::{BufRead, BufReader, Write};
     let trip = std::sync::Arc::new(std::sync::Mutex::new(CursorTrip::Going));
     let set = trip.clone();
@@ -616,12 +625,20 @@ pub fn agent_cursor_to(x: f32, y: f32, glide: bool) -> std::sync::Arc<std::sync:
             return end(CursorTrip::Nowhere);
         }
         let me = std::process::id();
+        // The same hands either way: on a window by its process, on a panel by its size too.
+        let to = |px: f32, py: f32| match on {
+            CursorOn::Window => format!("m root:{me} 0 {px:.1} {py:.1}"),
+            CursorOn::Panel(w, h) => format!("M {me} {w} {h} 0 {px:.1} {py:.1}"),
+        };
         if !glide {
-            let reply = say(&format!("m root:{me} 0 {x:.1} {y:.1}"));
+            let reply = say(&to(x, y));
             return end(if reply.as_deref() == Some("err stopped-by-user") { CursorTrip::Stopped } else { CursorTrip::Arrived });
         }
         let nums = |r: Option<String>, head: &str| -> Option<Vec<f32>> { r?.strip_prefix(head).map(|v| v.split_whitespace().filter_map(|n| n.parse().ok()).collect()) };
-        let (at, rect) = (nums(say("p 0"), "at "), nums(say(&format!("r {me}")), "rect "));
+        let (at, rect) = match on {
+            CursorOn::Window => (nums(say("p 0"), "at "), nums(say(&format!("r {me}")), "rect ")),
+            CursorOn::Panel(..) => (None, None),
+        };
         // From where it is if that is on this window; else from a little before.
         let from = match (at.filter(|a| a.len() >= 2), rect.filter(|r| r.len() >= 4)) {
             (Some(a), Some(r)) if a[0] >= r[0] && a[1] >= r[1] && a[0] < r[0] + r[2] && a[1] < r[1] + r[3] => (a[0] - r[0], a[1] - r[1]),
@@ -633,7 +650,7 @@ pub fn agent_cursor_to(x: f32, y: f32, glide: bool) -> std::sync::Arc<std::sync:
         for k in 1..=steps {
             let t = k as f32 / steps as f32;
             let e = t * t * (3.0 - 2.0 * t);
-            let reply = say(&format!("m root:{me} 0 {:.1} {:.1}", from.0 + (x - from.0) * e, from.1 + (y - from.1) * e));
+            let reply = say(&to(from.0 + (x - from.0) * e, from.1 + (y - from.1) * e));
             if reply.as_deref() == Some("err stopped-by-user") {
                 return end(CursorTrip::Stopped);
             }
@@ -647,7 +664,7 @@ pub fn agent_cursor_to(x: f32, y: f32, glide: bool) -> std::sync::Arc<std::sync:
 }
 
 #[cfg(not(unix))]
-pub fn agent_cursor_to(_: f32, _: f32, _: bool) -> std::sync::Arc<std::sync::Mutex<CursorTrip>> {
+pub fn agent_cursor_to(_: CursorOn, _: f32, _: f32, _: bool) -> std::sync::Arc<std::sync::Mutex<CursorTrip>> {
     std::sync::Arc::new(std::sync::Mutex::new(CursorTrip::Nowhere))
 }
 

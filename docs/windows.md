@@ -5,7 +5,13 @@ enabled by default and is built from source. WSL, Wayland and Unix shell tools
 are not runtime requirements. Native interactive scenes have been validated;
 the limitations below still prevent full desktop-shell parity.
 
-Upstream 0.2.24 (`0efbcd9`) is integrated. Scene `include` parts, module reloads,
+Upstream 0.2.27 (`700bfb2`) is integrated. See [native scene commands](windows-scene-commands.md)
+for language 0.3 metadata, named actions, concurrent wait/watch, process
+identity checks, interaction guards and the exact validation limits. Final
+CI and native reruns of this integration are still pending; older results
+below identify earlier revisions.
+
+Scene `include` parts, module reloads,
 the grid hit-region correction and `PLEAMAR_GPU=high` are shared with Windows.
 Required modules are scoped to their scene and live VM; failed reloads retain
 the previous logic and keep failed dependencies repairable. Retired modules
@@ -42,7 +48,7 @@ or exit, independently of idle command-thread retirement. Pending callbacks
 remain valid until delivery; `kill` accepts spawned processes, not asynchronous
 service request identifiers.
 
-The current 0.2.24 revision passes 185 ordinary Windows library tests (39
+An earlier 0.2.24 revision passed 185 ordinary Windows library tests (39
 desktop helpers skipped in the local checkout), the release build with default
 Luau and 242 language checks, including 34 documentation scenes. The service
 regression visits 40 different families through real asynchronous error replies,
