@@ -138,7 +138,7 @@ fn source_data(text: &str) -> windows_core::Result<IDataObject> {
     }
     Ok(Data { offers }.into())
 }
-fn file_paths(text: &str) -> Option<Vec<String>> {
+pub(in crate::platform) fn file_paths(text: &str) -> Option<Vec<String>> {
     let paths: Vec<_> = text.lines().map(str::trim).filter(|v| !v.is_empty()).map(|v| {
         let path = if let Some(uri) = v.strip_prefix("file://") {
             let mut bytes = Vec::new();

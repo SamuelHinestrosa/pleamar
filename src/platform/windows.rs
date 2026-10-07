@@ -44,6 +44,7 @@ use windows::core::{BOOL, PCWSTR, w};
 
 #[path = "windows_drag.rs"]
 mod drag;
+pub(super) use drag::file_paths;
 #[path = "windows_popup.rs"]
 mod popup_position;
 pub fn start_drag(text: &str) -> bool { drag::queue(text) }

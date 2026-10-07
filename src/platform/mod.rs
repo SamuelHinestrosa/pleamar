@@ -1129,6 +1129,11 @@ pub fn shell_command(line: &str) -> std::process::Command {
     }
 }
 
+#[cfg(target_os = "windows")]
+pub(crate) fn dropped_file_paths(text: &str) -> Option<Vec<String>> {
+    windows::file_paths(text)
+}
+
 pub fn signal_child(child: &std::process::Child, signal: &str) -> Result<(), String> {
     #[cfg(target_os = "linux")]
     {

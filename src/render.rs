@@ -333,6 +333,7 @@ fn nest_places(scene: &Scene, facts: &mut [f32], texts: &mut [String], to_logic:
 }
 
 /// `%20` and the rest of a file URI, back to the bytes they stand for.
+#[cfg(not(target_os = "windows"))]
 fn percent_decode(s: &str) -> String {
     let b = s.as_bytes();
     let mut out = Vec::with_capacity(b.len());
@@ -2718,12 +2719,20 @@ pub fn run(
                             desks.grow(n.max);
                             if let Some(item) = desks.items[screen].get(k as usize).cloned() {
                                 let mine: Vec<usize> = desks.here(screen, &nest_screens).into_iter().filter(|w| desks.of_item(*w, &item)).collect();
-                                // Files dropped on it: opened with it (one `sh -c`, each path quoted).
+                                // Native Windows programs receive file arguments, never shell code.
                                 if what == crate::scene::DockAction::OpenDrop {
+                                    #[cfg(target_os = "windows")]
+                                    let paths: Vec<String> = drops.iter().filter_map(|(_, d)| crate::platform::dropped_file_paths(d)).flatten().collect();
+                                    #[cfg(not(target_os = "windows"))]
                                     let paths: Vec<String> = drops.iter().flat_map(|(_, d)| d.lines().map(str::trim).filter_map(|l| l.strip_prefix("file://")).map(percent_decode).collect::<Vec<_>>()).collect();
                                     if !paths.is_empty() && !item.exec.is_empty() {
+                                        #[cfg(target_os = "windows")]
+                                        send(ToNest::OpenProgram { key: item.exec.clone(), files: paths });
+                                        #[cfg(not(target_os = "windows"))]
+                                        {
                                         let quoted: Vec<String> = paths.iter().map(|p| format!("'{}'", p.replace('\'', "'\\''"))).collect();
                                         send(ToNest::Launch(format!("{} {}", item.exec, quoted.join(" "))));
+                                        }
                                     }
                                 } else if what == crate::scene::DockAction::Pin || what == crate::scene::DockAction::Unpin {
                                     send(ToNest::Pin(item.key.clone(), what == crate::scene::DockAction::Pin));
@@ -2733,6 +2742,9 @@ pub fn run(
                                     }
                                 } else if mine.is_empty() {
                                     if !item.exec.is_empty() {
+                                        #[cfg(target_os = "windows")]
+                                        send(ToNest::OpenProgram { key: item.exec.clone(), files: Vec::new() });
+                                        #[cfg(not(target_os = "windows"))]
                                         send(ToNest::Launch(item.exec.clone()));
                                     }
                                 } else {

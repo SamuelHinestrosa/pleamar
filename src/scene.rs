@@ -2298,6 +2298,9 @@ pub enum ToNest {
     Visible(Vec<usize>),
     /// A program pinned to the dock (true) or unpinned: by its name.
     Pin(String, bool),
+    /// A native dock program and dropped files, kept separate from shell code.
+    #[cfg(target_os = "windows")]
+    OpenProgram { key: String, files: Vec<String> },
     Pointer { slot: usize, x: f64, y: f64 },
     PointerOut,
     /// evdev codes: 0x110 left, 0x111 right, 0x112 middle.
