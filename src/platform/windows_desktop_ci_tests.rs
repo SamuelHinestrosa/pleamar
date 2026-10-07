@@ -249,12 +249,14 @@ fn owned_input_fixture() {
             screen.work.left + 80, screen.work.top + 90, 560, 420, None, None, Some(instance.into()), None).unwrap();
         // A separate CLI acceptance case selects this owned modal explicitly.
         // The normal engine-input fixture keeps its original single-window setup.
-        let parent_window = if std::env::var("PLEAMAR_INPUT_TEST_DIALOG").as_deref() == Ok("1") {
+        let dialog_kind = std::env::var("PLEAMAR_INPUT_TEST_DIALOG").unwrap_or_default();
+        let parent_window = if matches!(dialog_kind.as_str(), "1" | "tool") {
             let owner = hwnd;
             SetWindowTextW(owner, &HSTRING::from(format!("Owned input parent {}", std::process::id()))).unwrap();
             let _ = ShowWindow(owner, SW_SHOWNOACTIVATE);
             let _ = EnableWindow(owner, false);
-            hwnd = CreateWindowExW(WS_EX_TOOLWINDOW, class, &title, WS_OVERLAPPEDWINDOW,
+            let style = if dialog_kind == "tool" { WS_EX_TOOLWINDOW } else { WS_EX_DLGMODALFRAME };
+            hwnd = CreateWindowExW(style, class, &title, WS_OVERLAPPEDWINDOW,
                 screen.work.left + 160, screen.work.top + 140, 560, 420,
                 Some(owner), None, Some(instance.into()), None).unwrap();
             Some(owner)

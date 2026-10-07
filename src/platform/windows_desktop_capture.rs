@@ -49,7 +49,9 @@ fn capture(hwnd: HWND, bounds: RECT) -> windows::core::Result<SysValue> { unsafe
     let failure = |message: &str| windows::core::Error::new(E_FAIL, message);
     if !crate::platform::windows_capture_winrt::supported()? { return Err(failure("Windows Graphics Capture is unavailable")); }
     let interop: IGraphicsCaptureItemInterop = windows::core::factory::<GraphicsCaptureItem, _>()?;
-    let item: GraphicsCaptureItem = interop.CreateForWindow(hwnd)?;
+    let item: GraphicsCaptureItem = interop.CreateForWindow(hwnd).map_err(|error| {
+        windows::core::Error::new(error.code(), format!("Windows Graphics Capture cannot capture this window (CreateForWindow): {error}"))
+    })?;
     let size = item.Size()?;
     if size.Width < 1 || size.Height < 1 || size.Width > 8192 || size.Height > 8192 || i64::from(size.Width) * i64::from(size.Height) > 16_777_216 {
         return Err(failure("window capture dimensions exceed the 16-megapixel limit"));
