@@ -32,6 +32,18 @@ jobs:
           ./scripts/test-windows-runtime.ps1 -Archive $archive
       - name: Unit tests with Luau
         run: cargo test --locked
+      - name: Reject named input when the rendered target becomes covered
+        if: runner.os == 'Windows'
+        env:
+          PLEAMAR_CI_AGENT_GUARD: '1'
+        run: python scripts/windows-agent-guard-ci.py --binary target/release/pleamar.exe --output "${{ runner.temp }}/agent guard ñ"
+      - name: Preserve native input guard images and commands
+        if: always() && runner.os == 'Windows'
+        uses: actions/upload-artifact@v4
+        with:
+          name: native-agent-input-guard
+          path: ${{ runner.temp }}/agent guard ñ
+          if-no-files-found: warn
       - name: Windows D3D11 to D3D12 shared-image pixels and lifetimes (no desktop input)
         if: runner.os == 'Windows'
         run: cargo test --locked --lib windows_texture::tests::shared_capture_reuses_native_pixels_without_cpu_upload -- --ignored --exact --nocapture

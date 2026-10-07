@@ -125,6 +125,15 @@ pleamar --say agent-changing-target 'get query'
 pleamar --say agent-changing-target 'quit'
 ```
 
+`scripts/windows-agent-guard-ci.py` exercises the same scene using the release
+build on a disposable GitHub-hosted Windows desktop. It checks that hover can
+expose a blocker before the press, rejects keys to the covered field, and
+restores named input after the blocker is removed. It retains the commands,
+trees and three screenshots and checks native blocker pixels and unchanged
+foreground. This guarded CI fixture refuses local execution; it injects no
+OS input. A workflow pass still needs screenshot inspection and does not
+establish physical-input or installed-product acceptance.
+
 The input-point and field-access unit regression passed in the 213-test `v5`
 engine run, including upstream 0.2.27/WM 0.2.28. It needs its final native rerun.
 At the latest attempt Windows reported only DISPLAY2,
