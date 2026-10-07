@@ -5,7 +5,8 @@ enabled by default and is built from source. WSL, Wayland and Unix shell tools
 are not runtime requirements. Native interactive scenes have been validated;
 the limitations below still prevent full desktop-shell parity.
 
-Upstream `4d355651` is integrated. Software-adapter retention, its native pixel
+Upstream `a248e1e2` is integrated, including press-position preservation when
+pointer movement arrives in the same rendering round. Software-adapter retention, its native pixel
 checks and measured limits are described in [Windows rendering](windows-rendering.md). See [native scene commands](windows-scene-commands.md)
 for language 0.3 metadata, named actions, concurrent wait/watch, process
 identity checks, interaction guards and the exact validation limits. Its
