@@ -8,6 +8,16 @@ use std::{marker::PhantomData, rc::Rc, sync::{Arc, atomic::{AtomicBool, Ordering
 /// child bounds applications that do not return from their GDI print handler.
 pub fn capture_helper(args: &[String]) -> Option<i32> { native::capture_helper(args) }
 
+/// Capture an already-validated companion window on an unused worker thread.
+/// A disabled owner is readable; it is never redirected to its modal dialog.
+/// No input catalog, permit, focus request or control endpoint is created.
+pub fn read_only_picture(handle: usize, process: u32, thread: u32) -> Result<Value, String> {
+    if lifetime::service_lifetime().is_some() || native::has_thread_state() {
+        return Err("read-only capture requires an unused worker thread".into());
+    }
+    native::read_only_picture(handle, process, thread)
+}
+
 /// Stops this session, including an operation currently waiting for capture/input.
 /// Cancellation is permanent; continuing requires a new session and fresh pictures.
 #[derive(Clone)]
@@ -81,9 +91,12 @@ mod tests {
     #[test]
     fn session_ownership_and_cancellation_never_create_or_focus_windows() {
         std::thread::spawn(|| {
+            assert!(read_only_picture(0, 0, 0).unwrap_err().contains("current visible"));
+            assert!(!native::has_thread_state());
             let mut first=Session::new().unwrap();
             let cancelled=first.cancellation();
             assert!(Session::new().is_err());
+            assert!(read_only_picture(0, 0, 0).unwrap_err().contains("unused worker"));
             assert!(first.action("type","1",&[Value::Text("must not type".into())]).unwrap_err().contains("list windows"));
             assert!(first.action("type_secret","1",&[]).unwrap_err().contains("unsupported"));
             cancelled.cancel();

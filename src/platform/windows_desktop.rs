@@ -50,6 +50,25 @@ fn active() -> bool {
 }
 fn check_active() -> Result<(), String> { if active() { Ok(()) } else { Err("desktop operation cancelled by reload".into()) } }
 
+pub(crate) fn read_only_picture(handle: usize, process: u32, thread: u32) -> Result<SysValue, String> {
+    check_active()?;
+    let _dpi = Dpi::physical()?;
+    let identity = Identity { hwnd: handle as isize, process, thread };
+    let hwnd = identity.window();
+    let visible = || identity.current() && unsafe { IsWindowVisible(hwnd).as_bool()
+        && !IsIconic(hwnd).as_bool() && GetAncestor(hwnd, GA_ROOT) == hwnd };
+    if process == 0 || thread == 0 || !visible() { return Err("capture needs a current visible top-level window".into()); }
+    let mut cloaked = 0u32;
+    unsafe { DwmGetWindowAttribute(hwnd, DWMWA_CLOAKED, &mut cloaked as *mut _ as _, size_of::<u32>() as u32) }
+        .map_err(|e| e.to_string())?;
+    if cloaked != 0 { return Err("the capture window is cloaked".into()); }
+    let frame = bounds(hwnd)?;
+    let picture = capture::window(hwnd, frame)?;
+    check_active()?;
+    if !visible() || bounds(hwnd)? != frame { return Err("window changed during capture; look again".into()); }
+    Ok(picture)
+}
+
 unsafe extern "system" fn destroyed(_: HWINEVENTHOOK, _: u32, hwnd: HWND, object: i32, child: i32, _: u32, _: u32) {
     if object != OBJID_WINDOW.0 || child != 0 { return; }
     // Win32/COM calls can reenter a hook. Defer catalog mutations until after
