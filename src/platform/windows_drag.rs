@@ -269,6 +269,10 @@ pub(super) fn revoke(hwnd: HWND) {
 }
 
 #[cfg(test)]
+#[path = "windows_drag_ole_tests.rs"]
+mod ole_tests;
+
+#[cfg(test)]
 mod tests {
     use super::*;
     #[test]
