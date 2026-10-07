@@ -1666,6 +1666,8 @@ pub struct Gpu {
     can_copy: bool,
     #[cfg(target_os = "windows")]
     retained_budget: windows_retained::Budget,
+    #[cfg(target_os = "windows")]
+    retained_enabled: bool,
     adapter: wgpu::Adapter,
     pub device: wgpu::Device,
     pub queue: wgpu::Queue,
@@ -1784,6 +1786,17 @@ impl Gpu {
             None => (wgpu::TextureFormat::Bgra8Unorm, wgpu::CompositeAlphaMode::Opaque, Some(wgpu::PresentMode::Mailbox)),
         };
         let info = adapter.get_info();
+        #[cfg(target_os = "windows")]
+        let retained_enabled = {
+            let setting = std::env::var("PLEAMAR_RETAINED_SURFACE").ok();
+            let enabled = windows_retained::enabled(info.device_type,setting.as_deref(),
+                std::env::var_os("PLEAMAR_FULL_REPAINT").is_some());
+            if timing_enabled() {
+                println!("timing · retained surface policy: {} · adapter: {:?} · enabled: {}",
+                    setting.as_deref().filter(|s| !s.is_empty()).unwrap_or("auto"),info.device_type,enabled);
+            }
+            enabled
+        };
         println!("render · {} ({:?}) · {:?} · {:?}", info.name, info.backend, format, alpha);
 
         let store = |label, floats: usize| {
@@ -1849,7 +1862,7 @@ impl Gpu {
         }).create_view(&Default::default());
         let no_backdrop_group = Self::build_backdrop_group(&device, &pipeline, &nothing, &nothing, &sampler);
         #[allow(unused_mut)]
-        let mut g = Gpu { lens, no_backdrop_group, can_copy, #[cfg(target_os = "windows")] retained_budget: Default::default(), adapter, device, queue, format, alpha, non_blocking, pipeline, particles, screen, multiply, erase, pipeline_layout, user_code: base, shapes_buffer, elements_buffer, points_buffer, stops_buffer, atlas, atlas_view, windows, windows_view, windows_dims: (1, 1, 1), #[cfg(target_os = "linux")] dmabufs: Default::default(), #[cfg(target_os = "linux")] copies: Default::default(), #[cfg(target_os = "linux")] yuv: None, #[cfg(target_os = "windows")] windows_copies: Default::default(), last_submission: Default::default(), render_modifiers: Vec::new(), sampler, capacity: (INITIAL_SHAPES * PER_SHAPE, INITIAL_ELEMENTS * PER_ELEMENT, INITIAL_POINTS, INITIAL_STOPS), limit, limit_warned: false, scene_group, no_layers_group };
+        let mut g = Gpu { lens, no_backdrop_group, can_copy, #[cfg(target_os = "windows")] retained_budget: Default::default(), #[cfg(target_os = "windows")] retained_enabled, adapter, device, queue, format, alpha, non_blocking, pipeline, particles, screen, multiply, erase, pipeline_layout, user_code: base, shapes_buffer, elements_buffer, points_buffer, stops_buffer, atlas, atlas_view, windows, windows_view, windows_dims: (1, 1, 1), #[cfg(target_os = "linux")] dmabufs: Default::default(), #[cfg(target_os = "linux")] copies: Default::default(), #[cfg(target_os = "linux")] yuv: None, #[cfg(target_os = "windows")] windows_copies: Default::default(), last_submission: Default::default(), render_modifiers: Vec::new(), sampler, capacity: (INITIAL_SHAPES * PER_SHAPE, INITIAL_ELEMENTS * PER_ELEMENT, INITIAL_POINTS, INITIAL_STOPS), limit, limit_warned: false, scene_group, no_layers_group };
         #[cfg(target_os = "linux")]
         if first.is_none() {
             g.render_modifiers = g.bgra_modifiers(ash::vk::FormatFeatureFlags::COLOR_ATTACHMENT);
@@ -2649,8 +2662,7 @@ impl Gpu {
         #[cfg(target_os = "windows")]
         let retain_surface = l.open && l.lens.is_none() && self.can_copy
             && matches!(&l.target, Target::Surface(_))
-            && std::env::var("PLEAMAR_RETAINED_SURFACE").as_deref() == Ok("1")
-            && std::env::var_os("PLEAMAR_FULL_REPAINT").is_none();
+            && self.retained_enabled;
         #[cfg(target_os = "windows")]
         let expanded_damage = damage.filter(|_| retain_surface)
             .map(|rects| windows_retained::effect_damage(d, rects));

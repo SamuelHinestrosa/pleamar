@@ -5,11 +5,12 @@ enabled by default and is built from source. WSL, Wayland and Unix shell tools
 are not runtime requirements. Native interactive scenes have been validated;
 the limitations below still prevent full desktop-shell parity.
 
-Upstream 0.2.27 (`700bfb2`) is integrated. See [native scene commands](windows-scene-commands.md)
+Upstream `4d355651` is integrated. Software-adapter retention, its native pixel
+checks and measured limits are described in [Windows rendering](windows-rendering.md). See [native scene commands](windows-scene-commands.md)
 for language 0.3 metadata, named actions, concurrent wait/watch, process
 identity checks, interaction guards and the exact validation limits. Its
-[Windows/Linux CI](https://github.com/SamuelHinestrosa/pleamar/actions/runs/37574606193)
-passed; the final native input-guard reruns remain pending. Older results
+[Windows/Linux CI](https://github.com/SamuelHinestrosa/pleamar/actions/runs/37615026071)
+passed at `0ac1fc5e`, including native input and popup placement fixtures. Older results
 below identify earlier revisions. The newer output-mapping work is described
 separately in [native window capture transport](windows-shared-capture.md).
 

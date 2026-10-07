@@ -66,9 +66,9 @@ def main():
     def info(handle):
         result=MonitorInfo();result.size=C.sizeof(result);assert u.GetMonitorInfoW(handle,C.byref(result));return result
     def expected(parent,popup):
-        scale=u.GetDpiForWindow(parent)/96;point=W.POINT(round(200*scale),round(120*scale));assert u.ClientToScreen(parent,C.byref(point))
+        scale=u.GetDpiForWindow(parent)/96;point=W.POINT(int(200*scale+.5),int(120*scale+.5));assert u.ClientToScreen(parent,C.byref(point))
         work=info(u.MonitorFromPoint(point,2)).work
-        scale=u.GetDpiForWindow(popup)/96;width=round(260*scale);height=round(150*scale)
+        scale=u.GetDpiForWindow(popup)/96;width=int(260*scale+.5);height=int(150*scale+.5)
         x=max(work.left,min(point.x,work.right-width));y=max(work.top,min(point.y,work.bottom-height))
         return [x,y,x+width,y+height],[work.left,work.top,work.right,work.bottom]
     def capture(label,popup):
@@ -87,14 +87,23 @@ def main():
                 return sum(min(pixels[(y*width+x)*4:(y*width+x)*4+3])>200 for y in range(20,50) for x in range(12,225))>80
             until(text_ready)
             work=info(u.MonitorFromWindow(parent,2)).work
-            moves=[('top-left',work.left-240,work.top-145),('bottom-right',work.right-160,work.bottom-110),
-                ('bottom-left',work.left-240,work.bottom-110),('top-right',work.right-160,work.top-145),
+            scale=u.GetDpiForWindow(parent)/96
+            anchor=W.POINT(int(200*scale+.5),int(120*scale+.5));assert u.ClientToScreen(parent,C.byref(anchor))
+            parent_rect=rect(parent);dx=anchor.x-parent_rect[0];dy=anchor.y-parent_rect[1]
+            left=work.left-dx-40;right=work.right-dx-40
+            top=work.top-dy-40;bottom=work.bottom-dy-40
+            moves=[('top-left',left,top),('bottom-right',right,bottom),
+                ('bottom-left',left,bottom),('top-right',right,top),
                 ('following',work.left+30,work.top+50)]
             for label,x,y in moves:
                 assert u.SetWindowPos(parent,None,x,y,360,240,0x0010|0x0004|0x0200)
                 until(lambda:rect(popup)==expected(parent,popup)[0])
                 target,area=expected(parent,popup);actual=rect(popup)
                 assert actual[0]>=area[0] and actual[1]>=area[1] and actual[2]<=area[2] and actual[3]<=area[3]
+                if label.startswith('top-'):assert actual[1]==area[1],(label,actual,area)
+                if label.startswith('bottom-'):assert actual[3]==area[3],(label,actual,area)
+                if label.endswith('-left'):assert actual[0]==area[0],(label,actual,area)
+                if label.endswith('-right'):assert actual[2]==area[2],(label,actual,area)
                 report['placements'].append(dict(stage=label,parent=rect(parent),popup=actual,expected=target,work_area=area,dpi=u.GetDpiForWindow(popup)))
                 time.sleep(.4);capture(label,popup)
             u.ShowWindow(parent,6)

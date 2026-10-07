@@ -1,6 +1,15 @@
 //! A bounded canvas for Windows swapchains, whose acquired buffer contents are unknown.
 use std::sync::{Arc, atomic::{AtomicU64, Ordering}};
 
+/// Only the measured software path opts in automatically; hardware stays unchanged.
+pub(super) fn enabled(adapter: wgpu::DeviceType, setting: Option<&str>, full_repaint: bool) -> bool {
+    !full_repaint && match setting {
+        Some("1") => true,
+        None | Some("") | Some("auto") => adapter == wgpu::DeviceType::Cpu,
+        _ => false,
+    }
+}
+
 const MAX_PIXELS: u64 = 8_388_608; // 32 MiB across every retained BGRA canvas.
 #[derive(Default)]
 pub(super) struct Budget(Arc<AtomicU64>);
@@ -96,6 +105,17 @@ pub(super) fn prepare(canvas: &mut Option<Canvas>, budget: &Budget, device: &wgp
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test] fn automatic_retention_only_selects_software_and_respects_overrides() {
+        use wgpu::DeviceType::*;
+        for adapter in [Cpu,DiscreteGpu,IntegratedGpu,VirtualGpu,Other] {
+            for setting in [None,Some(""),Some("auto")] {
+                assert_eq!(enabled(adapter,setting,false),adapter==Cpu);
+            }
+            assert!(enabled(adapter,Some("1"),false));
+            for setting in [Some("0"),Some("invalid")] { assert!(!enabled(adapter,setting,false)); }
+            for setting in [None,Some("auto"),Some("1"),Some("0")] { assert!(!enabled(adapter,setting,true)); }
+        }
+    }
     #[test] fn damage_rounds_outwards_clamps_and_unites_different_positions() {
         let view = [-100.0,20.0,700.0,620.0];
         assert_eq!(region(&[[-99.9,20.1,-89.9,30.1]],view,1.25,(1000,750)),Some([0,0,13,13]));

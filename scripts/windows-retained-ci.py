@@ -1,6 +1,6 @@
 """Compare native retained surfaces with complete repaint on disposable CI only."""
 from pathlib import Path
-import argparse, hashlib, importlib.util, json, os, subprocess, sys, time
+import argparse, hashlib, importlib.util, json, os, re, subprocess, sys, time
 
 spec = importlib.util.spec_from_file_location('owned_desktop', Path(__file__).with_name('windows-agent-guard-ci.py'))
 owned = importlib.util.module_from_spec(spec)
@@ -51,12 +51,13 @@ def main():
     desktop=owned.Desktop();pictures={};report=dict(passed=False,environment='github-hosted',physical_input=False,images=[],comparison=[])
     flags=subprocess.CREATE_NO_WINDOW|subprocess.BELOW_NORMAL_PRIORITY_CLASS
     try:
-        for mode in ['full','retained']:
+        for mode in ['full','retained','automatic']:
             folder=out/mode;folder.mkdir();scene=folder/'Canvas ñ.plm';scene.write_text(SOURCE,encoding='utf-8')
             env=dict(os.environ,PLEAMAR_SOCKET_DIR=f'retained-ci-{os.getpid()}-{mode}',PLEAMAR_NO_RELAUNCH='1',
                 PLEAMAR_TEST_WINDOWS='1',PLEAMAR_TIMING='1',PLEAMAR_RETAINED_SURFACE='1')
             if mode=='full':env['PLEAMAR_FULL_REPAINT']='1'
             else:env.pop('PLEAMAR_FULL_REPAINT',None)
+            if mode=='automatic':env.pop('PLEAMAR_RETAINED_SURFACE',None)
             def run(*arguments):
                 result=subprocess.run([str(binary),*arguments],env=env,capture_output=True,text=True,encoding='utf-8',errors='replace',timeout=15,creationflags=flags)
                 assert result.returncode==0 and not result.stdout.startswith('?'),result.stdout+result.stderr
@@ -100,13 +101,20 @@ def main():
             logs=(folder/'scene.log').read_text(encoding='utf-8')
             assert 'runtime error:' not in logs and 'first frame' in logs
             count=logs.count('retained surface allocated')
-            assert (count>=2 if mode=='retained' else count==0),(mode,count,logs[-1500:])
-        for stage in ['initial','moved','alpha','returned','reopened','resized']:
-            a,b=pictures[('full',stage)],pictures[('retained',stage)]
-            assert a[:2]==b[:2]
-            differences=[abs(a[2][i]-b[2][i]) for i in range(len(a[2])) if i%4!=3]
-            bad=sum(v>2 for v in differences);maximum=max(differences)
-            report['comparison'].append(dict(stage=stage,channels_over_two=bad,max_difference=maximum))
+            policy=re.findall(r'retained surface policy: (\S+) · adapter: (\w+) · enabled: (true|false)',logs)
+            assert policy and len(set(policy))==1,logs
+            setting,adapter,selected=policy[0]
+            expected=mode=='retained' or (mode=='automatic' and adapter=='Cpu')
+            assert (selected=='true')==expected,(mode,policy)
+            assert (count>=2 if expected else count==0),(mode,count,logs[-1500:])
+            report.setdefault('policy',{})[mode]=dict(setting=setting,adapter=adapter,enabled=expected,allocations=count)
+        for mode in ['retained','automatic']:
+            for stage in ['initial','moved','alpha','returned','reopened','resized']:
+                a,b=pictures[('full',stage)],pictures[(mode,stage)]
+                assert a[:2]==b[:2]
+                differences=[abs(a[2][i]-b[2][i]) for i in range(len(a[2])) if i%4!=3]
+                bad=sum(v>2 for v in differences);maximum=max(differences)
+                report['comparison'].append(dict(mode=mode,stage=stage,channels_over_two=bad,max_difference=maximum))
         assert all(c['channels_over_two']==0 for c in report['comparison']),report['comparison']
         report['passed']=True
     finally:
