@@ -25,6 +25,12 @@ fn capture_crop(frame: RECT, outer: RECT, width: i32, height: i32) -> Option<Cro
         } else { return None; };
     Some(Crop { x, y, width: fw as u32, height: fh as u32 })
 }
+fn content_crop(frame: RECT, outer: RECT, pool: (i32, i32), content: (i32, i32)) -> Option<Crop> {
+    // ContentSize describes the pixels in this frame, while the pool can retain
+    // its original, larger allocation. Never read that undefined padding.
+    if content.0 > pool.0 || content.1 > pool.1 { return None; }
+    capture_crop(frame, outer, content.0, content.1)
+}
 struct BoundedPng(Vec<u8>);
 impl Write for BoundedPng {
     fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
@@ -53,7 +59,7 @@ fn capture(hwnd: HWND, bounds: RECT) -> windows::core::Result<SysValue> { unsafe
     // Unknown dimensions must never be scaled into input coordinates.
     let mut outer = RECT::default();
     windows::Win32::UI::WindowsAndMessaging::GetWindowRect(hwnd, &mut outer)?;
-    let crop = capture_crop(bounds, outer, size.Width, size.Height)
+    capture_crop(bounds, outer, size.Width, size.Height)
         .ok_or_else(|| failure("capture and window frame coordinates differ; look again after the DPI or size change"))?;
     let (mut device, mut context) = (None, None);
     D3D11CreateDevice(None, D3D_DRIVER_TYPE_HARDWARE, HMODULE::default(), D3D11_CREATE_DEVICE_BGRA_SUPPORT,
@@ -77,11 +83,21 @@ fn capture(hwnd: HWND, bounds: RECT) -> windows::core::Result<SysValue> { unsafe
             Err(e) => return Err(e),
         }
     };
-    if frame.0.ContentSize()? != size { return Err(failure("the window resized during capture; look again")); }
+    let content = frame.0.ContentSize()?;
+    let crop = content_crop(bounds, outer, (size.Width, size.Height), (content.Width, content.Height))
+        .ok_or_else(|| failure(&format!("capture content does not match the window frame; look again (pool {}x{}, content {}x{})",
+            size.Width, size.Height, content.Width, content.Height)))?;
     let mut current_outer = RECT::default();
     windows::Win32::UI::WindowsAndMessaging::GetWindowRect(hwnd, &mut current_outer)?;
     if current_outer != outer { return Err(failure("the window frame changed during capture; look again")); }
     let source: ID3D11Texture2D = frame.0.Surface()?.cast::<IDirect3DDxgiInterfaceAccess>()?.GetInterface()?;
+    let mut description = D3D11_TEXTURE2D_DESC::default();
+    source.GetDesc(&mut description);
+    if description.Width != size.Width as u32 || description.Height != size.Height as u32
+        || description.Format != DXGI_FORMAT_B8G8R8A8_UNORM || description.SampleDesc.Count != 1
+        || description.MipLevels != 1 || description.ArraySize != 1 {
+        return Err(failure("unexpected window capture surface description"));
+    }
     let mut target = None;
     device.CreateTexture2D(&D3D11_TEXTURE2D_DESC { Width: size.Width as u32, Height: size.Height as u32, MipLevels: 1, ArraySize: 1,
         Format: DXGI_FORMAT_B8G8R8A8_UNORM, SampleDesc: DXGI_SAMPLE_DESC { Count: 1, Quality: 0 }, Usage: D3D11_USAGE_STAGING,
@@ -146,5 +162,19 @@ mod tests {
         assert_eq!(capture_crop(wide, wide, 640, 100), None);
         let empty = RECT::default();
         assert_eq!(capture_crop(empty, wide, 640, 100), None);
+    }
+    #[test] fn content_can_exclude_borders_while_the_pool_keeps_its_initial_size() {
+        let outer = RECT { left: 80, top: 90, right: 640, bottom: 510 };
+        let frame = RECT { left: 87, top: 90, right: 633, bottom: 503 };
+        assert_eq!(content_crop(frame, outer, (560, 420), (546, 413)),
+            Some(Crop { x: 0, y: 0, width: 546, height: 413 }));
+        assert_eq!(content_crop(frame, outer, (560, 420), (560, 420)),
+            Some(Crop { x: 7, y: 0, width: 546, height: 413 }));
+        // A larger content size would be clipped by the allocation, even if it
+        // otherwise matches the enclosing window. A smaller unknown image is
+        // not stretched to make an input coordinate map.
+        assert_eq!(content_crop(frame, outer, (546, 413), (560, 420)), None);
+        assert_eq!(content_crop(frame, outer, (560, 420), (545, 413)), None);
+        assert_eq!(content_crop(frame, outer, (560, 420), (0, 0)), None);
     }
 }
