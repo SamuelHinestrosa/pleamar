@@ -4,6 +4,10 @@ use base64::{Engine, engine::general_purpose::STANDARD};
 use std::{io::Write, time::{Duration, Instant}};
 use windows::{core::Interface, Graphics::{Capture::*, DirectX::{Direct3D11::IDirect3DDevice, DirectXPixelFormat}}, Win32::{Foundation::*, Graphics::{Direct3D::*, Direct3D11::*, Dxgi::{IDXGIDevice, Common::*}}, System::WinRT::{Direct3D11::*, Graphics::Capture::IGraphicsCaptureItemInterop}}};
 
+#[path = "windows_desktop_print.rs"]
+mod print;
+pub(crate) use print::helper;
+
 struct Session { pool: Direct3D11CaptureFramePool, session: GraphicsCaptureSession }
 impl Drop for Session { fn drop(&mut self) { let _ = self.session.Close(); let _ = self.pool.Close(); } }
 struct Frame(Direct3D11CaptureFrame);
@@ -47,11 +51,18 @@ pub(super) fn window(hwnd: HWND, bounds: RECT) -> Result<SysValue, String> {
 }
 fn capture(hwnd: HWND, bounds: RECT) -> windows::core::Result<SysValue> { unsafe {
     let failure = |message: &str| windows::core::Error::new(E_FAIL, message);
+    let mut affinity = 0;
+    if windows::Win32::UI::WindowsAndMessaging::GetWindowDisplayAffinity(hwnd, &mut affinity).is_ok() && affinity != 0 {
+        return Err(failure("the window excludes capture"));
+    }
     if !crate::platform::windows_capture_winrt::supported()? { return Err(failure("Windows Graphics Capture is unavailable")); }
     let interop: IGraphicsCaptureItemInterop = windows::core::factory::<GraphicsCaptureItem, _>()?;
-    let item: GraphicsCaptureItem = interop.CreateForWindow(hwnd).map_err(|error| {
-        windows::core::Error::new(error.code(), format!("Windows Graphics Capture cannot capture this window (CreateForWindow): {error}"))
-    })?;
+    let item: GraphicsCaptureItem = match interop.CreateForWindow(hwnd) {
+        Ok(item) => item,
+        Err(error) if error.code() == E_INVALIDARG => return print::window(hwnd, bounds)
+            .map_err(|message| failure(&format!("Windows Graphics Capture rejected this window (CreateForWindow: {error}); native print capture: {message}"))),
+        Err(error) => return Err(windows::core::Error::new(error.code(), format!("Windows Graphics Capture cannot capture this window (CreateForWindow): {error}"))),
+    };
     let size = item.Size()?;
     if size.Width < 1 || size.Height < 1 || size.Width > 8192 || size.Height > 8192 || i64::from(size.Width) * i64::from(size.Height) > 16_777_216 {
         return Err(failure("window capture dimensions exceed the 16-megapixel limit"));
@@ -133,6 +144,7 @@ fn capture(hwnd: HWND, bounds: RECT) -> windows::core::Result<SysValue> { unsafe
     drop(rgba);
     Ok(SysValue::Map(vec![
         ("width".into(), SysValue::Num(crop.width as f64)), ("height".into(), SysValue::Num(crop.height as f64)),
+        ("method".into(), SysValue::Text("windows-graphics-capture".into())),
         ("data".into(), SysValue::Text(STANDARD.encode(png.0))),
     ]))
 } }

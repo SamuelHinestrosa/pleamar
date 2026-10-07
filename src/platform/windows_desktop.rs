@@ -6,6 +6,7 @@ use windows::{core::BOOL, Win32::{Foundation::*, Graphics::{Dwm::*, Gdi::*}, Sys
 
 #[path = "windows_desktop_capture.rs"]
 mod capture;
+pub(crate) use capture::helper as capture_helper;
 #[path = "windows_desktop_input.rs"]
 mod input;
 #[path = "windows_desktop_move.rs"]
@@ -271,6 +272,7 @@ pub fn query(name: &str, args: &[SysValue]) -> Result<SysValue, String> {
         ("desktop.look", [value]) => {
             let epoch = EPOCH.load(Ordering::Acquire);
             let id = id(value)?;
+            CATALOG.with(|c| c.borrow_mut().shots.remove(&id));
             let target = target(&id)?;
             let image = capture::window(target.identity.window(), target.rect)?;
             pump();

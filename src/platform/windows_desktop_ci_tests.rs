@@ -98,6 +98,7 @@ struct Observed {
     offset_y: i32,
     cancelled: bool,
     last_focus: isize,
+    print_mode: u8,
 }
 thread_local! { static OBSERVED: RefCell<Observed> = RefCell::new(Observed { x: 20, y: 20, ..Observed::default() }); }
 
@@ -106,6 +107,10 @@ unsafe extern "system" fn input_procedure(hwnd: HWND, msg: u32, wparam: WPARAM, 
         let x = (lparam.0 as u16) as i16 as i32;
         let y = ((lparam.0 >> 16) as u16) as i16 as i32;
         match msg {
+            WM_PRINT if OBSERVED.with(|value| value.borrow().print_mode) != 0 => {
+                if OBSERVED.with(|value| value.borrow().print_mode) == 1 { std::thread::sleep(Duration::from_secs(6)); }
+                LRESULT(0)
+            }
             WM_ACTIVATE => {
                 if wparam.0 & 0xffff == WA_INACTIVE as usize {
                     let focus = GetFocus();
@@ -123,10 +128,10 @@ unsafe extern "system" fn input_procedure(hwnd: HWND, msg: u32, wparam: WPARAM, 
                 }
                 DefWindowProcW(hwnd, msg, wparam, lparam)
             }
-            WM_PAINT => {
+            WM_PAINT | WM_PRINTCLIENT => {
                 let observed = OBSERVED.with(|value| value.borrow().clone());
                 let mut paint = PAINTSTRUCT::default();
-                let dc = BeginPaint(hwnd, &mut paint);
+                let dc = if msg == WM_PAINT { BeginPaint(hwnd, &mut paint) } else { HDC(wparam.0 as _) };
                 let mut client = RECT::default();
                 let _ = GetClientRect(hwnd, &mut client);
                 let blue = CreateSolidBrush(COLORREF(0x00904020));
@@ -139,7 +144,7 @@ unsafe extern "system" fn input_procedure(hwnd: HWND, msg: u32, wparam: WPARAM, 
                 SetTextColor(dc, COLORREF(0x00ffffff));
                 let label: Vec<_> = format!("Owned input fixture · clicks {} · wheel {} / {} · drags {}", observed.clicks, observed.wheel, observed.horizontal_wheel, observed.drags).encode_utf16().collect();
                 let _ = TextOutW(dc, 20, 260, &label);
-                let _ = EndPaint(hwnd, &paint);
+                if msg == WM_PAINT { let _ = EndPaint(hwnd, &paint); }
                 LRESULT(0)
             }
             WM_COMMAND if wparam.0 & 0xffff == 42 && (wparam.0 >> 16) & 0xffff == 0 => {
@@ -284,6 +289,12 @@ fn owned_input_fixture() {
                     // The fixture currently owns focus. It may authorize only
                     // its test parent to simulate Marea's approval activation.
                     "allow-parent" => { AllowSetForegroundWindow(parent).unwrap(); }
+                    "checkpoint" => (),
+                    "print-hang" => OBSERVED.with(|value| value.borrow_mut().print_mode = 1),
+                    "print-refuse" => OBSERVED.with(|value| value.borrow_mut().print_mode = 2),
+                    "print-ok" => OBSERVED.with(|value| value.borrow_mut().print_mode = 0),
+                    "protect-capture" => { SetWindowDisplayAffinity(hwnd, WDA_EXCLUDEFROMCAPTURE).unwrap(); }
+                    "allow-capture" => { SetWindowDisplayAffinity(hwnd, WDA_NONE).unwrap(); }
                     "quit" => (),
                     _ => panic!("unknown input fixture command"),
                 }

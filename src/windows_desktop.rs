@@ -4,6 +4,10 @@ pub use crate::platform::SysValue as Value;
 use crate::platform::{windows_capture as lifetime, windows_desktop as native};
 use std::{marker::PhantomData, rc::Rc, sync::{Arc, atomic::{AtomicBool, Ordering}}};
 
+/// Companion entry points dispatch this before normal arguments. The windowless
+/// child bounds applications that do not return from their GDI print handler.
+pub fn capture_helper(args: &[String]) -> Option<i32> { native::capture_helper(args) }
+
 /// Stops this session, including an operation currently waiting for capture/input.
 /// Cancellation is permanent; continuing requires a new session and fresh pictures.
 #[derive(Clone)]

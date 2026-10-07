@@ -10,7 +10,7 @@ Read with `sys.ask_async` on the `desktop` service worker:
 | Query | Arguments | Result |
 | --- | --- | --- |
 | `desktop.windows` | `{}` | `{epoch, input="foreground", windows, monitors}` |
-| `desktop.look` | `{id}` | `{width, height, data}`; `data` is a base64 PNG |
+| `desktop.look` | `{id}` | `{width, height, data, method}`; `data` is a base64 PNG |
 
 Window ids are opaque decimal strings, not HWNDs or process ids. Each window
 reports its separate OS process id, program, title, physical box, monitor name,
@@ -101,6 +101,19 @@ axis, 16 megapixels and 5 MiB of encoded PNG, with a 3-second frame deadline.
 Images travel through the existing pipe without granting the agent filesystem
 access outside its sandbox. GPU frames/pools/sessions and readback buffers are
 released after each picture.
+
+When WGC rejects an HWND with `E_INVALIDARG`, the backend can request its
+GDI content using [`WM_PRINT`](https://learn.microsoft.com/en-us/windows/win32/gdi/wm-print).
+This is window-only: no desktop rectangle, owner substitution, style change or
+`PRF_OWNED` is used. A disposable child owns the bitmap/DC and is terminated
+after three seconds or cancellation. The target must explicitly allow capture,
+keep its identity/geometry and paint the whole requested area. Unpainted pixels,
+protection, timeout and unsupported applications produce errors and revoke the
+previous input permit. GPU-only applications need not support this GDI route.
+`method` distinguishes `windows-graphics-capture` from `window-print`.
+Companions using the library dispatch `windows_desktop::capture_helper` before
+their ordinary CLI options. Native modal/tool acceptance for this new fallback
+is pending; the earlier WGC-only runs failed on both kinds of owned window.
 
 The initial real-window regression exposed a second-capture access violation
 in a generated WinRT static factory cache after its apartment was retired.

@@ -239,6 +239,8 @@ pub fn run() {
 
 /// The same, with the options given instead of the command line's.
 pub fn run_with(options: Vec<String>) {
+    #[cfg(target_os = "windows")]
+    if let Some(code) = windows_desktop::capture_helper(&options) { std::process::exit(code); }
     let start_time = std::time::Instant::now();
     let a = args(options);
     if let Err(e) = platform::prepare_runtime() {
