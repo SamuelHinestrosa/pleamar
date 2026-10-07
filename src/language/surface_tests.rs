@@ -2,6 +2,50 @@ use super::read_with;
 use crate::scene::{Animated, Ctx};
 
 #[test]
+fn single_line_labels_reserve_their_line_before_the_font_worker_answers() {
+    use crate::scene::{Behavior, Instr};
+    let path = std::env::current_dir().unwrap().join("cold-labels.plm");
+    let source = r#"scene Labels {
+        surface { size: 300, 200 }
+        fact detail = true
+        column labels {
+            at: 20, 20
+            gap: 2
+            text "Bluetooth" { size: 13; lines: 1 }
+            text "Reading devices..." { size: 11.5; lines: 1; show: detail }
+            box after_labels { size: 10, 10; active: true }
+        }
+    }"#;
+    let scene = read_with(path.to_str().unwrap(), vec![(path.clone(), source.into())]).unwrap().0;
+    let mut props: Vec<_> = scene.props.iter().map(|(_, x, spring)| Animated::at(*x, *spring)).collect();
+    let mut facts: Vec<_> = scene.facts.iter().map(|(_, x)| *x).collect();
+    let detail = scene.facts.iter().position(|(name, _)| *name == "detail").unwrap();
+    let heights: Vec<_> = scene.instrs.iter().filter_map(|i| match i {
+        Instr::Text { measure: Some((_, h)), .. } => Some(*h), _ => None,
+    }).collect();
+    assert_eq!(heights.len(), 2);
+    let marker = scene.zones.iter().find(|z| z.id == "after_labels").unwrap();
+    for (shown, measured, expected) in [
+        (true, [0.0, 0.0], 20.0 + 16.9 + 2.0 + 14.95 + 2.0),
+        (false, [0.0, 0.0], 20.0 + 16.9 + 2.0),
+        (true, [24.0, 18.0], 20.0 + 24.0 + 2.0 + 18.0 + 2.0),
+    ] {
+        facts[detail] = if shown { 1.0 } else { 0.0 };
+        for (h, value) in heights.iter().zip(measured) { props[h.0 as usize].set(value); }
+        for _ in 0..scene.behaviors.len() {
+            for behavior in &scene.behaviors {
+                if let Behavior::Bind { prop, to } = behavior {
+                    let value = to.eval(Ctx { props: &props, facts: &facts });
+                    props[prop.0 as usize].set(value);
+                }
+            }
+        }
+        let bounds = marker.bounds(Ctx { props: &props, facts: &facts }).unwrap();
+        assert!((bounds[1] - expected).abs() < 0.01, "labels overlap while measurements are pending: {bounds:?}, expected y={expected}");
+    }
+}
+
+#[test]
 fn capture_visibility_belongs_to_each_surface_and_its_monitor_copies() {
     let path = std::env::current_dir().unwrap().join("capture-visibility.plm");
     let source = r#"scene Captures {

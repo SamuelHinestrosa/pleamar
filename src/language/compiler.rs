@@ -3081,7 +3081,12 @@ impl<'a> Compiler<'a> {
             None => self.imposed_measure.take(),
         };
         if let Some((w, h)) = measure {
-            self.last_size = Some((width.clone().unwrap_or(w.e()), h.e()));
+            // The font worker answers after composition. Reserve a known single
+            // line now, so its first glyphs cannot overlap the following label.
+            let height = if style.max_lines == Some(1) {
+                h.e().max(Expr::K(style.px * style.line_height))
+            } else { h.e() };
+            self.last_size = Some((width.clone().unwrap_or(w.e()), height));
         }
         // Its effects, if it has any: they go right before it.
         let gradient = match p.get_mut("gradient") {
