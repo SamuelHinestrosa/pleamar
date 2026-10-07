@@ -35,7 +35,10 @@ def title_ready(picture):
     # The opaque title plate prevents text behind this transparent window from
     # satisfying readiness before the fixture's own glyphs have been rendered.
     width,height,pixels=picture
-    if width<400 or height<65:return False
+    if width<610 or height<73:return False
+    # A newly created transparent HWND also exposes the desktop before its first
+    # frame. Require the plate itself, above the title's glyphs, before counting.
+    if any(pixels[(30*width+x)*4:(30*width+x)*4+3]!=b'\x27\x21\x17' for x in range(35,610)):return False
     return sum(min(pixels[(y*width+x)*4:(y*width+x)*4+3])>200
         for y in range(35,65) for x in range(40,400))>=200
 

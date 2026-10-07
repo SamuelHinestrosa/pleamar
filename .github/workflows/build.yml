@@ -34,7 +34,10 @@ jobs:
         if: runner.os == 'Windows'
         env:
           PLEAMAR_CI_RETAINED: '1'
-        run: python scripts/windows-retained-ci.py --binary target/release/pleamar.exe --output "${{ runner.temp }}/retained canvas ñ"
+        run: |
+          python scripts/test-windows-retained-readiness.py
+          if ($LASTEXITCODE -ne 0) { throw 'Retained readiness regression failed' }
+          python scripts/windows-retained-ci.py --binary target/release/pleamar.exe --output "${{ runner.temp }}/retained canvas ñ"
       - name: Preserve retained canvas reference and comparison images
         if: always() && runner.os == 'Windows'
         uses: actions/upload-artifact@v4
