@@ -70,6 +70,14 @@ the user selected. The backend does not attach to foreign input queues, raise pr
 or substitute unacknowledged PostMessage events for real input.
 See Microsoft's [SendInput contract](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-sendinput).
 
+Approval focus return now waits up to one second for Windows to finish its
+[asynchronous cross-queue activation](https://devblogs.microsoft.com/oldnewthing/20161118-00/?p=94745).
+It requests activation only once, observes the foreground window, and aborts
+on another window taking focus, cancellation, target destruction or held input.
+No keystrokes are inserted until the target is foreground. The disposable CI
+fixture reached Unicode selection/replacement and then exposed the former
+immediate focus check; the native rerun of this correction is still pending.
+
 Captures use [CreateForWindow](https://learn.microsoft.com/en-us/windows/win32/api/windows.graphics.capture.interop/nf-windows-graphics-capture-interop-igraphicscaptureiteminterop-createforwindow),
 not a desktop crop. An occluding application is not copied into the picture.
 Known modal dialogs route through their disabled owner; a new/ambiguous dialog

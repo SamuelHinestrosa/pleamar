@@ -393,7 +393,7 @@ fn native_positive_input() {
         let _ = picture(&id, &folder.join(format!("{label}.png")));
         let mut values = vec![SysValue::Text(id.clone())];
         values.extend_from_slice(args);
-        command(operation, &values).unwrap();
+        command(operation, &values).unwrap_or_else(|error| panic!("{label} {operation}: {error}"));
     };
     let click = |label: &str, x: i32, y: i32, button: &str| {
         let mut args = point(x,y).to_vec();

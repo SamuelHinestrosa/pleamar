@@ -23,8 +23,8 @@ fn fresh(id: &str, entry: &Entry) -> Result<(), String> {
         Ok(())
     })
 }
-fn keyboard_ready(entry: &Entry) -> Result<(), String> { unsafe {
-    check_active()?;
+fn idle_keyboard(entry: &Entry, epoch: u64) -> Result<(), String> { unsafe {
+    check_epoch(epoch)?;
     if !entry.identity.current() { return Err("the input window closed".into()); }
     if !IsWindowEnabled(entry.identity.window()).as_bool() { return Err("the window is blocked by a dialog; list and look again".into()); }
     // Do not release keys the user is holding, or mix their input with an
@@ -32,16 +32,42 @@ fn keyboard_ready(entry: &Entry) -> Result<(), String> { unsafe {
     for key in [VK_SHIFT, VK_CONTROL, VK_MENU, VK_LWIN, VK_RWIN, VK_LBUTTON, VK_RBUTTON, VK_MBUTTON, VK_XBUTTON1, VK_XBUTTON2, VK_ESCAPE] {
         if GetAsyncKeyState(key.0 as i32) < 0 { return Err("the user is holding a modifier, mouse button or Escape; input stopped".into()); }
     }
-    if GetForegroundWindow() != entry.identity.window() {
+    Ok(())
+} }
+fn wait_for_foreground(expected: isize, previous: isize, timeout: Duration,
+    mut observe: impl FnMut() -> Result<isize, String>, mut pause: impl FnMut()) -> Result<(), String> {
+    let started = Instant::now();
+    loop {
+        let current = observe()?;
+        if current == expected { return Ok(()); }
+        if current != 0 && current != previous {
+            return Err("another window took foreground focus; input stopped".into());
+        }
+        if started.elapsed() >= timeout { return Err("the target did not acquire foreground focus; no input was sent".into()); }
+        pause();
+    }
+}
+fn await_foreground(entry: &Entry, previous: HWND, epoch: u64) -> Result<(), String> {
+    // Cross-queue activation is asynchronous. Request it once, then observe;
+    // attaching input queues or repeatedly forcing focus would defeat this guard.
+    wait_for_foreground(entry.identity.hwnd, previous.0 as isize, Duration::from_secs(1), || {
+        idle_keyboard(entry, epoch)?;
+        Ok(unsafe { GetForegroundWindow() }.0 as isize)
+    }, || { pump(); std::thread::sleep(Duration::from_millis(5)); })
+}
+fn keyboard_ready(entry: &Entry, epoch: u64) -> Result<(), String> { unsafe {
+    idle_keyboard(entry, epoch)?;
+    let previous = GetForegroundWindow();
+    if previous != entry.identity.window() {
         let mut foreground_pid = 0;
-        GetWindowThreadProcessId(GetForegroundWindow(), Some(&mut foreground_pid));
+        GetWindowThreadProcessId(previous, Some(&mut foreground_pid));
         // Clicking the scene's approval card may activate its window. Return focus to
         // the explicitly approved target, but never steal it from a different
         // application the user has switched to while the model was thinking.
-        if foreground_pid != GetCurrentProcessId() || !SetForegroundWindow(entry.identity.window()).as_bool()
-            || GetForegroundWindow() != entry.identity.window() {
+        if foreground_pid != GetCurrentProcessId() || !SetForegroundWindow(entry.identity.window()).as_bool() {
             return Err("Windows input requires this window in the foreground; request desktop_focus first".into());
         }
+        await_foreground(entry, previous, epoch)?;
     }
     Ok(())
 } }
@@ -244,7 +270,7 @@ fn input_command(name: &str, args: &[SysValue], epoch: u64, secret: Option<&str>
         _ => return Err("unknown desktop action or invalid arguments".into()),
     }
     check_epoch(epoch)?;
-    keyboard_ready(&entry)?;
+    keyboard_ready(&entry, epoch)?;
     let current = target(&id)?;
     fresh(&id, &current)?;
     if !points.is_empty() { pointer_ready(&current, &points)?; }
@@ -258,7 +284,7 @@ fn input_command(name: &str, args: &[SysValue], epoch: u64, secret: Option<&str>
             send(&inputs[..1])?;
             await_cursor(*first)?;
             check_epoch(epoch)?;
-            keyboard_ready(&entry)?;
+            keyboard_ready(&entry, epoch)?;
             let current = target(&id)?;
             fresh(&id, &current)?;
             pointer_ready(&current, &points)?;
@@ -276,6 +302,24 @@ fn input_command(name: &str, args: &[SysValue], epoch: u64, secret: Option<&str>
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test] fn queued_focus_must_arrive_before_input() {
+        let mut observations = [10, 0, 20].into_iter();
+        let mut pauses = 0;
+        assert!(wait_for_foreground(20, 10, Duration::from_secs(1),
+            || Ok(observations.next().unwrap()), || pauses += 1).is_ok());
+        assert_eq!(pauses, 2);
+    }
+    #[test] fn focus_wait_refuses_interference_timeout_and_cancellation() {
+        let mut observations = [10, 30, 20].into_iter();
+        assert!(wait_for_foreground(20, 10, Duration::from_secs(1),
+            || Ok(observations.next().unwrap()), || {}).unwrap_err().contains("another window"));
+        assert_eq!(observations.next(), Some(20), "do not wait through a user's switch to another application");
+        assert!(wait_for_foreground(20, 10, Duration::ZERO, || Ok(10),
+            || panic!("deadline passed")).unwrap_err().contains("did not acquire"));
+        let cancelled = wait_for_foreground(20, 10, Duration::from_secs(1),
+            || Err("cancelled by reload".into()), || panic!("observation failed"));
+        assert_eq!(cancelled.unwrap_err(), "cancelled by reload");
+    }
     #[test] fn pointer_gestures_reject_confinement_to_another_display() {
         let secondary = POINT { x: -1600, y: 400 };
         let primary = RECT { left: 0, top: 0, right: 2560, bottom: 1440 };
