@@ -2,7 +2,7 @@
 //! application to paint can hang, so its DC and bitmap live in a disposable child.
 use super::*;
 use std::{io::Read, mem::size_of, os::windows::process::CommandExt, process::{Child, Command, Stdio}};
-use windows::Win32::{Graphics::{Dwm::*, Gdi::*}, UI::{HiDpi::*, WindowsAndMessaging::*}};
+use windows::Win32::{Graphics::{Dwm::*, Gdi::*}, Storage::Xps::{PrintWindow, PRINT_WINDOW_FLAGS}, UI::{HiDpi::*, WindowsAndMessaging::*}};
 
 const FLAG: &str = "--internal-window-print";
 const LIMIT: u64 = 5 * 1024 * 1024;
@@ -126,17 +126,18 @@ fn paint(args: &[String]) -> Result<Vec<u8>, String> { unsafe {
     let buffer = Buffer { dc, bitmap, previous, pixels: pixels.cast() };
     let pixels = std::slice::from_raw_parts_mut(buffer.pixels, width as usize * height as usize * 4);
     for pixel in pixels.chunks_exact_mut(4) { pixel.copy_from_slice(&MARKER); }
-    let flags = PRF_CHECKVISIBLE | PRF_NONCLIENT | PRF_CLIENT | PRF_ERASEBKGND | PRF_CHILDREN;
-    // WM_PRINT never asks for PRF_OWNED: only the selected HWND and its controls
-    // are allowed into this image. No desktop pixels or owner substitution.
-    SendMessageW(hwnd, WM_PRINT, Some(WPARAM(dc.0 as usize)), Some(LPARAM(flags as isize)));
+    // Windows must arrange drawing across processes. A raw WM_PRINT leaves
+    // the application unable to use this helper's memory DC.
+    if !PrintWindow(hwnd, dc, PRINT_WINDOW_FLAGS(0)).as_bool() {
+        return Err("Windows rejected the window print request".into());
+    }
     if !GdiFlush().as_bool() { return Err("window print pixels did not complete".into()); }
     validate(hwnd, expected, frame, outer)?;
     let mut rgba = Vec::with_capacity(crop.width as usize * crop.height as usize * 4);
     for y in 0..crop.height as usize {
         let start = ((y + crop.y) * width as usize + crop.x) * 4;
-        for pixel in pixels[start..start + crop.width as usize * 4].chunks_exact(4) {
-            if pixel == MARKER { return Err("the application did not paint the entire window; print capture is unavailable".into()); }
+        for (x, pixel) in pixels[start..start + crop.width as usize * 4].chunks_exact(4).enumerate() {
+            if pixel == MARKER { return Err(format!("the application did not paint the entire window (first missing pixel {x},{y}); print capture is unavailable")); }
             rgba.extend_from_slice(&[pixel[2], pixel[1], pixel[0], 255]);
         }
     }

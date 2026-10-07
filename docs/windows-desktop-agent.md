@@ -103,9 +103,10 @@ access outside its sandbox. GPU frames/pools/sessions and readback buffers are
 released after each picture.
 
 When WGC rejects an HWND with `E_INVALIDARG`, the backend can request its
-GDI content using [`WM_PRINT`](https://learn.microsoft.com/en-us/windows/win32/gdi/wm-print).
-This is window-only: no desktop rectangle, owner substitution, style change or
-`PRF_OWNED` is used. A disposable child owns the bitmap/DC and is terminated
+GDI content using [`PrintWindow`](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-printwindow).
+Windows arranges rendering into the helper's DC across processes; sending the
+raw `WM_PRINT` message did not paint the native dialog in the regression test.
+This is window-only: no desktop rectangle, owner substitution or style change. A disposable child owns the bitmap/DC and is terminated
 after three seconds or cancellation. The target must explicitly allow capture,
 keep its identity/geometry and paint the whole requested area. Unpainted pixels,
 protection, timeout and unsupported applications produce errors and revoke the
