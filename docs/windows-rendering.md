@@ -18,5 +18,6 @@ retention for comparison; `PLEAMAR_TIMING=1` records allocations and releases.
 
 The disposable Windows CI compares native screenshots against full repaint for
 movement, opacity, blurred groups, reopening and resize. It never sends OS input.
-The fixture refuses local execution. Passing its images does not establish
+The fixture waits for visible glyphs before comparing frames because system font
+discovery is asynchronous. It refuses local execution. Passing its images does not establish
 whole-Marea performance, mixed-DPI behavior or physical-GPU frame rates.

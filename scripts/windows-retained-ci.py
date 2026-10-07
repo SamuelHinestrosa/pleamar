@@ -29,6 +29,14 @@ SOURCE = '''scene RetainedSurfaceCI {
     }
 }'''
 
+def title_ready(picture):
+    # The first frame can precede asynchronous font discovery by several seconds.
+    # Only the white title can exceed this brightness over the dark fixture body.
+    width,height,pixels=picture
+    if width<400 or height<65:return False
+    return sum(min(pixels[(y*width+x)*4:(y*width+x)*4+3])>200
+        for y in range(35,65) for x in range(40,400))>=200
+
 def main():
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--binary',type=Path,required=True)
@@ -71,6 +79,7 @@ def main():
                     process=subprocess.Popen([str(binary),'--scene',str(scene),'--no-hud','--stall','0','--seconds','120'],env=env,stdout=log,stderr=log,creationflags=flags)
                     hwnd=until(lambda:desktop.window(process.pid,'pleamar surface 0 · '))
                     until(lambda:ask('get showing')=='true')
+                    until(lambda:title_ready(desktop.pixels(hwnd)))
                     for stage,x,fade in [('initial',90,.65),('moved',135,.65),('alpha',135,.45),('returned',90,.65),('reopened',135,.65),('resized',110,.65)]:
                         if stage=='reopened':
                             ask('fact showing false');time.sleep(.6);ask('fact showing true')
@@ -98,7 +107,7 @@ def main():
             differences=[abs(a[2][i]-b[2][i]) for i in range(len(a[2])) if i%4!=3]
             bad=sum(v>2 for v in differences);maximum=max(differences)
             report['comparison'].append(dict(stage=stage,channels_over_two=bad,max_difference=maximum))
-            assert bad==0,(stage,bad,maximum)
+        assert all(c['channels_over_two']==0 for c in report['comparison']),report['comparison']
         report['passed']=True
     finally:
         (out/'report.json').write_text(json.dumps(report,indent=2),encoding='utf-8')

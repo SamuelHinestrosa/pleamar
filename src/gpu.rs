@@ -2647,15 +2647,18 @@ impl Gpu {
             l.lens = Some(crate::lens::Lens::new(&self.device, self.format, l.px));
         }
         #[cfg(target_os = "windows")]
-        let expanded_damage = damage.map(|rects| windows_retained::effect_damage(d, rects));
+        let retain_surface = l.open && l.lens.is_none() && self.can_copy
+            && matches!(&l.target, Target::Surface(_))
+            && std::env::var("PLEAMAR_RETAINED_SURFACE").as_deref() == Ok("1")
+            && std::env::var_os("PLEAMAR_FULL_REPAINT").is_none();
         #[cfg(target_os = "windows")]
-        let damage = expanded_damage.as_deref();
+        let expanded_damage = damage.filter(|_| retain_surface)
+            .map(|rects| windows_retained::effect_damage(d, rects));
+        #[cfg(target_os = "windows")]
+        let damage = expanded_damage.as_deref().or(damage);
         #[cfg(target_os = "windows")]
         windows_retained::prepare(&mut l.retained, &self.retained_budget, &self.device, self.format,
-            l.px, l.view.bounds(), l.scale, damage,
-            l.open && l.lens.is_none() && self.can_copy && matches!(&l.target, Target::Surface(_))
-                && std::env::var("PLEAMAR_RETAINED_SURFACE").as_deref() == Ok("1")
-                && std::env::var_os("PLEAMAR_FULL_REPAINT").is_none());
+            l.px, l.view.bounds(), l.scale, damage, retain_surface);
         let mut u = uniforms.to_vec();
         u[3] = l.scale;
         u[128] = l.lens.as_ref().is_some_and(|x| x.ready) as u8 as f32;
