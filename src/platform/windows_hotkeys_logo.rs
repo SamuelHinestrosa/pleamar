@@ -34,8 +34,9 @@ pub(super) fn parse(value:&SysValue) -> Result<Option<Profile>,String> {
             } else {
                 let code=match part.as_str() {
                     "space"=>VK_SPACE.0,"tab"=>VK_TAB.0,"enter"|"return"=>VK_RETURN.0,"escape"|"esc"=>VK_ESCAPE.0,
+                    "left"=>VK_LEFT.0,"right"=>VK_RIGHT.0,"up"=>VK_UP.0,"down"=>VK_DOWN.0,
                     _ if part.len()==1&&part.as_bytes()[0].is_ascii_alphanumeric()=>part.as_bytes()[0].to_ascii_uppercase() as u16,
-                    _=>return Err("Windows-key actions use a letter, digit, Space, Tab, Enter or Escape".into()),
+                    _=>return Err("Windows-key actions use a letter, digit, arrow, Space, Tab, Enter or Escape".into()),
                 };
                 if key.replace(code).is_some() { return Err("a shortcut has exactly one non-modifier key".into()); }
             }
@@ -244,6 +245,22 @@ mod tests {
         assert_eq!(step(VK_SPACE,true),(false,None));assert_eq!(step(VK_SPACE,false),(false,None));
         step(VK_LWIN,true);step(VK_LSHIFT,true);assert_eq!(step(VK_A,true),(true,Some(2)));
         step(VK_A,false);step(VK_LSHIFT,false);assert_eq!(step(VK_LWIN,false),(true,None));
+    }
+    #[test]
+    fn arrow_navigation_is_registered_without_repeats_or_leaking_releases() {
+        let arrows=[("Left",VK_LEFT),("Right",VK_RIGHT),("Up",VK_UP),("Down",VK_DOWN)];
+        let p=parse(&SysValue::Map(arrows.iter().map(|(name,_)|
+            (format!("Win+{name}"),SysValue::Text("navigate".into()))).collect())).unwrap().unwrap();
+        let mut keys=Keys::new([false;256]);
+        for (i,(_,key)) in arrows.into_iter().enumerate() {
+            assert_eq!(keys.route(VK_LWIN.0 as u32,true,false,&p),(true,None));
+            assert_eq!(keys.route(key.0 as u32,true,false,&p),(true,Some(i)));
+            assert_eq!(keys.route(key.0 as u32,true,false,&p),(true,None));
+            assert_eq!(keys.route(VK_LWIN.0 as u32,false,false,&p),(true,None));
+            assert_eq!(keys.route(key.0 as u32,false,false,&p),(true,None));
+            assert_eq!(keys.route(key.0 as u32,true,false,&p),(false,None));
+            assert_eq!(keys.route(key.0 as u32,false,false,&p),(false,None));
+        }
     }
     #[test]
     fn reserved_unknown_chords_and_preexisting_keys_do_not_type_or_stick() {
