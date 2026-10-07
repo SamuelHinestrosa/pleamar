@@ -139,32 +139,20 @@ fn source_data(text: &str) -> windows_core::Result<IDataObject> {
     Ok(Data { offers }.into())
 }
 pub(in crate::platform) fn file_paths(text: &str) -> Option<Vec<String>> {
-    let paths: Vec<_> = text.lines().map(str::trim).filter(|v| !v.is_empty()).map(|v| {
-        let path = if let Some(uri) = v.strip_prefix("file://") {
-            let mut bytes = Vec::new();
-            let mut input = uri.as_bytes().iter().copied();
-            while let Some(c) = input.next() {
-                if c == b'%' {
-                    let hi = (input.next()? as char).to_digit(16)?;
-                    let lo = (input.next()? as char).to_digit(16)?;
-                    bytes.push((hi * 16 + lo) as u8);
-                } else { bytes.push(c); }
-            }
-            let value = String::from_utf8(bytes).ok()?;
-            if value.starts_with('/') { value.trim_start_matches('/').to_owned() }
-            else { format!("//{value}") }
-        } else { v.to_owned() };
-        let path = path.replace('/', "\\");
-        if path.contains('\0') || !std::path::Path::new(&path).is_absolute() { None } else { Some(path) }
+    if text.len() > MAX_BYTES || text.contains('\0') { return None; }
+    // URI lists may contain comments. Use the same localhost/UNC conversion
+    // as the rest of the platform instead of treating localhost as a share.
+    let paths: Vec<_> = text.lines().map(str::trim).filter(|v| !v.is_empty() && !v.starts_with('#')).map(|v| {
+        let path = if v.starts_with("file://") { crate::platform::paths::uri_to_path(v)? }
+            else { std::path::PathBuf::from(v.replace('/', "\\")) };
+        if !path.is_absolute() { return None; }
+        let path = path.to_str()?.to_owned();
+        (path.encode_utf16().count() <= 32767).then_some(path)
     }).collect::<Option<_>>()?;
     (!paths.is_empty() && paths.len() <= MAX_FILES).then_some(paths)
 }
 fn file_uri(path: &str) -> String {
-    let path = path.replace('\\', "/");
-    let encoded: String = path.bytes().map(|b| if b.is_ascii_alphanumeric() || b"/:-._~".contains(&b) {
-        (b as char).to_string()
-    } else { format!("%{b:02X}") }).collect();
-    if encoded.starts_with("//") { format!("file:{encoded}") } else { format!("file:///{encoded}") }
+    crate::platform::paths::path_to_uri(std::path::Path::new(path))
 }
 fn validate_file_list(bytes: &[u8]) -> windows_core::Result<()> {
     // Validate the bounded HGLOBAL before handing its DROPFILES header to Shell.
@@ -310,5 +298,21 @@ mod tests {
         assert!(validate_file_list(&malformed).is_err());
         let data: IDataObject = Data { offers: vec![(CF_HDROP, malformed.to_vec())] }.into();
         assert!(extract(&data, CF_HDROP).is_err());
+    }
+    #[test]
+    fn localhost_and_commented_uri_lists_offer_real_native_files() {
+        let _ole = Apartment::new().unwrap();
+        let text = "# source comment\r\nfile://localhost/C:/Images%20%C3%B1/%E6%B5%B7.txt\r\n\r\nfile://server/share/a%23b.txt\r\n";
+        let expected = vec![r"C:\Images ñ\海.txt".to_owned(), r"\\server\share\a#b.txt".to_owned()];
+        assert_eq!(file_paths(text), Some(expected.clone()));
+        let data = source_data(text).unwrap();
+        let received = extract(&data, CF_HDROP).unwrap();
+        assert_eq!(file_paths(&received), Some(expected));
+        assert_eq!(file_uri(r"\\?\C:\Images ñ\a b.txt"), "file:///C:/Images%20%C3%B1/a%20b.txt");
+        assert_eq!(file_uri(r"\\?\UNC\server\share\a.txt"), "file://server/share/a.txt");
+        for bad in ["# comments only", "file:///relative", "file://localhost/C:/bad%00.txt", "file:///C:/bad%FF.txt"] {
+            assert!(file_paths(bad).is_none(), "{bad:?}");
+        }
+        assert!(file_paths(&format!("C:\\{}", "🚀".repeat(16383))).is_none());
     }
 }
