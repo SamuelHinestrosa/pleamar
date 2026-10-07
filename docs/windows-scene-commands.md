@@ -134,6 +134,12 @@ foreground. This guarded CI fixture refuses local execution; it injects no
 OS input. A workflow pass still needs screenshot inspection and does not
 establish physical-input or installed-product acceptance.
 
+Named gestures schedule each pause from the preceding delivered input. A slow
+render frame may satisfy that pause; it must not restart the timer. This keeps
+the requested hold/click intervals while avoiding an extra frame of delay for
+every point of a drag. The correction is shared by both platforms; it leaves
+the eight-second command deadline and target/cancellation checks unchanged.
+
 The input-point and field-access unit regression passed in the 213-test `v5`
 engine run, including upstream 0.2.27/WM 0.2.28. It needs its final native rerun.
 At the latest attempt Windows reported only DISPLAY2,

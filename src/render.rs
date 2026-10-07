@@ -1722,7 +1722,7 @@ pub fn run(
                             }
                             _ => {
                                 a.hand = Some(a.from);
-                                a.steps.pop_front();
+                                a.advance(now);
                                 break;
                             }
                         },
@@ -1756,7 +1756,7 @@ pub fn run(
                         Step::Point => match crate::agent::reach_point(&scene, c, a.zone, &sight) {
                             Ok(Some(p)) => {
                                 a.from = p;
-                                a.steps.pop_front();
+                                a.advance(now);
                                 // The agent's cursor there first, in the pixels of the window's
                                 // picture; the hand comes in when it arrives, so what lights up
                                 // lights up under it.
@@ -1786,7 +1786,7 @@ pub fn run(
                                 let (on, at) = cursor_place(&scene, s, p);
                                 crate::platform::agent_cursor_to(on, at.0, at.1, false);
                             }
-                            a.steps.pop_front();
+                            a.advance(now);
                             break;
                         }
                         Step::Down(b) => {
@@ -1806,7 +1806,7 @@ pub fn run(
                                     ripple = Some((p, now));
                                 }
                             }
-                            a.steps.pop_front();
+                            a.advance(now);
                             break;
                         }
                         Step::Up(b) => {
@@ -1817,7 +1817,7 @@ pub fn run(
                             if b == 0 {
                                 finger_down = false;
                             }
-                            a.steps.pop_front();
+                            a.advance(now);
                             break;
                         }
                         Step::Wheel(n) => {
@@ -1826,13 +1826,13 @@ pub fn run(
                                 failed = Some(m); break;
                             }
                             wheel += n;
-                            a.steps.pop_front();
+                            a.advance(now);
                             break;
                         }
                         Step::Leave => {
                             a.hand = None;
                             pointer = real_pointer;
-                            a.steps.pop_front();
+                            a.advance(now);
                             break;
                         }
                         Step::Type(k, text) => {
@@ -1843,7 +1843,7 @@ pub fn run(
                             editing = Some(Editing { field: k, cursor: texts[k].len(), anchor: 0 });
                             last_key = now;
                             key_presses.push(if text.is_empty() { ("BackSpace".into(), None, Mods::default(), 0) } else { ("type".into(), Some(text), Mods::default(), 0) });
-                            a.steps.pop_front();
+                            a.advance(now);
                             break;
                         }
                         Step::Key(name, mods, typed) => {
@@ -1852,11 +1852,11 @@ pub fn run(
                                 failed = Some(m); break;
                             }
                             key_presses.push((name, typed, mods, 0));
-                            a.steps.pop_front();
+                            a.advance(now);
                             break;
                         }
                     }
-                    a.steps.pop_front();
+                    a.advance(now);
                 }
                 if let Some(p) = a.hand {
                     pointer = Some(p);
@@ -4967,6 +4967,10 @@ struct Acting {
 }
 
 impl Acting {
+    fn advance(&mut self, now: Instant) {
+        advance_action_step(&mut self.steps, now);
+    }
+
     /// The steps for an action, or why it cannot be done (with whom to tell).
     #[allow(clippy::too_many_arguments, clippy::result_large_err)]
     fn plan(scene: &Scene, c: Ctx, sight: &crate::agent::Sight, act: crate::agent::Act, reply: std::sync::mpsc::Sender<String>, live: std::sync::Weak<()>, texts: &[String], open: Vec<String>) -> Result<Acting, (std::sync::mpsc::Sender<String>, String)> {
@@ -5047,6 +5051,52 @@ impl Acting {
         };
         let said_name = name.split("#screen").next().unwrap_or(&name).to_owned();
         Ok(Acting { reply, live, down: None, zone, said_name, said: said + "\n", steps, hand: None, from: (0.0, 0.0), scrolled: false, before: crate::agent::before(scene, c, texts, open), events: Vec::new(), done: None, heard: String::new(), quiet: now })
+    }
+}
+
+fn advance_action_step(steps: &mut std::collections::VecDeque<Step>, now: Instant) {
+    steps.pop_front();
+    // A pause starts when its input was delivered, not on the next frame.
+    // Otherwise slow frames add a whole extra frame to each point of a drag.
+    if let Some(Step::Pause(duration)) = steps.front() {
+        steps[0] = Step::Wait(now + *duration);
+    }
+}
+
+#[cfg(test)]
+mod action_timing_tests {
+    use super::*;
+
+    #[test]
+    fn slow_frames_do_not_restart_the_pause_after_every_input() {
+        let start = Instant::now();
+        let mut steps = std::collections::VecDeque::from([
+            Step::Down(0), Step::Pause(Duration::from_millis(40)), Step::Move(0.0,-10.0),
+            Step::Pause(Duration::from_millis(40)), Step::Up(0),
+            Step::Pause(Duration::from_millis(60)), Step::Down(0),
+            Step::Pause(Duration::from_millis(600)), Step::Up(0), Step::Leave,
+        ]);
+        advance_action_step(&mut steps,start);
+        assert!(matches!(steps.front(),Some(Step::Wait(t)) if *t == start+Duration::from_millis(40)));
+        // The next frame is already late. It consumes the expired wait and
+        // performs one movement; the following pause belongs to that movement.
+        let frame = start+Duration::from_millis(350);
+        advance_action_step(&mut steps,frame);
+        assert!(matches!(steps.front(),Some(Step::Move(..))));
+        advance_action_step(&mut steps,frame);
+        assert!(matches!(steps.front(),Some(Step::Wait(t)) if *t == frame+Duration::from_millis(40)));
+        let frame = frame+Duration::from_millis(350);
+        advance_action_step(&mut steps,frame);
+        assert!(matches!(steps.front(),Some(Step::Up(0))));
+        advance_action_step(&mut steps,frame);
+        assert!(matches!(steps.front(),Some(Step::Wait(t)) if *t == frame+Duration::from_millis(60)));
+        let frame = frame+Duration::from_millis(350);
+        advance_action_step(&mut steps,frame);
+        assert!(matches!(steps.front(),Some(Step::Down(0))));
+        advance_action_step(&mut steps,frame);
+        // A long hold must still wait its full requested duration.
+        assert!(matches!(steps.front(),Some(Step::Wait(t)) if *t > frame+Duration::from_millis(350)
+            && *t == frame+Duration::from_millis(600)));
     }
 }
 
