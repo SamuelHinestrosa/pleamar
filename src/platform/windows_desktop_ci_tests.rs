@@ -98,7 +98,8 @@ struct Observed {
     offset_y: i32,
     cancelled: bool,
     last_focus: isize,
-    print_mode: u8,
+    stall_paint: bool,
+    paint_stalls: u32,
 }
 thread_local! { static OBSERVED: RefCell<Observed> = RefCell::new(Observed { x: 20, y: 20, ..Observed::default() }); }
 
@@ -106,11 +107,15 @@ unsafe extern "system" fn input_procedure(hwnd: HWND, msg: u32, wparam: WPARAM, 
     unsafe {
         let x = (lparam.0 as u16) as i16 as i32;
         let y = ((lparam.0 >> 16) as u16) as i16 as i32;
+        // PrintWindow can repaint with WM_PAINT without sending WM_PRINT.
+        // Stall the actual drawing path once, regardless of which it uses.
+        if matches!(msg, WM_PAINT | WM_PRINT | WM_PRINTCLIENT) && OBSERVED.with(|value| {
+            let mut value = value.borrow_mut();
+            let stall = value.stall_paint;
+            if stall { value.stall_paint = false; value.paint_stalls += 1; }
+            stall
+        }) { std::thread::sleep(Duration::from_secs(6)); }
         match msg {
-            WM_PRINT if OBSERVED.with(|value| value.borrow().print_mode) != 0 => {
-                if OBSERVED.with(|value| value.borrow().print_mode) == 1 { std::thread::sleep(Duration::from_secs(6)); }
-                LRESULT(0)
-            }
             WM_ACTIVATE => {
                 if wparam.0 & 0xffff == WA_INACTIVE as usize {
                     let focus = GetFocus();
@@ -290,9 +295,11 @@ fn owned_input_fixture() {
                     // its test parent to simulate Marea's approval activation.
                     "allow-parent" => { AllowSetForegroundWindow(parent).unwrap(); }
                     "checkpoint" => (),
-                    "print-hang" => OBSERVED.with(|value| value.borrow_mut().print_mode = 1),
-                    "print-refuse" => OBSERVED.with(|value| value.borrow_mut().print_mode = 2),
-                    "print-ok" => OBSERVED.with(|value| value.borrow_mut().print_mode = 0),
+                    "print-hang" => {
+                        OBSERVED.with(|value| value.borrow_mut().stall_paint = true);
+                        let _ = InvalidateRect(Some(hwnd), None, false);
+                    }
+                    "print-ok" => OBSERVED.with(|value| value.borrow_mut().stall_paint = false),
                     "protect-capture" => { SetWindowDisplayAffinity(hwnd, WDA_EXCLUDEFROMCAPTURE).unwrap(); }
                     "allow-capture" => { SetWindowDisplayAffinity(hwnd, WDA_NONE).unwrap(); }
                     "quit" => (),
@@ -319,7 +326,7 @@ fn owned_input_fixture() {
             let report = serde_json::json!({"ready":true,"command":control,"text":caption(edit),
                 "text_control":"RICHEDIT50W","selection":[selection_start,selection_end],"selected_text":selected,
                 "focus":if focus==edit {"edit"} else if focus==hwnd {"canvas"} else if focus.is_invalid() {"none"} else {"other child"},
-                "foreground":GetForegroundWindow()==hwnd,
+                "foreground":GetForegroundWindow()==hwnd,"paint_stalls":observed.paint_stalls,
                 "clicks":observed.clicks,"right_clicks":observed.right_clicks,"middle_clicks":observed.middle_clicks,
                 "wheel":observed.wheel,"horizontal_wheel":observed.horizontal_wheel,"drags":observed.drags,
                 "moves":observed.moves,"dragging":observed.dragging,"patch":[observed.x,observed.y],

@@ -108,13 +108,19 @@ Windows arranges rendering into the helper's DC across processes; sending the
 raw `WM_PRINT` message did not paint the native dialog in the regression test.
 This is window-only: no desktop rectangle, owner substitution or style change. A disposable child owns the bitmap/DC and is terminated
 after three seconds or cancellation. The target must explicitly allow capture,
-keep its identity/geometry and paint the whole requested area. Unpainted pixels,
-protection, timeout and unsupported applications produce errors and revoke the
-previous input permit. GPU-only applications need not support this GDI route.
+keep its identity/geometry and return a successful print. Untouched destination
+pixels, protection and timeout produce errors and revoke the previous input
+permit. PrintWindow can supply cached content; the destination marker does not
+prove that every application pixel was repainted. GPU-only applications can
+return incomplete or blank content through this GDI route.
 `method` distinguishes `windows-graphics-capture` from `window-print`.
 Companions using the library dispatch `windows_desktop::capture_helper` before
-their ordinary CLI options. Native modal/tool acceptance for this new fallback
-is pending; the earlier WGC-only runs failed on both kinds of owned window.
+their ordinary CLI options. The native modal capture and button click passed in
+[run 37638516551](https://github.com/SamuelHinestrosa/pleamar-wm/actions/runs/37638516551),
+with actual client pixels checked. The following negative test was invalid: it
+ignored WM_PRINT, yet Windows still returned the complete client image. The
+replacement stalls the actual paint path. Timeout/protection and tool-window
+acceptance remain pending until that revised end-to-end test passes.
 
 The initial real-window regression exposed a second-capture access violation
 in a generated WinRT static factory cache after its apartment was retired.
