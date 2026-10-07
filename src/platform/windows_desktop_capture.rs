@@ -10,6 +10,21 @@ struct Frame(Direct3D11CaptureFrame);
 impl Drop for Frame { fn drop(&mut self) { let _ = self.0.Close(); } }
 struct Mapped<'a>(&'a ID3D11DeviceContext, &'a ID3D11Texture2D);
 impl Drop for Mapped<'_> { fn drop(&mut self) { unsafe { self.0.Unmap(self.1, 0); } } }
+#[derive(Debug, PartialEq, Eq)]
+struct Crop { x: usize, y: usize, width: u32, height: u32 }
+fn capture_crop(frame: RECT, outer: RECT, width: i32, height: i32) -> Option<Crop> {
+    let fw = i64::from(frame.right) - i64::from(frame.left);
+    let fh = i64::from(frame.bottom) - i64::from(frame.top);
+    if width < 1 || height < 1 || fw < 1 || fh < 1
+        || frame.left < outer.left || frame.top < outer.top || frame.right > outer.right || frame.bottom > outer.bottom { return None; }
+    let (x, y) = if fw == i64::from(width) && fh == i64::from(height) { (0, 0) }
+        else if i64::from(outer.right) - i64::from(outer.left) == i64::from(width)
+            && i64::from(outer.bottom) - i64::from(outer.top) == i64::from(height) {
+            ((i64::from(frame.left) - i64::from(outer.left)) as usize,
+             (i64::from(frame.top) - i64::from(outer.top)) as usize)
+        } else { return None; };
+    Some(Crop { x, y, width: fw as u32, height: fh as u32 })
+}
 struct BoundedPng(Vec<u8>);
 impl Write for BoundedPng {
     fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
@@ -33,11 +48,13 @@ fn capture(hwnd: HWND, bounds: RECT) -> windows::core::Result<SysValue> { unsafe
     if size.Width < 1 || size.Height < 1 || size.Width > 8192 || size.Height > 8192 || i64::from(size.Width) * i64::from(size.Height) > 16_777_216 {
         return Err(failure("window capture dimensions exceed the 16-megapixel limit"));
     }
-    // WGC's image and DWM's physical frame must agree before coordinates can
-    // be used for input. Never quietly scale a point into a different target.
-    if size.Width != bounds.right - bounds.left || size.Height != bounds.bottom - bounds.top {
-        return Err(failure("capture and window frame coordinates differ; look again after the DPI or size change"));
-    }
+    // WGC can include GetWindowRect's invisible resize borders. Crop only that
+    // exact enclosing rectangle so every output pixel still maps to DWM's frame.
+    // Unknown dimensions must never be scaled into input coordinates.
+    let mut outer = RECT::default();
+    windows::Win32::UI::WindowsAndMessaging::GetWindowRect(hwnd, &mut outer)?;
+    let crop = capture_crop(bounds, outer, size.Width, size.Height)
+        .ok_or_else(|| failure("capture and window frame coordinates differ; look again after the DPI or size change"))?;
     let (mut device, mut context) = (None, None);
     D3D11CreateDevice(None, D3D_DRIVER_TYPE_HARDWARE, HMODULE::default(), D3D11_CREATE_DEVICE_BGRA_SUPPORT,
         None, D3D11_SDK_VERSION, Some(&mut device), None, Some(&mut context))?;
@@ -61,6 +78,9 @@ fn capture(hwnd: HWND, bounds: RECT) -> windows::core::Result<SysValue> { unsafe
         }
     };
     if frame.0.ContentSize()? != size { return Err(failure("the window resized during capture; look again")); }
+    let mut current_outer = RECT::default();
+    windows::Win32::UI::WindowsAndMessaging::GetWindowRect(hwnd, &mut current_outer)?;
+    if current_outer != outer { return Err(failure("the window frame changed during capture; look again")); }
     let source: ID3D11Texture2D = frame.0.Surface()?.cast::<IDirect3DDxgiInterfaceAccess>()?.GetInterface()?;
     let mut target = None;
     device.CreateTexture2D(&D3D11_TEXTURE2D_DESC { Width: size.Width as u32, Height: size.Height as u32, MipLevels: 1, ArraySize: 1,
@@ -78,11 +98,11 @@ fn capture(hwnd: HWND, bounds: RECT) -> windows::core::Result<SysValue> { unsafe
         }
     }
     let mapping = Mapped(&context, &target);
-    let stride = size.Width as usize * 4;
-    if mapped.pData.is_null() || mapped.RowPitch < stride as u32 { return Err(failure("invalid window capture row pitch")); }
-    let mut rgba = Vec::with_capacity(stride * size.Height as usize);
-    for y in 0..size.Height as usize {
-        let row = std::slice::from_raw_parts(mapped.pData.cast::<u8>().add(y * mapped.RowPitch as usize), stride);
+    let stride = crop.width as usize * 4;
+    if mapped.pData.is_null() || mapped.RowPitch < size.Width as u32 * 4 { return Err(failure("invalid window capture row pitch")); }
+    let mut rgba = Vec::with_capacity(stride * crop.height as usize);
+    for y in 0..crop.height as usize {
+        let row = std::slice::from_raw_parts(mapped.pData.cast::<u8>().add((y + crop.y) * mapped.RowPitch as usize + crop.x * 4), stride);
         for bgra in row.chunks_exact(4) { rgba.extend_from_slice(&[bgra[2], bgra[1], bgra[0], bgra[3]]); }
     }
     drop(mapping);
@@ -91,10 +111,40 @@ fn capture(hwnd: HWND, bounds: RECT) -> windows::core::Result<SysValue> { unsafe
     check_active().map_err(|e| failure(&e))?;
     use image::ImageEncoder;
     let mut png = BoundedPng(Vec::new());
-    image::codecs::png::PngEncoder::new(&mut png).write_image(&rgba, size.Width as u32, size.Height as u32, image::ExtendedColorType::Rgba8).map_err(|e| failure(&e.to_string()))?;
+    image::codecs::png::PngEncoder::new(&mut png).write_image(&rgba, crop.width, crop.height, image::ExtendedColorType::Rgba8).map_err(|e| failure(&e.to_string()))?;
     drop(rgba);
     Ok(SysValue::Map(vec![
-        ("width".into(), SysValue::Num(size.Width as f64)), ("height".into(), SysValue::Num(size.Height as f64)),
+        ("width".into(), SysValue::Num(crop.width as f64)), ("height".into(), SysValue::Num(crop.height as f64)),
         ("data".into(), SysValue::Text(STANDARD.encode(png.0))),
     ]))
 } }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test] fn ordinary_window_borders_are_cropped_without_scaling() {
+        // Actual Windows Server 2022 WGC/DWM geometry from the owned input CI.
+        let outer = RECT { left: 80, top: 90, right: 640, bottom: 510 };
+        let frame = RECT { left: 87, top: 90, right: 633, bottom: 503 };
+        assert_eq!(capture_crop(frame, outer, 560, 420), Some(Crop { x: 7, y: 0, width: 546, height: 413 }));
+        assert_eq!(capture_crop(frame, outer, 546, 413), Some(Crop { x: 0, y: 0, width: 546, height: 413 }));
+        for size in [(559, 420), (560, 419), (1120, 840), (0, 0)] {
+            assert_eq!(capture_crop(frame, outer, size.0, size.1), None);
+        }
+    }
+    #[test] fn negative_monitor_origins_and_asymmetric_dpi_borders_keep_pixel_coordinates() {
+        let outer = RECT { left: -1930, top: -20, right: -900, bottom: 810 };
+        let frame = RECT { left: -1920, top: -18, right: -910, bottom: 800 };
+        let crop = capture_crop(frame, outer, 1030, 830).unwrap();
+        assert_eq!(crop, Crop { x: 10, y: 2, width: 1010, height: 818 });
+        assert_eq!(outer.left + crop.x as i32 + 20, frame.left + 20);
+        assert_eq!(outer.top + crop.y as i32 + 40, frame.top + 40);
+        assert_eq!(capture_crop(outer, frame, 1030, 830), None);
+    }
+    #[test] fn invalid_or_overflowing_rectangles_never_make_a_crop() {
+        let wide = RECT { left: i32::MIN, top: 0, right: i32::MAX, bottom: 100 };
+        assert_eq!(capture_crop(wide, wide, 640, 100), None);
+        let empty = RECT::default();
+        assert_eq!(capture_crop(empty, wide, 640, 100), None);
+    }
+}
