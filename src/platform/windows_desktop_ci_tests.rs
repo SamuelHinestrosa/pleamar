@@ -97,6 +97,7 @@ struct Observed {
     offset_x: i32,
     offset_y: i32,
     cancelled: bool,
+    last_focus: isize,
 }
 thread_local! { static OBSERVED: RefCell<Observed> = RefCell::new(Observed { x: 20, y: 20, ..Observed::default() }); }
 
@@ -105,6 +106,23 @@ unsafe extern "system" fn input_procedure(hwnd: HWND, msg: u32, wparam: WPARAM, 
         let x = (lparam.0 as u16) as i16 as i32;
         let y = ((lparam.0 >> 16) as u16) as i16 as i32;
         match msg {
+            WM_ACTIVATE => {
+                if wparam.0 & 0xffff == WA_INACTIVE as usize {
+                    let focus = GetFocus();
+                    if !focus.is_invalid() && GetAncestor(focus, GA_ROOT) == hwnd {
+                        OBSERVED.with(|value| value.borrow_mut().last_focus = focus.0 as isize);
+                    }
+                } else {
+                    // A raw top-level Win32 window must restore its own focused
+                    // child, as ordinary application frameworks do on activation.
+                    let focus = HWND(OBSERVED.with(|value| value.borrow().last_focus) as _);
+                    if !focus.is_invalid() && IsWindow(Some(focus)).as_bool() && GetAncestor(focus, GA_ROOT) == hwnd {
+                        let _ = SetFocus(Some(focus));
+                        return LRESULT(0);
+                    }
+                }
+                DefWindowProcW(hwnd, msg, wparam, lparam)
+            }
             WM_PAINT => {
                 let observed = OBSERVED.with(|value| value.borrow().clone());
                 let mut paint = PAINTSTRUCT::default();
@@ -257,6 +275,10 @@ fn owned_input_fixture() {
                 }
                 previous_command = control.clone();
             }
+            let focus = GetFocus();
+            if !focus.is_invalid() && GetAncestor(focus, GA_ROOT) == hwnd {
+                OBSERVED.with(|value| value.borrow_mut().last_focus = focus.0 as isize);
+            }
             let observed = OBSERVED.with(|value| value.borrow().clone());
             let mut origin = POINT::default();
             assert!(ClientToScreen(hwnd, &mut origin).as_bool());
@@ -271,6 +293,8 @@ fn owned_input_fixture() {
             let selected = String::from_utf16(&selected[..length as usize]).unwrap();
             let report = serde_json::json!({"ready":true,"command":control,"text":caption(edit),
                 "text_control":"RICHEDIT50W","selection":[selection_start,selection_end],"selected_text":selected,
+                "focus":if focus==edit {"edit"} else if focus==hwnd {"canvas"} else if focus.is_invalid() {"none"} else {"other child"},
+                "foreground":GetForegroundWindow()==hwnd,
                 "clicks":observed.clicks,"right_clicks":observed.right_clicks,"middle_clicks":observed.middle_clicks,
                 "wheel":observed.wheel,"horizontal_wheel":observed.horizontal_wheel,"drags":observed.drags,
                 "moves":observed.moves,"dragging":observed.dragging,"patch":[observed.x,observed.y],
