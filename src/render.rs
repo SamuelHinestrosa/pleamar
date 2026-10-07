@@ -1006,6 +1006,20 @@ pub fn run(
                         assign_pace(g, &mut sheets, size, op.no_vsync);
                     }
                 }
+                #[cfg(target_os = "windows")]
+                ToRender::WindowsOutput(id, name, mhz) => {
+                    if let Some(l) = sheets.iter_mut().find(|l| l.id == id) {
+                        l.name = name;
+                        l.mhz = mhz;
+                        if let Some(surface) = scene.surfaces.get(l.view.surface)
+                            .filter(|s| s.name.is_empty() && l.view.popup.is_none()) {
+                            nest_text(&scene, &mut texts, &to_logic,
+                                &format!("screen.{}.name", surface.instance), l.name.clone());
+                        }
+                        update_screen_count(&scene, &mut facts, &sheets);
+                        if let Some(g) = &gpu { assign_pace(g, &mut sheets, size, op.no_vsync); }
+                    }
+                }
                 ToRender::Workshop(p) => {
                     letters.receive(*p);
                     // A finished layout can add glyphs without changing any

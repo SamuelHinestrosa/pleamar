@@ -2039,6 +2039,9 @@ pub enum ToRender {
     /// plugged in.
     Sheet(Box<crate::gpu::NewSheet>),
     SheetGone(u32),
+    /// A native window moved to another output, or its output changed refresh.
+    #[cfg(target_os = "windows")]
+    WindowsOutput(u32, String, i32),
     /// The compositor has already shown that sheet's last frame and wants another.
     Frame(u32),
     /// What was seen on screen behind a glass, with it on top.

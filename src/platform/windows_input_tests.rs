@@ -33,6 +33,7 @@ impl Probe {
             right_click_quits: false, hidden_from_captures: AtomicBool::new(false), is_window: true,
             placement: Mutex::new(None), appbar: AtomicBool::new(false), fullscreen: AtomicBool::new(false), gone: AtomicBool::new(false),
             surrogate: Mutex::new(None), monitor_name: String::new(), copy: 0, popup: None,
+            output: Mutex::new(Monitor { rect: RECT::default(), name: String::new(), scale: 1.0, mhz: 0 }),
             popup_armed: AtomicBool::new(false), released: AtomicBool::new(false), backdrop: OnceLock::new(),
         };
         configure(&mut state);
@@ -63,6 +64,49 @@ impl Probe {
 }
 impl Drop for Probe {
     fn drop(&mut self) { unsafe { let _ = DestroyWindow(self.hwnd); } }
+}
+
+#[test]
+fn native_window_output_updates_metadata_without_rewriting_placement_identity() {
+    let probe = Probe::configured(|s| { s.monitor_name = "launch-output".into(); });
+    let screen = monitor_details(unsafe { MonitorFromWindow(probe.hwnd, MONITOR_DEFAULTTONEAREST) }).unwrap();
+    probe._state.output.lock().unwrap().name = "old-output".into();
+    let foreground = unsafe { GetForegroundWindow() };
+    unsafe { SetWindowPos(probe.hwnd, None, screen.rect.left + 40, screen.rect.top + 40, 120, 100,
+        SWP_NOACTIVATE | SWP_NOZORDER | SWP_NOOWNERZORDER) }.unwrap();
+    let events = probe.drain();
+    assert!(events.iter().any(|event| matches!(event, ToRender::WindowsOutput(0, name, mhz)
+        if name == &screen.name && *mhz == screen.mhz)));
+    assert_eq!(probe._state.monitor_name, "launch-output");
+    assert_eq!(probe._state.output.lock().unwrap().rect, screen.rect);
+    assert_eq!(unsafe { GetForegroundWindow() }, foreground);
+    assert!(!unsafe { IsWindowVisible(probe.hwnd) }.as_bool());
+    // Model a refresh-rate notification without changing a display setting.
+    let changed = Monitor { mhz: screen.mhz + 1000, ..screen };
+    probe._state.output_changed(changed.clone());
+    assert!(matches!(probe.drain().as_slice(), [ToRender::WindowsOutput(0, _, mhz)] if *mhz == changed.mhz));
+    probe._state.output_changed(changed);
+    assert!(probe.drain().is_empty(), "unchanged reconciliation should not wake the renderer");
+}
+
+#[test]
+fn native_decorated_desktop_position_uses_current_output_and_client_corner() {
+    let probe = Probe::configured(|s| { s.monitor_name = "launch-output".into(); });
+    let screen = monitor_details(unsafe { MonitorFromWindow(probe.hwnd, MONITOR_DEFAULTTONEAREST) }).unwrap();
+    unsafe { SetWindowLongPtrW(probe.hwnd, GWL_STYLE, WS_OVERLAPPEDWINDOW.0 as isize); }
+    unsafe { SetWindowPos(probe.hwnd, None, screen.rect.left + 30, screen.rect.top + 40, 240, 180,
+        SWP_FRAMECHANGED | SWP_NOACTIVATE | SWP_NOZORDER | SWP_NOOWNERZORDER) }.unwrap();
+    let mut client = POINT::default();
+    let mut outer = RECT::default();
+    assert!(unsafe { ClientToScreen(probe.hwnd, &mut client) }.as_bool());
+    unsafe { GetWindowRect(probe.hwnd, &mut outer) }.unwrap();
+    assert_ne!((client.x, client.y), (outer.left, outer.top));
+    let window = WindowsWindow(probe._state.clone());
+    let scale = probe._state.scale();
+    assert_eq!(window.desktop_place(), Some((screen.name,
+        (((client.x - screen.rect.left) as f32 / scale).round() as i32,
+         ((client.y - screen.rect.top) as f32 / scale).round() as i32))));
+    assert!(!unsafe { IsWindowVisible(probe.hwnd) }.as_bool());
 }
 
 #[test]
@@ -270,6 +314,7 @@ impl Topology {
                 state.which = which;
                 state.is_window = spec.window.is_some();
                 state.monitor_name = monitor.name.clone();
+                state.output = Mutex::new(monitor.clone());
                 state.copy = copy;
             });
             let state = probe._state.clone();

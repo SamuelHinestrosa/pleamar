@@ -54,6 +54,24 @@ Unit tests cover these mappings and DPI conversions. Native mixed-DPI movement,
 hotplug and the new multi-output example remain unverified; the following
 capture measurements predate this mapping change.
 
+Decorated pleamar windows retain their launch placement identity while tracking
+their current native output separately. A move publishes `ToRender::WindowsOutput`
+with the current name and refresh rate; the renderer updates the main copy's
+name and recalculates frame pacing. Refresh changes on an unchanged monitor
+use the existing topology reconciliation, without waking the renderer when
+the metadata is unchanged. A popup inherits its parent's current output.
+Desktop-relative positions use the current monitor and the client corner,
+excluding the native title bar and border. Hidden-window API regressions cover
+metadata publication and client coordinates; they do not establish physical
+mixed-DPI migration or visual correctness on multiple monitors.
+
+On 2026-10-07 the default-Luau Windows library suite passed 216 tests, with
+42 opt-in helpers skipped. The initial follow-up run found a topology fixture
+that did not initialize the new output cache like production creation; its
+initialization was corrected and its original removal assertion still passes.
+Both hidden-window metadata/client-position regressions passed. The real
+multi-monitor and frame-pacing walkthrough remains pending.
+
 ### Capture transport
 
 Windows x64/MSVC with default Luau was exercised on 2026-10-06. The engine's

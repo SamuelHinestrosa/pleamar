@@ -21,6 +21,7 @@ use windows::Win32::Graphics::Gdi::{
     HBRUSH, HDC, HMONITOR, MONITORINFO, MONITORINFOEXW, ScreenToClient, ClientToScreen,
     BeginPaint, EndPaint, FillRect, PAINTSTRUCT, GetStockObject, BLACK_BRUSH,
     CreateRectRgn, CombineRgn, RGN_OR, DeleteObject, SetWindowRgn,
+    MonitorFromWindow, MONITOR_DEFAULTTONEAREST,
 };
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::UI::HiDpi::{
@@ -97,7 +98,9 @@ struct WindowState {
     fullscreen: AtomicBool,
     gone: AtomicBool,
     surrogate: Mutex<Option<u16>>,
+    // Placement identity stays stable while a decorated window moves freely.
     monitor_name: String,
+    output: Mutex<Monitor>,
     copy: usize,
     popup: Option<usize>,
     popup_armed: AtomicBool,
@@ -106,6 +109,31 @@ struct WindowState {
 }
 
 impl WindowState {
+    fn output_changed(&self, monitor: Monitor) {
+        let mut output = self.output.lock().unwrap();
+        let changed = output.name != monitor.name || output.mhz != monitor.mhz;
+        *output = monitor;
+        if changed && !self.gone.load(Ordering::Relaxed) {
+            let _ = self.to_render.send(ToRender::WindowsOutput(self.id, output.name.clone(), output.mhz));
+        }
+    }
+
+    fn observe_output(&self) {
+        let handle = unsafe { MonitorFromWindow(self.hwnd(), MONITOR_DEFAULTTONEAREST) };
+        let mut info = MONITORINFOEXW::default();
+        info.monitorInfo.cbSize = size_of::<MONITORINFOEXW>() as u32;
+        if !unsafe { GetMonitorInfoW(handle, &mut info.monitorInfo) }.as_bool() { return; }
+        let end = info.szDevice.iter().position(|c| *c == 0).unwrap_or(info.szDevice.len());
+        let name = String::from_utf16_lossy(&info.szDevice[..end]);
+        {
+            let output = self.output.lock().unwrap();
+            if output.name == name && output.rect == info.monitorInfo.rcMonitor { return; }
+        }
+        // Query the refresh rate only when the output changes, not for each
+        // pixel of a drag. Reconciliation handles changes to the same output.
+        if let Some(monitor) = monitor_details(handle) { self.output_changed(monitor); }
+    }
+
     fn hwnd(&self) -> HWND {
         HWND(self.hwnd.load(Ordering::Relaxed) as *mut c_void)
     }
@@ -208,6 +236,14 @@ impl PlatformWindow for WindowsWindow {
 
     fn desktop_place(&self) -> Option<(String, (i32, i32))> {
         let e = &self.0;
+        if e.is_window {
+            let mut corner = POINT::default();
+            if !unsafe { ClientToScreen(e.hwnd(), &mut corner) }.as_bool() { return None; }
+            let output = e.output.lock().unwrap();
+            return Some((output.name.clone(),
+                (((corner.x - output.rect.left) as f32 / e.scale()).round() as i32,
+                 ((corner.y - output.rect.top) as f32 / e.scale()).round() as i32)));
+        }
         let placement = e.placement.lock().unwrap();
         let p = placement.as_ref()?;
         let mut r = RECT::default();
@@ -324,10 +360,15 @@ unsafe extern "system" fn enumerate_monitor(
     data: LPARAM,
 ) -> BOOL {
     let monitors = unsafe { &mut *(data.0 as *mut Vec<Monitor>) };
+    if let Some(monitor) = monitor_details(monitor) { monitors.push(monitor); }
+    BOOL(1)
+}
+
+fn monitor_details(monitor: HMONITOR) -> Option<Monitor> {
     let mut info = MONITORINFOEXW::default();
     info.monitorInfo.cbSize = size_of::<MONITORINFOEXW>() as u32;
     if !unsafe { GetMonitorInfoW(monitor, &mut info.monitorInfo as *mut MONITORINFO) }.as_bool() {
-        return BOOL(1);
+        return None;
     }
     let end = info
         .szDevice
@@ -350,13 +391,12 @@ unsafe extern "system" fn enumerate_monitor(
     } else {
         0
     };
-    monitors.push(Monitor {
+    Some(Monitor {
         rect: info.monitorInfo.rcMonitor,
         name,
         scale: monitor_scale(monitor),
         mhz: hz,
-    });
-    BOOL(1)
+    })
 }
 
 fn monitors() -> Vec<Monitor> {
@@ -750,6 +790,7 @@ unsafe extern "system" fn window_proc(
         unsafe { SHAppBarMessage(if msg == WM_ACTIVATE { ABM_ACTIVATE } else { ABM_WINDOWPOSCHANGED }, &mut data); }
     }
     match msg {
+        WM_WINDOWPOSCHANGED if e.is_window && hwnd == e.hwnd() => e.observe_output(),
         WM_WINDOWPOSCHANGED if !e.is_window && !RESTACKING.load(Ordering::Relaxed) => {
             let position = unsafe { &*(lparam.0 as *const WINDOWPOS) };
             if !position.flags.contains(SWP_NOZORDER) { RESTACK_PENDING.store(true, Ordering::Relaxed); }
@@ -1127,6 +1168,7 @@ fn create(
         gone: AtomicBool::new(false),
         surrogate: Mutex::new(None),
         monitor_name: monitor.name.clone(),
+        output: Mutex::new(monitor.clone()),
         copy,
         popup: popup.map(|p| p.0),
         popup_armed: AtomicBool::new(false),
@@ -1243,14 +1285,22 @@ fn create(
         unsafe { remove_appbar(&state); let _ = DestroyWindow(hwnd); }
         format!("wgpu could not create the DirectComposition surface: {e}")
     })?;
+    if is_window { state.observe_output(); }
+    let output = state.output.lock().unwrap().clone();
+    let scale = state.scale();
+    let mut client = RECT::default();
+    let logical_size = if is_window && unsafe { GetClientRect(hwnd, &mut client) }.is_ok() {
+        (((client.right - client.left) as f32 / scale).round().max(1.0) as u32,
+         ((client.bottom - client.top) as f32 / scale).round().max(1.0) as u32)
+    } else { logical_size };
     to_render.send(ToRender::Sheet(Box::new(gpu::NewSheet {
         id,
         target: gpu::Target::Surface(surface),
         window: Box::new(WindowsWindow(state.clone())),
-        scale: monitor.scale,
+        scale,
         size: logical_size,
-        mhz: monitor.mhz,
-        name: monitor.name.clone(),
+        mhz: output.mhz,
+        name: output.name,
         view: gpu::View {
             surface: which,
             popup: popup.map(|p| p.0),
@@ -1353,7 +1403,7 @@ fn run_event_loop_with_monitors(
                 let scale = parent.scale();
                 let mut corner = POINT { x: px(x, scale), y: px(y, scale) };
                 unsafe { let _ = ClientToScreen(parent.hwnd(), &mut corner); }
-                let monitor = Monitor { rect: RECT { left: corner.x, top: corner.y, right: corner.x + px(w, scale), bottom: corner.y + px(h, scale) }, name: parent.monitor_name.clone(), scale, mhz: 0 };
+                let monitor = Monitor { rect: RECT { left: corner.x, top: corner.y, right: corner.x + px(w, scale), bottom: corner.y + px(h, scale) }, name: parent.output.lock().unwrap().name.clone(), scale, mhz: 0 };
                 let spec = Surface { width: w.max(1) as u32, height: h.max(1) as u32, origin, anchor: SurfaceAnchor::TopLeft, right_click_quits: false, keyboard: Keyboard::OnDemand, hidden_from_captures: parent.hidden_from_captures.load(Ordering::Relaxed), ..Surface::default() };
                 match create(&spec, parent.which, &monitor, 0, next_id, module, &instance, &to_render, 0, Some((k, parent.hwnd()))) {
                     Ok(v) => { live.push(v); next_id += 1; }
@@ -1423,6 +1473,10 @@ fn reconcile_on_monitors(
     wanted: &[Surface], screens: &[Monitor], tx: &Sender<ToRender>, live: &mut Vec<Arc<WindowState>>,
     mut create_window: impl FnMut(&Surface, usize, &Monitor, usize) -> Result<Arc<WindowState>, String>,
 ) {
+    for v in live.iter().filter(|v| v.is_window && !v.gone.load(Ordering::Relaxed)) {
+        let name = v.output.lock().unwrap().name.clone();
+        if let Some(monitor) = screens.iter().find(|m| m.name == name) { v.output_changed(monitor.clone()); }
+    }
     for v in live.iter().filter(|v| !v.is_window && v.popup.is_none() && !v.gone.load(Ordering::Relaxed)) {
         if !screens.iter().enumerate().any(|(i, m)| m.name == v.monitor_name && wanted_on(&wanted[v.which], &m.name, i) > v.copy) { retire(v); }
     }
@@ -1436,6 +1490,7 @@ fn reconcile_on_monitors(
                     // A normal window follows the user's moves and WM_DPICHANGED;
                     // monitor reconciliation must not reset it to its launch scale.
                     if v.is_window { continue; }
+                    v.output_changed(monitor.clone());
                     let changed = v.placement.lock().unwrap().as_ref().is_some_and(|c| c.monitor != monitor.rect) || v.scale() != monitor.scale;
                     if changed {
                         if let Some(c) = v.placement.lock().unwrap().as_mut() { c.monitor = monitor.rect; }
