@@ -700,7 +700,17 @@ pub fn run(
                 !done
             });
         }
+        // A press, and the pointer moving on in the same round (a finger that
+        // presses and goes, a remote's hands that send both at once): the
+        // press is the zone's under where it was pressed, the moving and what
+        // follows it, the next round's.
+        let mut pressed = false;
         for m in incoming {
+            if pressed && matches!(m, ToRender::Pointer(_) | ToRender::Button(..) | ToRender::AgentButton(..)) {
+                held_back.push(m);
+                continue;
+            }
+            pressed |= matches!(m, ToRender::Button(_, true) | ToRender::AgentButton(_, true));
             match m {
                 // A reload that does not go through is shown on the surface, not only on
                 // a console that nobody may be looking at. It is composed
