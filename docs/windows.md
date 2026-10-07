@@ -7,9 +7,11 @@ the limitations below still prevent full desktop-shell parity.
 
 Upstream 0.2.27 (`700bfb2`) is integrated. See [native scene commands](windows-scene-commands.md)
 for language 0.3 metadata, named actions, concurrent wait/watch, process
-identity checks, interaction guards and the exact validation limits. Final
-CI and native reruns of this integration are still pending; older results
-below identify earlier revisions.
+identity checks, interaction guards and the exact validation limits. Its
+[Windows/Linux CI](https://github.com/SamuelHinestrosa/pleamar/actions/runs/37574606193)
+passed; the final native input-guard reruns remain pending. Older results
+below identify earlier revisions. The newer output-mapping work is described
+separately in [native window capture transport](windows-shared-capture.md).
 
 Scene `include` parts, module reloads,
 the grid hit-region correction and `PLEAMAR_GPU=high` are shared with Windows.

@@ -643,6 +643,8 @@ pub fn run(
     // Where each window was last told to be seen.
     let mut nest_shown: std::collections::HashMap<usize, (String, [i32; 4])> = Default::default();
     let mut nest_visible: Option<Vec<usize>> = None;
+    #[cfg(target_os = "windows")]
+    let mut nest_outputs: Option<Vec<(usize, String)>> = None;
     // Programs' buffers already destroyed that a window is still showing.
     #[cfg(target_os = "linux")]
     let mut nest_doomed: Vec<u64> = Vec::new();
@@ -889,6 +891,8 @@ pub fn run(
                         }
                         nest_size = (0, 0);
                         nest_visible = None;
+                        #[cfg(target_os = "windows")]
+                        { nest_outputs = None; }
                     }
                     // A window's zone is named like it: `win.3`, with the copy's mark if it has one.
                     nest_zones = scene
@@ -3214,6 +3218,15 @@ pub fn run(
             prof_c = c;
         }
         if nest.is_some() {
+            #[cfg(target_os = "windows")]
+            if let Some(send) = &nest {
+                let outputs = native_screen_copies(&scene, sheets.iter().filter(|s| s.view.popup.is_none())
+                    .map(|s| (s.view.surface, s.name.as_str())));
+                if nest_outputs.as_ref() != Some(&outputs) {
+                    send(ToNest::WindowsScreens(outputs.clone()));
+                    nest_outputs = Some(outputs);
+                }
+            }
             // What the windows drew, to the card; and where each one is in it.
             if let Some(g) = gpu.as_mut() {
                 #[cfg(target_os = "linux")]
@@ -4293,6 +4306,17 @@ pub fn run(
     }
 }
 
+#[cfg(target_os = "windows")]
+fn native_screen_copies<'a>(scene: &Scene, sheets: impl Iterator<Item = (usize, &'a str)>) -> Vec<(usize, String)> {
+    let mut copies: Vec<_> = sheets.filter_map(|(which, name)| {
+        let surface = scene.surfaces.get(which)?;
+        (surface.name.is_empty() && !name.is_empty()).then(|| (surface.instance, name.to_owned()))
+    }).collect();
+    copies.sort();
+    copies.dedup();
+    copies
+}
+
 fn publish_surface_size(surface: &Surface, props: &mut [Animated], size: (f32, f32)) {
     if let Some((w, h)) = surface.size_props {
         for (p, value) in [(w, size.0), (h, size.1)] {
@@ -4785,6 +4809,17 @@ mod cadence_tests {
 #[cfg(all(test, target_os = "windows"))]
 mod input_tests {
     use super::*;
+    #[test]
+    fn native_outputs_keep_scene_indices_across_enumeration_and_removal() {
+        let mut scene = Scene::default();
+        scene.surfaces = vec![Surface::default(), Surface { instance: 1, ..Surface::default() },
+            Surface { name: "notification".into(), ..Surface::default() }];
+        assert_eq!(native_screen_copies(&scene, [(1,"RIGHT"),(2,"OTHER"),(0,"LEFT"),(1,"RIGHT"),(9,"INVALID"),(0,"")].into_iter()),
+            vec![(0,"LEFT".into()),(1,"RIGHT".into())]);
+        // A disconnected first copy must not renumber the surviving second one.
+        assert_eq!(native_screen_copies(&scene, [(1,"RIGHT")].into_iter()),vec![(1,"RIGHT".into())]);
+        assert!(native_screen_copies(&scene, std::iter::empty()).is_empty());
+    }
     #[test]
     fn paste_uses_the_input_events_clipboard_snapshot() {
         let mut editing = Editing { field: 0, cursor: 3, anchor: 0 };

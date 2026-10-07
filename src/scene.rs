@@ -2282,6 +2282,10 @@ pub struct DmabufPlane {
 /// are in the window's own pixels, from its corner.
 #[derive(Debug)]
 pub enum ToNest {
+    /// The Windows scene's main copies: logical screen index and native output
+    /// name. Native enumeration order is not the scene's copy order.
+    #[cfg(target_os = "windows")]
+    WindowsScreens(Vec<(usize, String)>),
     /// The renderer's actual adapter/device, or a request for CPU fallback.
     #[cfg(target_os = "windows")]
     WindowsGpu(Option<crate::windows_texture::SharedDevice>),

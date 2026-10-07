@@ -37,6 +37,25 @@ redirected input, independent seats, or a complete Windows compositor.
 
 ## Validation
 
+### Scene output mapping
+
+The Windows renderer also sends `ToNest::WindowsScreens`: pairs of logical
+main-surface copy indices and their actual native output names. It republishes
+changed mappings, including an empty mapping and the first mapping after a
+scene reload. Named surfaces and popups do not participate. Providers must not
+infer these indices from the order returned by a native monitor enumeration.
+
+The companion WM uses this mapping for `--preview-monitor all` and keeps the
+single-source preview option, including previewing that source on a different
+display. Source dimensions use each window's current monitor DPI; a retained
+frame can update logical geometry through `PieceContent::Kept` without copying
+its pixels again. Removing output zero does not renumber surviving copy one.
+Unit tests cover these mappings and DPI conversions. Native mixed-DPI movement,
+hotplug and the new multi-output example remain unverified; the following
+capture measurements predate this mapping change.
+
+### Capture transport
+
 Windows x64/MSVC with default Luau was exercised on 2026-10-06. The engine's
 202 ordinary tests and the WM's 18 ordinary tests pass. The opt-in native
 `windows_texture::tests::shared_capture_reuses_native_pixels_without_cpu_upload`

@@ -5,8 +5,10 @@ hello, language 0.3, explicit control roles, values and states, and Linux's
 panel-cursor routing. The Windows x64/MSVC engine build, 213 unit tests,
 250 language checks (35 documentation scenes), isolated Luau checks and
 Marea profile/logic checks pass on the final `v5` sources. The native rerun
-of the input-guard correction is pending. The preceding
-shared-capture CI and preview.34 installer do not validate this integration.
+of the input-guard correction is pending. The matching
+[Windows/Linux CI](https://github.com/SamuelHinestrosa/pleamar/actions/runs/37574606193)
+and [preview.35 installer lifecycle](https://github.com/SamuelHinestrosa/marea-plm/actions/runs/37574647213)
+passed. They do not replace the pending native input-guard rerun.
 
 The Windows client supports `describe`, `describe json`, `press`, `hold`,
 `drag`, `wheel`, `type`, `key`, `wait`, `watch` and `hello`, alongside the
@@ -97,8 +99,8 @@ non-activating windows on non-primary `DISPLAY2`, at 125% scaling:
 Two further native regressions failed on `v3`: a person-only overlay opened
 between pointing and pressing received the press, and an already-focused
 field accepted a key after an overlay covered it. Their captures showed the
-unexpected effects. The final input guard addresses both; its build and native
-reruns must pass before publication.
+unexpected effects. The final input guard addresses both; its build passed,
+but its native reruns remain required before claiming acceptance.
 
 The local records are `agent-integration-build-20261006-v3.json`,
 `agent-language-20261006-v3.json`, `marea-agent-profile-20261007-v3a.json`, and
@@ -143,8 +145,14 @@ These passed on 2026-10-07. The engine executable SHA-256 is
 `e7ac7ed2d07daff57da6c6ab144520016b7b179b2b0bddfb38bb6902b61aeaa7`.
 Forty-two opt-in library tests were skipped in the local checkout; they are
 not included in the 213 passed count. The complete Marea logic suite passed
-with that engine and the paired Luau runner. Windows/Linux CI of the exact
-published revisions and the paired installer are still pending.
+with that engine and the paired Luau runner. The exact published revisions
+also passed [Windows/Linux CI](https://github.com/SamuelHinestrosa/pleamar/actions/runs/37574606193),
+[portable Linux regressions](https://github.com/SamuelHinestrosa/pleamar/actions/runs/37574606276)
+and [Marea logic](https://github.com/SamuelHinestrosa/marea-plm/actions/runs/37574645270).
+[Preview.35](https://github.com/SamuelHinestrosa/marea-plm/actions/runs/37574647213)
+passed its silent installer lifecycle and packaged WM supervision. It was
+downloaded and hash-verified, without installing it locally. These checks
+do not establish physical input or complete desktop acceptance.
 
 The matching WM CLI and console-free host also build with default Luau.
 Its CLI unit suite passed 20 tests, with nine desktop helpers skipped. Its
@@ -156,5 +164,5 @@ Remaining validation before declaring this integration accepted:
 - Exercise named actions, concurrent wait/watch, Luau and reload through a
   real passive scene on the secondary monitor; inspect the captured result.
 - Validate WM scene discovery and routing, including ambiguous identities.
-- Run the language/Luau checks and exact-head Windows/Linux CI. Rebuild the
-  paired installer only after those sources are ready.
+- Repeat the relevant language/Luau, Windows/Linux CI and paired installer
+  checks when subsequent source changes require them.
