@@ -3,6 +3,7 @@ use super::*;
 use std::{path::{Path, PathBuf}, process::{Child, Command}, os::windows::process::CommandExt};
 use windows::{core::{w, HSTRING}, Win32::System::LibraryLoader::{GetModuleHandleW, LoadLibraryExW, LOAD_LIBRARY_SEARCH_SYSTEM32}};
 const EM_GETSEL: u32 = 0x00b0;
+const EM_GETSELTEXT: u32 = WM_USER + 62;
 fn field<'a>(value: &'a SysValue, name: &str) -> &'a SysValue {
     let SysValue::Map(entries) = value else { panic!("expected a map") };
     &entries.iter().find(|(key, _)| key == name).unwrap().1
@@ -263,8 +264,13 @@ fn owned_input_fixture() {
             let (mut selection_start, mut selection_end) = (0u32, 0u32);
             SendMessageW(edit, EM_GETSEL, Some(WPARAM(&mut selection_start as *mut u32 as usize)),
                 Some(LPARAM(&mut selection_end as *mut u32 as isize)));
+            assert!(selection_start <= selection_end && selection_end <= 4096);
+            let mut selected = vec![0u16; (selection_end - selection_start) as usize + 1];
+            let length = SendMessageW(edit, EM_GETSELTEXT, Some(WPARAM(0)), Some(LPARAM(selected.as_mut_ptr() as isize))).0;
+            assert!(length >= 0 && (length as usize) < selected.len());
+            let selected = String::from_utf16(&selected[..length as usize]).unwrap();
             let report = serde_json::json!({"ready":true,"command":control,"text":caption(edit),
-                "text_control":"RICHEDIT50W","selection":[selection_start,selection_end],
+                "text_control":"RICHEDIT50W","selection":[selection_start,selection_end],"selected_text":selected,
                 "clicks":observed.clicks,"right_clicks":observed.right_clicks,"middle_clicks":observed.middle_clicks,
                 "wheel":observed.wheel,"horizontal_wheel":observed.horizontal_wheel,"drags":observed.drags,
                 "moves":observed.moves,"dragging":observed.dragging,"patch":[observed.x,observed.y],
@@ -403,7 +409,12 @@ fn native_positive_input() {
     action("04-backspace", "desktop.key", &[SysValue::Text("backspace".into())]);
     wait(|| state(&folder)["text"] == "Hola, España 🎵 日本");
     action("05-select", "desktop.hotkey", &[SysValue::Text("ctrl+a".into())]);
-    wait(|| state(&folder)["selection"] == serde_json::json!([0,"Hola, España 🎵 日本".encode_utf16().count()]));
+    // Rich Edit's full selection includes its final paragraph position; the
+    // selected text itself excludes that extra position. Verify the content.
+    wait(|| {
+        let current = state(&folder);
+        current["selection"][0] == 0 && current["selected_text"] == "Hola, España 🎵 日本"
+    });
     action("06-replace", "desktop.type", &[SysValue::Text("Nuevo: café ☕".into())]);
     wait(|| state(&folder)["text"] == "Nuevo: café ☕");
 
