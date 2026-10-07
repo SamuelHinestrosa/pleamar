@@ -8,6 +8,8 @@ use windows::{core::BOOL, Win32::{Foundation::*, Graphics::{Dwm::*, Gdi::*}, Sys
 mod capture;
 #[path = "windows_desktop_input.rs"]
 mod input;
+#[path = "windows_desktop_move.rs"]
+mod move_window;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct Identity { hwnd: isize, process: u32, thread: u32 }
@@ -24,7 +26,7 @@ struct Entry { identity: Identity, owner: isize, title: String, program: String,
 struct Shot { target: Identity, rect: RECT, created: Instant, epoch: u64 }
 static EPOCH: AtomicU64 = AtomicU64::new(1);
 #[derive(Default)]
-struct Catalog { entries: HashMap<String, Entry>, shots: HashMap<String, Shot>, hook: Option<Hook> }
+struct Catalog { entries: HashMap<String, Entry>, shots: HashMap<String, Shot>, monitors: Vec<Monitor>, hook: Option<Hook> }
 struct Hook(HWINEVENTHOOK);
 impl Drop for Hook { fn drop(&mut self) { unsafe { let _ = UnhookWinEvent(self.0); } } }
 thread_local! {
@@ -32,7 +34,7 @@ thread_local! {
     static DESTROYED: RefCell<Vec<isize>> = RefCell::default();
 }
 pub(super) fn has_thread_state() -> bool {
-    CATALOG.with(|catalog| { let catalog = catalog.borrow(); !catalog.entries.is_empty() || !catalog.shots.is_empty() })
+    CATALOG.with(|catalog| { let catalog = catalog.borrow(); !catalog.entries.is_empty() || !catalog.shots.is_empty() || !catalog.monitors.is_empty() })
 }
 struct Dpi(DPI_AWARENESS_CONTEXT);
 impl Dpi {
@@ -222,6 +224,7 @@ pub fn query(name: &str, args: &[SysValue]) -> Result<SysValue, String> {
         ("desktop.windows", []) => {
             refresh()?;
             let screens = monitors()?;
+            CATALOG.with(|catalog| catalog.borrow_mut().monitors = screens.clone());
             let list = CATALOG.with(|c| {
                 let c = c.borrow();
                 let mut list: Vec<_> = c.entries.iter().collect();
@@ -260,7 +263,7 @@ pub fn command(name: &str, args: &[SysValue]) -> Result<(), String> {
     if name == "desktop.cancel" && args.is_empty() { EPOCH.fetch_add(1, Ordering::AcqRel); return Ok(()); }
     let _dpi = prepare()?;
     if name == "desktop.done" && args.is_empty() {
-        CATALOG.with(|c| { let mut c = c.borrow_mut(); c.shots.clear(); c.entries.clear(); c.hook.take(); });
+        CATALOG.with(|c| { let mut c = c.borrow_mut(); c.shots.clear(); c.entries.clear(); c.monitors.clear(); c.hook.take(); });
         return Ok(());
     }
     let (epoch, args) = args.split_first().ok_or("desktop action requires the catalog epoch")?;

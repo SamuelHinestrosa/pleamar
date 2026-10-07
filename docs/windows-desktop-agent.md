@@ -15,7 +15,10 @@ Read with `sys.ask_async` on the `desktop` service worker:
 Window ids are opaque decimal strings, not HWNDs or process ids. Each window
 reports its separate OS process id, program, title, physical box, monitor name,
 focus, minimized state and known owner (`dialogof`). Monitor numbers refer to
-the current list, sorted by device name. Disconnected monitors are not usable.
+the last returned list, sorted by device name. A selected monitor keeps its
+device identity if another output disconnects; it is not reinterpreted as a
+different output at the same list index. Disconnected or geometrically changed
+destinations require a fresh catalog.
 The catalog lives with the service worker; refresh it at the start of a turn.
 
 Each screenshot closes its WGC session, frame pool and GPU readback resources.
@@ -40,6 +43,17 @@ first two arguments are the catalog epoch and window id:
 | `desktop.drag` | `x1, y1, x2, y2` within the picture |
 | `desktop.focus` | none; requests restore/foreground focus |
 | `desktop.send` | monitor number |
+
+Monitor transfer preserves the outer window's logical size and relative work-area
+position across DPI, bounded to the destination work area and capture limits.
+It uses the native outer rectangle, including resize borders; a capture's DWM
+visible frame is not a placement rectangle. Sending to the current monitor is
+a no-op. A transfer requests no activation or Z-order change, checks the actual
+result, and invalidates its previous picture. A constrained application can
+reject the requested size; errors then report that its position may already
+have changed. Maximized windows must be restored before cross-monitor transfer.
+Real mixed-DPI transfer acceptance remains pending; geometry tests and a
+single-monitor CI regression are not that acceptance.
 
 `sys.call("desktop.cancel")` synchronously increments a process-wide epoch.
 It performs no UI/COM work and invalidates actions already queued on service

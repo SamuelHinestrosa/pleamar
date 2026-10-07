@@ -211,22 +211,8 @@ fn input_command(name: &str, args: &[SysValue], epoch: u64, secret: Option<&str>
     let entry = target(&id)?;
     if name == "desktop.send" {
         let [index] = args else { return Err("desktop.send takes a monitor number".into()); };
-        let screens = monitors()?;
-        let monitor = screens.get(integer(index, 0, 63)? as usize).ok_or("the monitor is disconnected")?;
-        let width = (entry.rect.right - entry.rect.left).min(monitor.work.right - monitor.work.left);
-        let height = (entry.rect.bottom - entry.rect.top).min(monitor.work.bottom - monitor.work.top);
-        check_epoch(epoch)?;
-        unsafe { SetWindowPos(entry.identity.window(), None, monitor.work.left + ((monitor.work.right-monitor.work.left)-width)/2,
-            monitor.work.top + ((monitor.work.bottom-monitor.work.top)-height)/2, width, height, SWP_NOACTIVATE | SWP_NOZORDER | SWP_ASYNCWINDOWPOS) }.map_err(|e| e.to_string())?;
-        CATALOG.with(|c| { c.borrow_mut().shots.remove(&id); });
-        let start = Instant::now();
-        while start.elapsed() < Duration::from_secs(2) {
-            check_active()?;
-            if !entry.identity.current() { return Err("the window closed while moving".into()); }
-            if monitor_info(unsafe { MonitorFromWindow(entry.identity.window(), MONITOR_DEFAULTTONULL) }).is_some_and(|m| m.name == monitor.name) { return Ok(()); }
-            std::thread::sleep(Duration::from_millis(20));
-        }
-        return Err("the application did not move to the requested monitor".into());
+        let monitor = move_window::destination(integer(index, 0, 63)? as usize)?;
+        return move_window::send(&id, &entry, &monitor, epoch);
     }
     fresh(&id, &entry)?;
     let mut inputs = InputBuffer(Vec::new());

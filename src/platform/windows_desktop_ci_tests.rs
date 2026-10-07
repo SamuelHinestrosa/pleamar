@@ -371,6 +371,20 @@ fn native_positive_input() {
     let id = catalog_id(&name);
     let entry = assert_owned_target(&id, child.0.id());
     std::fs::write(folder.join("geometry-before-focus.json"), capture_geometry(&id).to_string()).unwrap();
+    let mut outer = RECT::default();
+    unsafe { GetWindowRect(entry.identity.window(), &mut outer).unwrap(); }
+    let monitor_index = CATALOG.with(|catalog| catalog.borrow().monitors.iter().position(|monitor| monitor.name == screen.name).unwrap());
+    let foreground = unsafe { GetForegroundWindow() };
+    for attempt in 0..3 {
+        command("desktop.send", &[SysValue::Text(id.clone()), SysValue::Num(monitor_index as f64)]).unwrap();
+        let _ = picture(&id, &folder.join(format!("00-same-monitor-{attempt}.png")));
+        let mut actual = RECT::default();
+        unsafe { GetWindowRect(entry.identity.window(), &mut actual).unwrap(); }
+        assert_eq!(actual, outer, "sending to the current monitor changed the outer window geometry");
+        assert_eq!(unsafe { GetForegroundWindow() }, foreground);
+    }
+    let missing_monitor = CATALOG.with(|catalog| catalog.borrow().monitors.len());
+    assert!(command("desktop.send", &[SysValue::Text(id.clone()), SysValue::Num(missing_monitor as f64)]).is_err());
     let approval = unsafe {
         let instance = GetModuleHandleW(None).unwrap();
         let class = w!("PleamarOwnedApprovalFixture");
@@ -457,6 +471,8 @@ fn native_positive_input() {
     report["monitor"] = serde_json::json!(screen.name);
     report["physical_input_sent"] = serde_json::json!(true);
     report["approval_focus_returned"] = serde_json::json!(true);
+    report["same_monitor_preserved_outer_bounds"] = serde_json::json!(true);
+    report["physical_monitor_transfer_tested"] = serde_json::json!(false);
     report["bootstrap"] = serde_json::json!("one checked click on this test process's CI approval window");
     report["only_owned_targets"] = serde_json::json!(true);
     request(&folder,"quit");
