@@ -1,6 +1,6 @@
 # Scenes an agent can read — design
 
-**Status:** steps 1 to 5 (`describe`, acting by name, `wait`, `watch`, `label:`, `agent:`, and pleamar-wm's `agent tree/press`) implemented on 6 Oct 2026; the rest is design. Each step is measured with [the agent race](../tools/agent-race/results.md). Agreed with Abel on 6 Oct 2026 as the first step towards pleamar as a way to give **any program** its interface. This note is the first stretch of that road: what the scene already knows, handed to whoever drives it from outside.
+**Status:** steps 1 to 7 (`describe`, acting by name, `wait`, `watch`, `label:`, `agent:`, and pleamar-wm's `agent tree/press`) implemented on 6 Oct 2026; the rest is design. Each step is measured with [the agent race](../tools/agent-race/results.md). Agreed with Abel on 6 Oct 2026 as the first step towards pleamar as a way to give **any program** its interface. This note is the first stretch of that road: what the scene already knows, handed to whoever drives it from outside.
 
 ## 1. Why
 
@@ -49,10 +49,10 @@ main · window «Notes» 640×480 · scale 1
 | --- | --- |
 | **header** | One per surface or popup on screen: its name (`main` for the scene's own), what it is (`window «title»`, `panel`, `popup`), its size and its scale. A copy per monitor says `(screen 0)` there, and its names lose the `#screen0` every one of them carries |
 | **name** | The zone's or the field's own, as the scene knows it: `knob.2` for one written `knob.$k`, `hit#r3` for the `hit` of the fourth copy of a `for r`, `touch#TrayIcon431` for one inside a copy of a component. It is the name `press` will take (step 2) |
-| **role** | Derived: an `input` is a `field`; a stack with `view:` a `list`; a zone with `on drag`, or with `on wheel` and no press, a `slider`; one with a press, `cursor: pointer` or `carries:`, a `button`, or an `item` if it is in a copy of a `for` or a `repeat`; anything else a `region`. And the words drawn outside every zone —a title, a status line— are a `text`, with no name: they are read, not touched. `role:` will override it (step 7) |
-| **label** | `label:` if it has one. If not, the texts drawn inside its box this frame, in reading order: each text goes to the smallest **active** zone it falls in, so a button's word is the button's and not the panel's around it, and a closed menu still in its place does not take the words of what is drawn there. A field without text says its `placeholder`. **Nothing is guessed from what is near**: in Marea the slider's name is drawn under its icon, not under the slider, and a guess would have named the icon. When the word is not inside, `label:` says it |
-| **value** | A field's text: `(hidden)` with `secret: true` or `agent: no`. `value:` for the rest will come with step 7 |
-| **state** | `inactive` when its `active:` is false **and** something is drawn in it (a greyed out button; an inactive zone with nothing in it is a closed panel's, and is left out), `covered by X` when another zone is on top at its centre, `off view` when its list has scrolled it out, `a person's` with `agent: no` |
+| **role** | Derived: an `input` is a `field`; a stack with `view:` a `list`; a zone with `on drag`, or with `on wheel` and no press, a `slider`; one with a press, `cursor: pointer` or `carries:`, a `button`, or an `item` if it is in a copy of a `for` or a `repeat`; another program's window held by the scene a `window`; anything else a `region`. And the words drawn outside every zone —a title, a status line— are a `text`, with no name: they are read, not touched. `role:` says it when the rules cannot: `button`, `toggle`, `slider`, `tab`, `link`, `item`, `list`, `region` |
+| **label** | `label:` if it has one. If not, the texts drawn inside its box this frame, in reading order: each text goes to the smallest **active** zone it falls in, so a button's word is the button's and not the panel's around it, and a closed menu still in its place does not take the words of what is drawn there. A field without text says its `placeholder`, and a zone with nothing drawn in it what the scene's `NAME.title` says, if there is one (another program's window, `win.3.title`). **Nothing is guessed from what is near**: in Marea the slider's name is drawn under its icon, not under the slider, and a guess would have named the icon. When the word is not inside, `label:` says it |
+| **value** | A field's text: `(hidden)` with `secret: true` or `agent: no`. For the rest, `value:`: a text with holes (`value: "{volume * 100} %"`) or a sum (`value: volume`), and a fact with names says its name (`critical`) |
+| **state** | `inactive` when its `active:` is false **and** something is drawn in it (a greyed out button; an inactive zone with nothing in it is a closed panel's, and is left out), `covered by X` when another zone is on top at its centre, `off view` when its list has scrolled it out, `a person's` with `agent: no`; and with `checked:` `checked` or `not checked`, with `selected:` `selected` |
 | **box** | In the surface's logical pixels, with the scale in the header: `pleamar-wm` turns it into the pixels of its `look` |
 | **nesting** | The rows of a list hang from it, the ones in sight and the ones scrolled out, and so does whatever else falls in its window. Groups and components add no level: they are drawing, not meaning |
 
@@ -75,7 +75,7 @@ Implemented (step 2, 6 Oct 2026).
 
 `submit FIELD TEXT` was there before and stays: it sets the text and presses Enter without going through the field.
 
-**It goes through the same path as a hand**, not round it. A `press` is the hand entering the zone in one frame, the button going down in the next, coming up 40 ms later, and the hand leaving: the zone's `hover` and `pressed` springs move, the touch ripples where a finger would, `pointer.x` and `local.x` have their values, its rules fire in their order and the logic hears `press:save` as it always does. While it lasts the pointer is the hand; the user's comes back after. That is the point: a scene does not have to be written twice, and what an agent does is what a person would have done. `emit` and `fact` stay for scripts that want to skip all that.
+**It goes through the same path as a hand**, not round it. In a pleamar-wm session the agent's own cursor glides there first (section 7); then a `press` is the hand entering the zone in one frame, the button going down in the next, coming up 40 ms later, and the hand leaving: the zone's `hover` and `pressed` springs move, the touch ripples where a finger would, `pointer.x` and `local.x` have their values, its rules fire in their order and the logic hears `press:save` as it always does. While it lasts the pointer is the hand; the user's comes back after. That is the point: a scene does not have to be written twice, and what an agent does is what a person would have done. `emit` and `fact` stay for scripts that want to skip all that.
 
 **The name** is the one `describe` gives: `hit#r3`, `knob.2`, and in a copy per monitor without its `#screen0`.
 
@@ -137,26 +137,25 @@ A zone with `agent: no` is described (an agent knows it is there and can tell th
 
 **What it is and what it is not.** Through the socket it is a promise the commands keep. It is **not** a wall against a program that runs as the same user: that one could fake input in many ways. What makes it a wall is the compositor:
 
-- **pleamar-wm** gives the agent **its own seat** (`cua-agent`). pleamar learns which seat each press comes from (`wl_seat.name`), and **a press on an `agent: no` zone from an agent's seat is dropped**, and said in `watch`. So clicking its pixels with `pleamar-wm agent click` does not get round it. For that, pleamar-wm has to send its input to pleamar windows through the agent's seat, never through the usual one (today it does that for programs that only hear one seat).
+- **pleamar-wm** gives the agent **its own seat** (`cua-agent`). pleamar listens to the pointer of every seat and knows by its name which is an agent's; pleamar-wm, seeing the program has a pointer on that seat, sends the agent's input through it and not through the user's. **A press on an `agent: no` zone from an agent's seat is not let through**, nor the release after it; the log says so and `watch` writes `kept delete`. So clicking its pixels with `pleamar-wm agent click` does not get round it. Implemented (step 6, 6 Oct 2026), tried live: a click by pixels on «New note» went through, one on «Delete» did not.
 - **Other compositors** have no agent seat: there it is only the promise.
 
 ## 7. In pleamar-wm
 
 Implemented (step 5, 6 Oct 2026).
 
-- A scene answers **`hello`** with who it is: `pleamar 0.2.24 · scene notes · pid 4521 · language 0.2`. pleamar-wm asks every socket in its programs' folder (`PLEAMAR_SOCKETS`) and so knows which window is which scene.
+- A scene answers **`hello`** with who it is: `pleamar 0.2.25 · scene notes · pid 4521 · language 0.3`. pleamar-wm asks every socket in its programs' folder (`PLEAMAR_SOCKETS`) and so knows which window is which scene.
 - **`pleamar-wm agent windows`** marks them: `· pleamar scene notes: tree, press`.
 - By the window's PID, as everything else in `agent`: **`tree PID [json]`**, **`press PID NAME`**, **`wait PID CONDITION`**, **`watch PID [SECONDS]`**, and **`say PID ORDER`** for the rest (`type`, `drag`, `hold`, `wheel`, `key`). The agent does not need to know what the scene is called.
-- **`press` is seen**: before the scene presses, the agent's own cursor (the mint one with «agent» beside it) glides to the centre of the thing's box, as `move` does. Whoever watches sees what it is about to touch; the press itself is the scene's, by name.
+- **The press is seen, and the cursor is never behind it**: the scene's hand itself, before it goes down, glides the session's agent cursor (the mint one with «agent» beside it) to the point it will press, in 60 to 180 ms by how far, and waits for it to arrive (300 ms at most); in a drag the cursor goes with each step. So it happens however the press was asked —`pleamar-wm agent press`, `pleamar --say … press`—, and if the user has pressed «Stop» the press is refused: `? the user stopped the agent`.
 - Every other window keeps `look` and `click`.
-- **pleamar-wm's own shell is a pleamar scene**, so its socket (`session`, and `wm` beside its programs) answers `describe` and `press` too. **Still to be checked**: in a headless session it told only an empty main surface, not the dock nor the bar; why is not known yet.
+- **pleamar-wm's own shell is a pleamar scene**, so its socket (`session`, and `wm` beside its programs) answers `describe` and `press` too: each window as a `window` with its title, its title bar, its buttons («Close Notes», «Minimize Notes»), the dock's items by their program's name, the workspaces. Its zones say so with `label:`; the screen-sharing «Share» and the agent's own «Stop» are `agent: no`. (A desktop with no window draws nothing, and then there is nothing to tell.)
 
 ## 8. What comes after, and why the tree is shaped like this
 
 - **Screen readers.** The same tree, handed to AccessKit, becomes AT-SPI on Linux, UIA on Windows and NSAccessibility on macOS. That is why the roles are a subset of AccessKit's (`button`, `slider`, `field`, `list`, `item`, `region`; later `toggle`, `tab`, `link`), and why `label:` is a text that translates.
 - **MCP.** `pleamar mcp SCENE` would offer `describe`, the actions, `wait` and `watch` as tools, and each event with `->` as a tool of its own. Every pleamar program would be an MCP server with no work.
 - **A program in any language** driving a scene over this same socket (step 3 of the road): the commands above are its first half.
-- **`checked:` and `selected:`** on zones, for toggles and lists that say which row is chosen. Left out of step 1: they are new state, the rest is reading what exists.
 
 ## 9. Order of work
 
@@ -167,8 +166,8 @@ Implemented (step 5, 6 Oct 2026).
 | 3 ✅ | `wait` and `watch` | `a_wait_reads_the_scene_as_it_is`; by hand in a headless pleamar-wm, watching while pressing; the race now saves, which takes 0.8 s |
 | 4 ✅ | `agent: no` and `agent: hidden` over the socket | `a_hand_is_refused_what_a_person_could_not_do_either` |
 | 5 ✅ | `hello`, and pleamar-wm's `agent tree/press/wait/watch/say` | In the live session: `windows` marking the race's window, `tree`, `press` with the cursor gliding there; the race |
-| 6 | The seat: pleamar reads `wl_seat.name`, pleamar-wm uses the agent seat for pleamar windows, the press is dropped | Headless pleamar-wm: `agent click` on an `agent: no` zone does nothing |
-| 7 | `role:`, `value:` | Tests |
+| 6 ✅ | The seat: pleamar hears every seat and reads its name, pleamar-wm then uses the agent's for pleamar windows, the press is not let through | Live: `agent click` on «Delete» left `dirty` as it was, and `watch` said `kept delete`; on «New note» it went through |
+| 7 ✅ | `role:`, `value:`, `checked:`, `selected:` | `a_scene_says_what_it_holds`, `role-not-a-role.plm` |
 
 Steps 1 to 4 are pleamar alone and work on any compositor. 5 and 6 need both.
 

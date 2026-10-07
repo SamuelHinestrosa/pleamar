@@ -1,6 +1,6 @@
 [package]
 name = "pleamar"
-version = "0.2.24"
+version = "0.2.25"
 edition = "2024"
 default-run = "pleamar"
 license = "BSD-3-Clause"

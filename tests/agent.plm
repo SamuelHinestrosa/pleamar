@@ -12,10 +12,22 @@ scene Told {
     input query { at: 10, 10; width: 200; placeholder: "Search"; label: "Search notes"; agent: yes }
     input pin { at: 220, 10; width: 100; secret: true; agent: no }
 
+    fact level = 0.3
+    fact mode: quiet | loud = loud
+    fact wifi = true
     repeat k in 0..3 {
-        box knob.$k { at: 40 + k * 60, 100; size: 40, 40; label: pick(k, "Brightness", "Volume", "Microphone") }
+        box knob.$k { at: 40 + k * 60, 100; size: 40, 40; label: pick(k, "Brightness", "Volume", "Microphone"); value: "{level * 100}%" }
         on drag knob.$k { dirty = true }
     }
+
+    box switch { from: 240, 80; size: 50, 30; label: "Wi-Fi"; role: toggle; checked: wifi; value: mode }
+    on press switch { toggle wifi }
+    box tab { from: 300, 80; size: 50, 30; label: "Notes"; role: tab; selected: true; value: level * 10 }
+    on press tab { dirty = true }
+    box card { from: 10, 150; size: 80, 40; label: "A note"; role: item }
+    on press card { dirty = true }
+    box area { from: 100, 150; size: 80, 40; label: "Drop here"; role: region }
+    on press area { dirty = true }
 
     box save { from: 300, 250; size: 80, 30; active: dirty; label: "Save {status}" }
     on press save { dirty = false }

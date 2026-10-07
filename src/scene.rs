@@ -1210,6 +1210,29 @@ pub struct Zone {
     pub scrolls: Option<PropId>,
     /// The zone of the stack with `view:` it scrolls inside: it can be out of sight.
     pub within: Option<ZoneId>,
+    /// What else it says of itself when it is not derived (`role:`, `value:`,
+    /// `checked:`, `selected:`). Most zones say none of it.
+    pub told: Option<Box<Told>>,
+}
+
+/// What a zone says of itself for whoever cannot see it.
+#[derive(Clone, Debug, Default)]
+pub struct Told {
+    /// `role: toggle`: what it is, when its rules do not say it.
+    pub role: Option<&'static str>,
+    /// `value: "{volume * 100}%"` or `value: volume`: what it is worth.
+    pub value: Option<Said>,
+    /// `checked: wifi_on`: a toggle's state.
+    pub checked: Option<Expr>,
+    /// `selected: sel == r.index`: the row or the tab that is chosen.
+    pub selected: Option<Expr>,
+}
+
+/// A value said as a text, or as a number (or a fact's name, `critical`).
+#[derive(Clone, Debug)]
+pub enum Said {
+    Text(Content),
+    Number(Expr),
 }
 
 /// `agent: no` and `agent: hidden`: what an agent may do with a zone, a
@@ -1936,7 +1959,7 @@ impl Scene {
         self.zone_under(id, shape, active, vec![])
     }
     pub fn zone_under(&mut self, id: &'static str, shape: Shape, active: impl Into<Expr>, under: Vec<Transform>) -> ZoneId {
-        self.zones.push(Zone { id, shape, active: active.into(), cursor: Cursor::Normal, under, viewports: Vec::new(), at: self.instrs.len(), zblock: None, carries: None, label: None, reach: Reach::Any, scrolls: None, within: None });
+        self.zones.push(Zone { id, shape, active: active.into(), cursor: Cursor::Normal, under, viewports: Vec::new(), at: self.instrs.len(), zblock: None, carries: None, label: None, reach: Reach::Any, scrolls: None, within: None, told: None });
         ZoneId(self.zones.len() as u16 - 1)
     }
     /// Claims go from more to less priority; the last one should be
@@ -2040,6 +2063,9 @@ pub enum ToRender {
     Cursor((f32, f32), Vec<(String, [i32; 4])>),
     /// 0 is the left one, 1 the right one, 2 the middle one.
     Button(u8, bool),
+    /// The same, from an agent's own seat: a press on a zone with `agent: no`
+    /// does not get through.
+    AgentButton(u8, bool),
     /// Wheel notches: positive, upwards.
     Wheel(f32),
     /// The name of the key, what it types if it types anything, and what it was pressed with.
@@ -2067,7 +2093,7 @@ pub enum ToRender {
     Describe(bool, std::sync::mpsc::Sender<String>),
     /// An agent asks the scene to do something by name, as a hand would
     /// (`press save`); it is answered with what happened.
-    Act(crate::agent::Act, std::sync::mpsc::Sender<String>),
+    Act(crate::agent::Act, std::sync::mpsc::Sender<String>, std::sync::Weak<()>),
     /// `wait EXPR [TIMEOUT]`: answered as soon as it holds, or when it is late.
     Wait(String, std::sync::mpsc::Sender<String>, std::sync::Weak<()>),
     /// `watch`: a line for each thing that happens, until then.

@@ -481,9 +481,11 @@ pub fn run(
     // What agents asked to do by name (`press save`), one after the other, and
     // the one being done: its steps, frame by frame, as a hand would. While it
     // lasts the pointer is its hand; the user's comes back when it is done.
-    let mut acts: std::collections::VecDeque<(crate::agent::Act, std::sync::mpsc::Sender<String>)> = std::collections::VecDeque::new();
+    let mut acts: std::collections::VecDeque<(crate::agent::Act, std::sync::mpsc::Sender<String>, std::sync::Weak<()>)> = std::collections::VecDeque::new();
     let mut acting: Option<Acting> = None;
     let mut real_pointer: Option<(f32, f32)> = None;
+    // A press of an agent's seat that was not let through, by button: its release is not either.
+    let mut agent_held_back = [false; 3];
     // Who waits for a condition (`wait`), and who watches what happens (`watch`).
     let mut waits: Vec<(crate::agent::Cond, Instant, Instant, std::sync::mpsc::Sender<String>, std::sync::Weak<()>)> = Vec::new();
     let mut watchers: Vec<Watcher> = Vec::new();
@@ -672,6 +674,8 @@ pub fn run(
         let mut block = None;
         // (which button, whether it goes down or up), the wheel notches and the keys of this frame.
         let mut buttons: Vec<(u8, bool)> = Vec::new();
+        // Which of them come from an agent's own seat.
+        let mut buttons_agent: Vec<bool> = Vec::new();
         let mut wheel = 0.0f32;
         let mut keys: Vec<String> = Vec::new();
         let mut key_presses: Vec<(String, Option<String>, Mods, u32)> = Vec::new();
@@ -786,7 +790,7 @@ pub fn run(
                     for watcher in watchers.drain(..) {
                         let _ = watcher.lines.send("scene reloaded; watch ended".into());
                     }
-                    for (_, reply) in acts.drain(..) {
+                    for (_, reply, _) in acts.drain(..) {
                         let _ = reply.send("? scene reloaded before the action; ask describe again\n".into());
                     }
                     if let Some(action) = acting.take() {
@@ -1148,7 +1152,7 @@ pub fn run(
                     };
                     let _ = reply_to.send(r);
                 }
-                ToRender::Act(act, reply_to) => acts.push_back((act, reply_to)),
+                ToRender::Act(act, reply_to, live) => acts.push_back((act, reply_to, live)),
                 ToRender::CommandGone => {},
                 ToRender::Wait(src, reply_to, live) => match crate::agent::Cond::parse(&scene, &src) {
                     Ok((cond, timeout)) => {
@@ -1214,7 +1218,9 @@ pub fn run(
                     real_pointer = p;
                     last_activity = Instant::now();
                 }
-                ToRender::Button(b, down) => {
+                ToRender::Button(b, down) | ToRender::AgentButton(b, down) => {
+                    buttons_agent.resize(buttons.len(), false);
+                    buttons_agent.push(matches!(m, ToRender::AgentButton(..)));
                     buttons.push((b, down));
                     if b == 0 {
                         finger_down = down;
@@ -1646,6 +1652,12 @@ pub fn run(
             }
         }
         // ── an agent's hand ─────────────────────────────────────
+        acts.retain(|(_, _, live)| live.strong_count() > 0);
+        if acting.as_ref().is_some_and(|a| a.live.strong_count() == 0) {
+            let a = acting.take().unwrap();
+            if a.hand.is_some() { pointer = real_pointer; }
+            if a.down == Some(0) { finger_down = false; drag = None; }
+        }
         if acting.is_some() || !acts.is_empty() {
             let c = Ctx { props: &props, facts: &facts };
             let absent: Vec<std::ops::Range<usize>> = scene.spans.iter().filter(|t| scene.surfaces.get(t.surface).is_some_and(|s| s.instance > 0) && !sheets.iter().any(|l| l.view.surface == t.surface)).map(|t| t.instrs.clone()).collect();
@@ -1659,9 +1671,9 @@ pub fn run(
             };
             let now = Instant::now();
             if acting.is_none()
-                && let Some((act, reply)) = acts.pop_front()
+                && let Some((act, reply, live)) = acts.pop_front()
             {
-                match Acting::plan(&scene, c, &sight, act, reply, &texts, open_surfaces(&scene, &sheets)) {
+                match Acting::plan(&scene, c, &sight, act, reply, live, &texts, open_surfaces(&scene, &sheets)) {
                     Ok(a) => acting = Some(a),
                     Err((reply, m)) => {
                         let _ = reply.send(m + "\n");
@@ -1673,6 +1685,18 @@ pub fn run(
                 // One step a frame, as a hand: in, down, up, out. A wait lets frames go by.
                 while let Some(step) = a.steps.front().cloned() {
                     match step {
+                        Step::Cursor(trip, until) => match *trip.lock().unwrap() {
+                            crate::platform::CursorTrip::Going if now < until => break,
+                            crate::platform::CursorTrip::Stopped => {
+                                failed = Some("? the user stopped the agent: stop here and tell them where you left it".to_owned());
+                                break;
+                            }
+                            _ => {
+                                a.hand = Some(a.from);
+                                a.steps.pop_front();
+                                break;
+                            }
+                        },
                         Step::Pause(d) => {
                             a.steps[0] = Step::Wait(now + d);
                             break;
@@ -1702,9 +1726,18 @@ pub fn run(
                         },
                         Step::Point => match crate::agent::reach_point(&scene, c, a.zone, &sight) {
                             Ok(Some(p)) => {
-                                a.hand = Some(p);
                                 a.from = p;
                                 a.steps.pop_front();
+                                // The agent's cursor there first, in the pixels of the window's
+                                // picture; the hand comes in when it arrives, so what lights up
+                                // lights up under it.
+                                match sheets.iter().find(|s| s.open && s.view.popup.is_none() && crate::agent::inside_box(s.view.bounds(), p)) {
+                                    Some(s) => {
+                                        let at = ((p.0 - s.view.origin.0) * s.scale, (p.1 - s.view.origin.1) * s.scale);
+                                        a.steps.push_front(Step::Cursor(crate::platform::agent_cursor_to(at.0, at.1, true), now + Duration::from_millis(300)));
+                                    }
+                                    None => a.hand = Some(p),
+                                }
                                 break;
                             }
                             Ok(None) => {
@@ -1717,11 +1750,23 @@ pub fn run(
                             }
                         },
                         Step::Move(dx, dy) => {
-                            a.hand = Some((a.from.0 + dx, a.from.1 + dy));
+                            let p = (a.from.0 + dx, a.from.1 + dy);
+                            a.hand = Some(p);
+                            // The agent's cursor goes with the hand, step by step.
+                            if let Some(s) = sheets.iter().find(|s| s.open && s.view.popup.is_none() && crate::agent::inside_box(s.view.bounds(), p)) {
+                                crate::platform::agent_cursor_to((p.0 - s.view.origin.0) * s.scale, (p.1 - s.view.origin.1) * s.scale, false);
+                            }
                             a.steps.pop_front();
                             break;
                         }
                         Step::Down(b) => {
+                            if let Some(p) = a.hand
+                                && let Err(m) = crate::agent::press_at(&scene, c, a.zone, p, &sight) {
+                                failed = Some(m); break;
+                            }
+                            buttons_agent.resize(buttons.len(), false);
+                            buttons_agent.push(true);
+                            a.down = Some(b);
                             buttons.push((b, true));
                             if let (0, Some(p)) = (b, a.hand) {
                                 finger_down = true;
@@ -1735,6 +1780,9 @@ pub fn run(
                             break;
                         }
                         Step::Up(b) => {
+                            buttons_agent.resize(buttons.len(), false);
+                            buttons_agent.push(true);
+                            a.down = None;
                             buttons.push((b, false));
                             if b == 0 {
                                 finger_down = false;
@@ -1743,6 +1791,10 @@ pub fn run(
                             break;
                         }
                         Step::Wheel(n) => {
+                            if let Some(p) = a.hand
+                                && let Err(m) = crate::agent::press_at(&scene, c, a.zone, p, &sight) {
+                                failed = Some(m); break;
+                            }
                             wheel += n;
                             a.steps.pop_front();
                             break;
@@ -1754,6 +1806,9 @@ pub fn run(
                             break;
                         }
                         Step::Type(k, text) => {
+                            if let Err(m) = crate::agent::field_key(&scene, c, k, &sight) {
+                                failed = Some(m); break;
+                            }
                             // As typing over what was there: all of it chosen, then the letters.
                             editing = Some(Editing { field: k, cursor: texts[k].len(), anchor: 0 });
                             last_key = now;
@@ -1762,6 +1817,10 @@ pub fn run(
                             break;
                         }
                         Step::Key(name, mods, typed) => {
+                            if let Some(e) = &editing
+                                && let Err(m) = crate::agent::field_key(&scene, c, e.field, &sight) {
+                                failed = Some(m); break;
+                            }
                             key_presses.push((name, typed, mods, 0));
                             a.steps.pop_front();
                             break;
@@ -1779,6 +1838,7 @@ pub fn run(
                 if a.hand.is_some() {
                     pointer = real_pointer;
                 }
+                if a.down == Some(0) { finger_down = false; drag = None; }
                 let _ = a.reply.send(m + "\n");
             }
         }
@@ -1964,6 +2024,30 @@ pub fn run(
                 })
                 .collect();
             eprintln!("zones  · under the pointer: {names:?}");
+        }
+        // An agent's own hand, by its pixels, on what is kept for a person's
+        // (`agent: no`): its press does not get through, nor the release after it.
+        if buttons_agent.iter().any(|a| *a) {
+            buttons_agent.resize(buttons.len(), false);
+            let mut kept = Vec::new();
+            for (&(b, down), &agent) in buttons.iter().zip(&buttons_agent) {
+                let slot = (b as usize).min(2);
+                if agent
+                    && down
+                    && let Some(z) = hovered.and_then(|k| scene.zones.get(k)).filter(|z| z.reach == crate::scene::Reach::Person)
+                {
+                    agent_held_back[slot] = true;
+                    let said = z.id.split("#screen").next().unwrap_or(z.id);
+                    eprintln!("agent  · a press on '{said}' from the agent's hand was not let through: it is for a person's (agent: no)");
+                    heard_events.push(("kept", z.id));
+                    continue;
+                }
+                if agent && !down && std::mem::take(&mut agent_held_back[slot]) {
+                    continue;
+                }
+                kept.push((b, down));
+            }
+            buttons = kept;
         }
         let (mut pressed, mut pressed_with, mut released) = (None, None, None);
         for (button, down) in &buttons {
@@ -3313,6 +3397,14 @@ pub fn run(
                     rank: zone_rank.as_deref(),
                 };
                 let parts = crate::agent::describe(&scene, c, &texts, &sight);
+                if std::env::var_os("PLEAMAR_DEBUG_DESCRIBE").is_some() {
+                    let there = scene.zones.iter().filter(|z| !gone(z.at)).count();
+                    let active = scene.zones.iter().filter(|z| !gone(z.at) && z.active.is_true(c)).count();
+                    eprintln!("describe · {} zones, {there} there, {active} active · {} texts seen · shown {:?}", scene.zones.len(), draw.texts_seen.len(), sight.shown.iter().map(|s| (s.surface, s.bounds)).collect::<Vec<_>>());
+                    for z in scene.zones.iter().filter(|z| !gone(z.at) && z.active.is_true(c)).take(12) {
+                        eprintln!("describe ·   {} {:?}", z.id, z.bounds(c));
+                    }
+                }
                 // By the name it was written with: `hit`, not each copy's `hit#r3`.
                 for name in crate::agent::unnamed(&parts) {
                     let written = name.split('#').next().unwrap_or(name);
@@ -3339,6 +3431,7 @@ pub fn run(
             memo.props.clear();
             memo.props.extend(props.iter().map(|a| a.x));
         }
+        if !acts.is_empty() { appointments.push(now + Duration::from_millis(15)); }
         // An agent's action: when its steps are done and the scene has stopped
         // answering —its rules, its logic—, it is told what happened.
         if let Some(a) = &mut acting {
@@ -3964,7 +4057,13 @@ pub fn run(
                         "timing · kept: {} window slots, {pieces} pieces, {:.1} MB of their pixels, {} buffers to drop · {}",
                         nest_windows.len(),
                         pixels as f64 / 1e6,
-                        nest_doomed.len(),
+                        {
+                            #[cfg(target_os = "linux")]
+                            let doomed = nest_doomed.len();
+                            #[cfg(not(target_os = "linux"))]
+                            let doomed = 0;
+                            doomed
+                        },
                         gpu.as_ref().map_or(String::new(), |g| g.kept())
                     );
                 }
@@ -4755,6 +4854,9 @@ enum Step {
     Down(u8),
     Up(u8),
     Wheel(f32),
+    /// The session's agent cursor is on its way to the hand: the press waits
+    /// for it to arrive (300 ms at most), so it is never behind the action.
+    Cursor(std::sync::Arc<std::sync::Mutex<crate::platform::CursorTrip>>, Instant),
     /// So long from when it is reached: it becomes a `Wait`.
     Pause(Duration),
     Wait(Instant),
@@ -4768,6 +4870,8 @@ enum Step {
 /// An action an agent asked for by name, while it is being done.
 struct Acting {
     reply: std::sync::mpsc::Sender<String>,
+    live: std::sync::Weak<()>,
+    down: Option<u8>,
     zone: usize,
     said_name: String,
     /// What it answers before what happened: «pressed save».
@@ -4786,7 +4890,7 @@ struct Acting {
 impl Acting {
     /// The steps for an action, or why it cannot be done (with whom to tell).
     #[allow(clippy::too_many_arguments, clippy::result_large_err)]
-    fn plan(scene: &Scene, c: Ctx, sight: &crate::agent::Sight, act: crate::agent::Act, reply: std::sync::mpsc::Sender<String>, texts: &[String], open: Vec<String>) -> Result<Acting, (std::sync::mpsc::Sender<String>, String)> {
+    fn plan(scene: &Scene, c: Ctx, sight: &crate::agent::Sight, act: crate::agent::Act, reply: std::sync::mpsc::Sender<String>, live: std::sync::Weak<()>, texts: &[String], open: Vec<String>) -> Result<Acting, (std::sync::mpsc::Sender<String>, String)> {
         use crate::agent::Act;
         let now = Instant::now();
         let ms = |n: u64| now + Duration::from_millis(n);
@@ -4794,7 +4898,7 @@ impl Acting {
         let mut zone = usize::MAX;
         let name = act.name().to_owned();
         if !matches!(act, Act::Key { .. }) {
-            let Some(k) = crate::agent::locate(scene, &name, &sight.shown) else {
+            let Some(k) = crate::agent::locate(scene, c, &name, sight) else {
                 return Err((reply, format!("? there is nothing called '{name}' on screen: `describe` says what there is")));
             };
             zone = k;
@@ -4863,7 +4967,7 @@ impl Acting {
             }
         };
         let said_name = name.split("#screen").next().unwrap_or(&name).to_owned();
-        Ok(Acting { reply, zone, said_name, said: said + "\n", steps, hand: None, from: (0.0, 0.0), scrolled: false, before: crate::agent::before(scene, c, texts, open), events: Vec::new(), done: None, heard: String::new(), quiet: now })
+        Ok(Acting { reply, live, down: None, zone, said_name, said: said + "\n", steps, hand: None, from: (0.0, 0.0), scrolled: false, before: crate::agent::before(scene, c, texts, open), events: Vec::new(), done: None, heard: String::new(), quiet: now })
     }
 }
 

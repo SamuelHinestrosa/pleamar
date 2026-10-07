@@ -30,11 +30,16 @@ pub struct Sight<'a> {
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub enum Role {
     Button,
+    Toggle,
+    Tab,
+    Link,
     Item,
     Slider,
     Field,
     List,
     Region,
+    /// Another program's window, held by the scene (`windows`).
+    Window,
     /// Words drawn outside every zone: a title, a status line.
     Text,
 }
@@ -43,11 +48,15 @@ impl Role {
     fn word(self) -> &'static str {
         match self {
             Role::Button => "button",
+            Role::Toggle => "toggle",
+            Role::Tab => "tab",
+            Role::Link => "link",
             Role::Item => "item",
             Role::Slider => "slider",
             Role::Field => "field",
             Role::List => "list",
             Role::Region => "region",
+            Role::Window => "window",
             Role::Text => "text",
         }
     }
@@ -66,6 +75,9 @@ pub struct Node {
     pub value: Option<String>,
     pub inactive: bool,
     pub covered_by: Option<&'static str>,
+    /// `checked:` and `selected:`, when it says them.
+    pub checked: Option<bool>,
+    pub selected: Option<bool>,
     /// Scrolled out of its list: acting on it scrolls it into sight first.
     pub off_view: bool,
     pub persons: bool,
@@ -86,8 +98,24 @@ pub struct Part {
 
 /// What a zone is, from what it does: its rules, its cursor, its field.
 pub fn role_of(scene: &Scene, k: usize, z: &Zone) -> Role {
+    // Said by the scene (`role: toggle`), it is that.
+    if let Some(r) = z.told.as_ref().and_then(|t| t.role) {
+        return match r {
+            "toggle" => Role::Toggle,
+            "slider" => Role::Slider,
+            "tab" => Role::Tab,
+            "link" => Role::Link,
+            "item" => Role::Item,
+            "list" => Role::List,
+            "region" => Role::Region,
+            _ => Role::Button,
+        };
+    }
     if field_of(scene, z).is_some() {
         return Role::Field;
+    }
+    if matches!(scene.instrs.get(z.at), Some(Instr::Window { .. })) {
+        return Role::Window;
     }
     if z.scrolls.is_some() {
         return Role::List;
@@ -137,6 +165,10 @@ pub fn field_of<'s>(scene: &'s Scene, z: &Zone) -> Option<(usize, &'s crate::sce
 
 fn area(b: [f32; 4]) -> f32 {
     (b[2] - b[0]).max(0.0) * (b[3] - b[1]).max(0.0)
+}
+
+pub fn inside_box(b: [f32; 4], p: (f32, f32)) -> bool {
+    inside(b, p.0, p.1)
 }
 
 fn inside(b: [f32; 4], x: f32, y: f32) -> bool {
@@ -255,13 +287,38 @@ pub fn describe(scene: &Scene, c: Ctx, texts: &[String], sight: &Sight) -> Vec<P
                 (Some(l), _) => content_text(l, c, texts).into_owned(),
                 (None, Some((text, placeholder, _))) if texts.get(text).is_none_or(|t| t.is_empty()) => content_text(placeholder, c, texts).into_owned(),
                 (None, Some(_)) => String::new(),
-                (None, None) => words.iter().map(|t| t.text.trim()).collect::<Vec<_>>().join(" "),
+                (None, None) => {
+                    let said = words.iter().map(|t| t.text.trim()).collect::<Vec<_>>().join(" ");
+                    // Nothing drawn in it: what its own `.title` says, if the scene
+                    // has one (another program's window, `win.3.title`).
+                    let own = format!("{}.title", z.id.split('#').next().unwrap_or(z.id));
+                    match scene.texts.iter().position(|t| t.0 == own) {
+                        Some(k) if said.is_empty() => texts.get(k).cloned().unwrap_or_default(),
+                        _ => said,
+                    }
+                }
             };
-            let value = field.map(|(text, _, secret)| if secret || z.reach == Reach::Person { "(hidden)".to_owned() } else { texts.get(text).cloned().unwrap_or_default() });
+            let told = z.told.as_deref();
+            let value = match (field, told.and_then(|t| t.value.as_ref())) {
+                (Some((text, _, secret)), _) => Some(if secret || z.reach == Reach::Person { "(hidden)".to_owned() } else { texts.get(text).cloned().unwrap_or_default() }),
+                (None, Some(crate::scene::Said::Text(t))) => Some(content_text(t, c, texts).into_owned()),
+                // A fact with names says its name (`critical`, `true`); any other sum, its number.
+                (None, Some(crate::scene::Said::Number(e))) => Some(match e {
+                    crate::scene::Expr::H(f) => {
+                        let n = scene.facts[f.0 as usize].0;
+                        let v = c.facts[f.0 as usize];
+                        scene.types.iter().find(|(t, _)| t == n).map_or_else(|| number(v), |(_, t)| t.to_text(v))
+                    }
+                    e => number(e.eval(c)),
+                }),
+                (None, None) => None,
+            };
+            let checked = told.and_then(|t| t.checked.as_ref()).map(|e| e.is_true(c));
+            let selected = told.and_then(|t| t.selected.as_ref()).map(|e| e.is_true(c));
             let (cx, cy) = ((zb[0] + zb[2]) * 0.5, (zb[1] + zb[3]) * 0.5);
             let off = off_view(k);
             let covered_by = match (active && !off, role) {
-                (true, Role::Button | Role::Item | Role::Field | Role::Slider) => top_at(cx, cy).filter(|t| *t != k && scene.zones[*t].scrolls.is_none()).map(|t| scene.zones[t].id.strip_suffix(suffix.as_str()).unwrap_or(scene.zones[t].id)),
+                (true, Role::Button | Role::Toggle | Role::Tab | Role::Link | Role::Item | Role::Field | Role::Slider) => top_at(cx, cy).filter(|t| *t != k && scene.zones[*t].scrolls.is_none()).map(|t| scene.zones[t].id.strip_suffix(suffix.as_str()).unwrap_or(scene.zones[t].id)),
                 _ => None,
             };
             nodes.push(Node {
@@ -273,6 +330,8 @@ pub fn describe(scene: &Scene, c: Ctx, texts: &[String], sight: &Sight) -> Vec<P
                 value,
                 inactive: !active,
                 covered_by,
+                checked,
+                selected,
                 off_view: off,
                 persons: z.reach == Reach::Person,
                 at: [zb[0] - b[0], zb[1] - b[1], zb[2] - zb[0], zb[3] - zb[1]],
@@ -290,6 +349,8 @@ pub fn describe(scene: &Scene, c: Ctx, texts: &[String], sight: &Sight) -> Vec<P
                 value: None,
                 inactive: false,
                 covered_by: None,
+                checked: None,
+                selected: None,
                 off_view: false,
                 persons: false,
                 at: [t.bounds[0] - b[0], t.bounds[1] - b[1], t.bounds[2] - t.bounds[0], t.bounds[3] - t.bounds[1]],
@@ -322,7 +383,7 @@ pub fn describe(scene: &Scene, c: Ctx, texts: &[String], sight: &Sight) -> Vec<P
 /// The zones a person could press but that nobody says what they are: what
 /// a screen reader would read as «button», and nothing else.
 pub fn unnamed(parts: &[Part]) -> Vec<&'static str> {
-    parts.iter().flat_map(|p| &p.nodes).filter(|n| matches!(n.role, Role::Button | Role::Item | Role::Slider) && n.label.is_empty()).map(|n| n.name).collect()
+    parts.iter().flat_map(|p| &p.nodes).filter(|n| matches!(n.role, Role::Button | Role::Toggle | Role::Tab | Role::Link | Role::Item | Role::Slider) && n.label.is_empty()).map(|n| n.name).collect()
 }
 
 // ── acting by name ──────────────────────────────────────────────
@@ -443,17 +504,67 @@ fn key_name(k: &str) -> (String, Option<String>) {
     (named.to_owned(), None)
 }
 
+pub(crate) fn watch_duration(args: &str) -> std::time::Duration {
+    let seconds = args.trim().trim_end_matches('s').parse::<f32>().ok()
+        .filter(|s| *s > 0.0 && *s <= 3600.0).unwrap_or(10.0);
+    std::time::Duration::from_secs_f32(seconds)
+}
+
 /// The zone a name means: as the scene knows it, or without the `#screen0`
 /// that `describe` leaves out, in the copy that is on screen.
-pub fn locate(scene: &Scene, name: &str, shown: &[Shown]) -> Option<usize> {
+pub fn locate(scene: &Scene, c: Ctx, name: &str, sight: &Sight) -> Option<usize> {
     let hidden = |k: &usize| scene.zones[*k].reach == Reach::Hidden;
-    if let Some(k) = scene.zones.iter().position(|z| z.id == name).filter(|k| !hidden(k)) {
-        return Some(k);
-    }
-    shown.iter().filter_map(|s| scene.surfaces.get(s.surface)).find_map(|s| {
+    // As written, and the copy of each monitor's surface that is on screen.
+    let mut candidates: Vec<usize> = scene.zones.iter().position(|z| z.id == name).into_iter().collect();
+    for s in sight.shown.iter().filter_map(|s| scene.surfaces.get(s.surface)) {
         let full = format!("{name}#screen{}", s.instance);
-        scene.zones.iter().position(|z| z.id == full).filter(|k| !hidden(k))
-    })
+        if let Some(k) = scene.zones.iter().position(|z| z.id == full) {
+            candidates.push(k);
+        }
+    }
+    candidates.retain(|k| !hidden(k));
+    // Of the copies, the one that is where a surface is shown: a scene copied per
+    // monitor has the same button on each, and only one of them may be seen.
+    let seen = |k: &usize| {
+        let z = &scene.zones[*k];
+        !(sight.gone)(z.at) && z.bounds(c).is_some_and(|b| sight.shown.iter().any(|s| inside(s.bounds, (b[0] + b[2]) * 0.5, (b[1] + b[3]) * 0.5)))
+    };
+    candidates.iter().find(|k| seen(k)).or(candidates.first()).copied()
+}
+
+fn shown_point(scene: &Scene, sight: &Sight, p: (f32, f32)) -> bool {
+    sight.shown.iter().any(|s| inside(s.bounds, p.0, p.1) && scene.surfaces.get(s.surface)
+        .is_some_and(|f| !f.lock_screen && !f.hidden_from_captures && !f.agent_hidden))
+}
+
+fn top_zone(scene: &Scene, c: Ctx, sight: &Sight, p: (f32, f32)) -> Option<usize> {
+    scene.zones.iter().enumerate()
+        .filter(|(_, z)| !(sight.gone)(z.at) && z.active.is_true(c) && z.contains(c, p.0, p.1))
+        .max_by_key(|(k, _)| (sight.rank.map_or((*k, 0, 0), |r| r[*k]), *k))
+        .map(|(k, _)| k)
+}
+
+/// Recheck the actual input point after any hover, animation or cursor trip.
+/// A reachable part elsewhere in the zone cannot make an old point safe.
+pub fn press_at(scene: &Scene, c: Ctx, k: usize, p: (f32, f32), sight: &Sight) -> Result<(), String> {
+    let zone = &scene.zones[k];
+    if reach_point(scene, c, k, sight)?.is_none() || !shown_point(scene, sight, p) || !zone.contains(c, p.0, p.1) {
+        return Err("? the target moved or left the visible area; ask describe again".into());
+    }
+    let top = top_zone(scene, c, sight, p);
+    if top.is_none_or(|top| scene.zones[top].reach != Reach::Any || (top != k && zone.scrolls.is_none())) {
+        return Err("? another element covers the input point; ask describe again".into());
+    }
+    Ok(())
+}
+
+pub fn field_key(scene: &Scene, c: Ctx, field: usize, sight: &Sight) -> Result<(), String> {
+    let fields: Vec<_> = scene.instrs.iter().filter_map(|i| match i {
+        Instr::Field { text, zone, .. } if text.0 as usize == field => Some(*zone), _ => None,
+    }).collect();
+    if scene.zones.iter().enumerate().any(|(k, zone)| fields.contains(&zone.id)
+        && reach_point(scene, c, k, sight).is_ok_and(|point| point.is_some())) { return Ok(()); }
+    Err("? the focused field is not available to agents; choose an allowed input first".into())
 }
 
 /// Where a hand would press zone `k` now, or why it cannot: the point of
@@ -462,6 +573,9 @@ pub fn locate(scene: &Scene, name: &str, shown: &[Shown]) -> Option<usize> {
 pub fn reach_point(scene: &Scene, c: Ctx, k: usize, sight: &Sight) -> Result<Option<(f32, f32)>, String> {
     let z = &scene.zones[k];
     let said = z.id.split("#screen").next().unwrap_or(z.id);
+    if z.reach == Reach::Hidden {
+        return Err("? that element is hidden from agents".into());
+    }
     if z.reach == Reach::Person {
         return Err(format!("? {said} is for a person's hand (agent: no): ask them to"));
     }
@@ -469,7 +583,7 @@ pub fn reach_point(scene: &Scene, c: Ctx, k: usize, sight: &Sight) -> Result<Opt
         return Err(format!("? {said} is not there now"));
     };
     let centre = ((b[0] + b[2]) * 0.5, (b[1] + b[3]) * 0.5);
-    let on_screen = |x: f32, y: f32| sight.shown.iter().any(|s| inside(s.bounds, x, y) && scene.surfaces.get(s.surface).is_some_and(|f| !f.lock_screen && !f.agent_hidden));
+    let on_screen = |x: f32, y: f32| shown_point(scene, sight, (x, y));
     if let Some(l) = z.within {
         let lz = &scene.zones[l.0 as usize];
         if let Some(w) = lz.bounds(c)
@@ -485,16 +599,7 @@ pub fn reach_point(scene: &Scene, c: Ctx, k: usize, sight: &Sight) -> Result<Opt
     if !z.active.is_true(c) {
         return Err(format!("? {said} is inactive"));
     }
-    let rank = |k: usize| sight.rank.map_or((k, 0, 0), |r| r[k]);
-    let top = |x: f32, y: f32| {
-        scene
-            .zones
-            .iter()
-            .enumerate()
-            .filter(|(_, o)| !(sight.gone)(o.at) && o.active.is_true(c) && o.contains(c, x, y))
-            .max_by_key(|(j, _)| (rank(*j), *j))
-            .map(|(j, _)| j)
-    };
+    let top = |x, y| top_zone(scene, c, sight, (x, y));
     // The centre if it is its own; if not —a ring, a corner under a badge—
     // any point of it that is.
     let mut candidates = vec![centre];
@@ -504,7 +609,7 @@ pub fn reach_point(scene: &Scene, c: Ctx, k: usize, sight: &Sight) -> Result<Opt
         }
     }
     // A list's zone is under its rows, and its wheel and its drag reach it all the same.
-    if let Some(p) = candidates.iter().find(|(x, y)| z.contains(c, *x, *y) && (z.scrolls.is_some() || top(*x, *y) == Some(k))) {
+    if let Some(p) = candidates.iter().find(|(x, y)| on_screen(*x, *y) && z.contains(c, *x, *y) && (z.scrolls.is_some() || top(*x, *y) == Some(k))) {
         return Ok(Some(*p));
     }
     let over = top(centre.0, centre.1).filter(|t| *t != k).map_or("something", |t| scene.zones[t].id);
@@ -564,7 +669,8 @@ pub fn what_happened(scene: &Scene, b: &Before, c: Ctx, texts: &[String], open: 
     };
     for (k, (n, _)) in scene.facts.iter().enumerate() {
         let (was, is) = (b.facts.get(k).copied().unwrap_or(0.0), facts.get(k).copied().unwrap_or(0.0));
-        if was != is && !quiet_fact(n) {
+        // A change too small to be told apart as it is written (0.181 → 0.181) is not one.
+        if was != is && !quiet_fact(n) && shown(n, was) != shown(n, is) {
             let _ = writeln!(out, "  fact   {n}: {} → {}", shown(n, was), shown(n, is));
         }
     }
@@ -929,6 +1035,14 @@ pub fn to_text(parts: &[Part]) -> String {
             if let Some(v) = &n.value {
                 let _ = write!(line, "  \"{v}\"");
             }
+            match n.checked {
+                Some(true) => line.push_str("  · checked"),
+                Some(false) => line.push_str("  · not checked"),
+                None => {}
+            }
+            if n.selected == Some(true) {
+                line.push_str("  · selected");
+            }
             if n.inactive {
                 line.push_str("  · inactive");
             }
@@ -980,6 +1094,12 @@ pub fn to_json(parts: &[Part]) -> String {
         }
         if n.off_view {
             v["off_view"] = true.into();
+        }
+        if let Some(b) = n.checked {
+            v["checked"] = b.into();
+        }
+        if let Some(b) = n.selected {
+            v["selected"] = b.into();
         }
         let inner: Vec<serde_json::Value> = (0..nodes.len()).filter(|j| nodes[*j].inside == Some(i)).map(|j| node(nodes, j)).collect();
         if !inner.is_empty() {
@@ -1049,6 +1169,13 @@ mod tests {
         // Dragged: sliders, each copy with its own word.
         let knobs: Vec<(Role, &str)> = (0..3).map(|k| node(&parts, &format!("knob.{k}")).map(|n| (n.role, n.label.as_str())).unwrap()).collect();
         assert_eq!(knobs, [(Role::Slider, "Brightness"), (Role::Slider, "Volume"), (Role::Slider, "Microphone")]);
+        // Said by the scene: a toggle that is on, a tab that is chosen, and what each is worth.
+        let switch = node(&parts, "switch").unwrap();
+        assert_eq!((switch.role, switch.checked, switch.value.as_deref()), (Role::Toggle, Some(true), Some("loud")));
+        let tab = node(&parts, "tab").unwrap();
+        assert_eq!((tab.role, tab.selected, tab.value.as_deref()), (Role::Tab, Some(true), Some("3")));
+        assert_eq!(node(&parts, "knob.0").unwrap().value.as_deref(), Some("30%"));
+        assert!(to_text(&parts).contains("toggle  switch  «Wi-Fi»  \"loud\"  · checked"), "{}", to_text(&parts));
         let delete = node(&parts, "delete").unwrap();
         assert_eq!((delete.role, delete.persons), (Role::Button, true));
         // Hidden is not even named; inactive with nothing drawn is not there.
@@ -1094,12 +1221,63 @@ mod tests {
         let shown = vec![Shown { surface: 0, popup: None, bounds: [0.0, 0.0, 400.0, 300.0], scale: 1.0 }];
         let never = |_: usize| false;
         let sight = Sight { shown, texts_seen: &[], gone: &never, rank: None };
-        let at = |n: &str| reach_point(&scene, c, locate(&scene, n, &sight.shown).unwrap(), &sight);
+        let at = |n: &str| reach_point(&scene, c, locate(&scene, c, n, &sight).unwrap(), &sight);
         assert_eq!(at("knob.1"), Ok(Some((100.0, 100.0))));
         assert!(at("delete").unwrap_err().contains("a person's hand"));
         assert!(at("save").unwrap_err().contains("inactive"));
         // Hidden is not even there to be found.
-        assert_eq!(locate(&scene, "private", &sight.shown), None);
+        assert_eq!(locate(&scene, c, "private", &sight), None);
+    }
+
+    #[test]
+    fn named_actions_respect_each_surface_privacy_and_visibility() {
+        let (mut scene, _) = crate::language::read_file(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/agent.plm")).unwrap();
+        let props: Vec<Animated> = scene.props.iter().map(|(_, v, s)| Animated::at(*v, *s)).collect();
+        let facts: Vec<f32> = scene.facts.iter().map(|f| f.1).collect();
+        let c = Ctx { props: &props, facts: &facts };
+        let never = |_: usize| false;
+        let sight = Sight { shown: vec![Shown { surface: 0, popup: None, bounds: [0.0, 0.0, 400.0, 300.0], scale: 1.25 }], texts_seen: &[], gone: &never, rank: None };
+        let k = locate(&scene, c, "knob.1", &sight).unwrap();
+        assert!(reach_point(&scene, c, k, &sight).unwrap().is_some());
+        scene.surfaces[0].hidden_from_captures = true;
+        assert!(reach_point(&scene, c, k, &sight).is_err());
+        scene.surfaces[0].hidden_from_captures = false;
+        scene.surfaces[0].agent_hidden = true;
+        assert!(reach_point(&scene, c, k, &sight).is_err());
+        scene.surfaces[0].agent_hidden = false;
+        scene.surfaces[0].lock_screen = true;
+        assert!(reach_point(&scene, c, k, &sight).is_err());
+        scene.surfaces[0].lock_screen = false;
+        let hidden = scene.zones.iter().position(|z| z.id == "private").unwrap();
+        assert!(reach_point(&scene, c, hidden, &sight).is_err());
+    }
+
+    #[test]
+    fn an_input_point_is_rechecked_when_an_overlay_appears() {
+        let (mut scene, _) = crate::language::read_file(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/agent.plm")).unwrap();
+        let props: Vec<Animated> = scene.props.iter().map(|(_, v, s)| Animated::at(*v, *s)).collect();
+        let facts: Vec<f32> = scene.facts.iter().map(|f| f.1).collect();
+        let c = Ctx { props: &props, facts: &facts };
+        let never = |_: usize| false;
+        let sight = Sight { shown: vec![Shown { surface: 0, popup: None, bounds: [0.0, 0.0, 400.0, 300.0], scale: 1.25 }], texts_seen: &[], gone: &never, rank: None };
+        let k = locate(&scene, c, "knob.1", &sight).unwrap();
+        let point = reach_point(&scene, c, k, &sight).unwrap().unwrap();
+        assert!(press_at(&scene, c, k, point, &sight).is_ok());
+        let mut overlay = scene.zones[k].clone();
+        overlay.id = "private overlay"; overlay.reach = Reach::Person;
+        scene.zones.push(overlay);
+        assert!(press_at(&scene, c, k, point, &sight).is_err());
+        // Even an ordinary small overlay must not receive a stale named click.
+        let overlay = scene.zones.last_mut().unwrap();
+        overlay.reach = Reach::Any;
+        overlay.shape = crate::scene::Shape::Rect { center: (100.0.into(), 100.0.into()), half_size: (5.0.into(), 5.0.into()), radius: 0.0.into() };
+        assert!(reach_point(&scene, c, k, &sight).unwrap().is_some());
+        assert!(press_at(&scene, c, k, point, &sight).is_err());
+        scene.zones.pop();
+        assert!(press_at(&scene, c, k, (2.0, 2.0), &sight).is_err());
+        let field = |name| scene.texts.iter().position(|t| t.0 == name).unwrap();
+        assert!(field_key(&scene, c, field("query"), &sight).is_ok());
+        assert!(field_key(&scene, c, field("pin"), &sight).is_err());
     }
 
     #[test]

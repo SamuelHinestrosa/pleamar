@@ -40,7 +40,7 @@ pub use scenes::from_file::read as read_scene;
 /// Native scene command clients used by Windows desktop companions.
 #[cfg(target_os = "windows")]
 pub mod commands {
-    pub use crate::platform::{ask, running_scenes, send, stream};
+    pub use crate::platform::{ask, ask_with_pid, running_scenes, send, send_to_process, stream};
 }
 
 /// Entry point for the windowless Windows COM notification activator.
@@ -373,9 +373,9 @@ pub fn run_with(options: Vec<String>) {
             // `watch [10s]`: a line for each thing that happens, for that long (ten seconds if unsaid).
             if what == "watch" {
                 let lease = CommandLease::new(tx.clone());
-                let secs = after.trim().trim_end_matches('s').parse::<f32>().ok().filter(|s| *s > 0.0 && *s <= 3600.0).unwrap_or(10.0);
+                let duration = crate::agent::watch_duration(after);
                 let (lines, heard) = std::sync::mpsc::channel();
-                let until = std::time::Instant::now() + std::time::Duration::from_secs_f32(secs);
+                let until = std::time::Instant::now() + duration;
                 let _ = tx.send(ToRender::Watch(lines, until, std::sync::Arc::downgrade(&lease.live)));
                 while out.connected() {
                     match heard.recv_timeout(Duration::from_millis(100)) {
@@ -407,9 +407,18 @@ pub fn run_with(options: Vec<String>) {
                 return Some(match act {
                     Err(m) => format!("? {m}\n"),
                     Ok(act) => {
+                        let lease = CommandLease::new(tx.clone());
                         let (question, answer) = std::sync::mpsc::channel();
-                        let _ = tx.send(ToRender::Act(act, question));
-                        answer.recv_timeout(std::time::Duration::from_secs(8)).unwrap_or_else(|_| "? the render does not answer\n".into())
+                        let _ = tx.send(ToRender::Act(act, question, std::sync::Arc::downgrade(&lease.live)));
+                        let until = std::time::Instant::now() + Duration::from_secs(8);
+                        loop {
+                            if !out.connected() { return None; }
+                            match answer.recv_timeout(Duration::from_millis(100)) {
+                                Ok(answer) => break answer,
+                                Err(std::sync::mpsc::RecvTimeoutError::Timeout) if std::time::Instant::now() < until => {},
+                                Err(_) => break "? the render does not answer\n".into(),
+                            }
+                        }
                     }
                 });
             }

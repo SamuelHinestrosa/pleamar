@@ -3,20 +3,20 @@
 **What this note is.** The complete, exact description of what the language accepts. [The language — the guide](09-language-v0.md) is the guide —read straight through, with the reason behind each thing—; this is where a doubt gets looked up. It comes from the compiler (`src/language/`), not from memory, and **it cannot fall behind without `./run-tests.sh` saying so**: its whole examples compile, and its vocabulary (§17) is compared against the one the compiler consults.
 
 ```sh
-pleamar --version                  # pleamar 0.2.24 · language 0.2
+pleamar --version                  # pleamar 0.2.25 · language 0.3
 pleamar --check scene.plm      # reads it, with whatever it imports; says whether it is fine, exits
 ./run-tests.sh                        # tests/*.plm, examples/*.plm and the examples in this note
 ```
 
 ## 1. Version
 
-The language has a number of its own, apart from the program's: **0.2**. The first changes when something already written stops being valid; the second, when something is added. A file can say which one it needs, on its first line:
+The language has a number of its own, apart from the program's: **0.3**. The first changes when something already written stops being valid; the second, when something is added. A file can say which one it needs, on its first line:
 
 ```
 language 0.1
 ```
 
-If it asks for a different first number, or a second one higher than the program understands, it is an error on load —`this file asks for language 0.7, and this pleamar understands 0.2`— and not a half-built scene. A file that asks for 0.1 is still read by 0.2: what 0.2 added —a group's own `shader:`, workspaces, `pick`, `import … as`, `drag.over`— it simply does not use. Without that line, it is read with whatever is there. While the first is 0, nothing is promised: this is a language still being made.
+If it asks for a different first number, or a second one higher than the program understands, it is an error on load —`this file asks for language 0.7, and this pleamar understands 0.3`— and not a half-built scene. A file that asks for 0.1 is still read by 0.3: what 0.2 added —a group's own `shader:`, workspaces, `pick`, `import … as`, `drag.over`— and what 0.3 added —what a zone tells an agent: `label:`, `agent:`, `role:`, `value:`, `checked:`, `selected:`— it simply does not use. Without that line, it is read with whatever is there. While the first is 0, nothing is promised: this is a language still being made.
 
 ## 2. What it guarantees
 
@@ -500,7 +500,7 @@ Each element accepts these properties and no others; another one is an error, wi
 | `arc` (like "∩") | `at` · `radius` · `span` (the whole angle it covers) · `width`. It opens **upwards and symmetrically**; a progress ring is `span: p * 360deg` with `rotate: p * 180deg` |
 | `line` | `from` · `to` · `width` |
 | `path` | `at` (what its points hang from) · `size: w, h` (what it takes up in a layout), and inside it its steps: `move x, y` (once, the first one) · `line x, y` · `curve x, y via cx, cy` · `close`. Closed, it is filled; open, or with `stroke`, it is a line |
-| …and every shape | `color` · `opacity` · `rotate` · `stroke` (the outline only) · `blend` (inside a `body`: how much it melts into what came before) · `active` · `cursor` · `carries` (below) · `show` · `label` · `agent` (§13, *Told to an agent*) |
+| …and every shape | `color` · `opacity` · `rotate` · `stroke` (the outline only) · `blend` (inside a `body`: how much it melts into what came before) · `active` · `cursor` · `carries` (below) · `show` · `label` · `agent` · `role` · `value` · `checked` · `selected` (§13, *Told to an agent*) |
 | `body` | `color` or `gradient` (below) · `rim` · `light: amount, from_y, height` · `shadow: dx, dy, blur, alpha[, color]` · `border: width, #color` · `glass` · `lens` · `opacity` · `show`, and inside it its shapes, melted into one silhouette |
 | `text` | `at` · `anchor` · `width` · `lines` · `size` · `weight` · `color` · `opacity` · `align:` `left` `center` `right` · `line_height` · `family` · `measure` · `show` · and its effects: `gradient` · `outline` · `shadow` · `letter_move` · `letter_opacity` · `letter_scale` (§8.4) · `selectable` · `selection` |
 | `image` | `at` (its **top-left corner**, not its centre: it is a rectangle of pixels, not a shape) · `size` · `opacity` · `tint` · `show` |
@@ -1266,7 +1266,7 @@ fact of its own called `locale`, are errors.
 
 **And the other way: `carries:`.** A zone with `carries: "{file.$k.path}"` can be dragged out to another program: pressed and moved more than a few pixels, the compositor takes the drag and whatever it is let go on gets that. A path or an address (`/…`, `file://…`, `https://…`, one per line for several) goes as a list of files or links —a browser uploads it, a file manager copies it— and as text too; anything else, as text. From then on the pointer is the compositor's, so the zone's own `drag` rules stop there; `on carry zone` says it has gone —a panel it came out of can close then, and let the drop reach what is underneath—. It works on any compositor with drag and drop (Hyprland, pleamar-wm); not yet from pleamar-wm's own scene.
 
-**Told to an agent: `label:` and `agent:`.** A running scene can be asked what there is to read and touch: `pleamar --say notes describe` answers with each surface that is on screen and, inside it, every zone and field by its name, what it is (`button`, `slider`, `field`, `list`, `item` or `region`, from what its rules do), what it says, whether it is inactive or covered by another one, and its box in the surface's pixels, together with the words drawn outside every zone —a title, a status line—, in the order they were written; `describe json`, the same as data. What it says is the texts drawn inside it, or a field's text and its `placeholder`. When that is not enough —an icon with no word in it, a slider whose name is drawn beside it—, **`label:`** says it: a text, with holes if it needs them (`label: "Delete {n.title}"`), a live text, or `pick(k, "Brightness", "Volume")` in a copy. The first time it is asked, a zone that can be pressed and says nothing is named in the log, so that nobody has to guess what it is. The same names are used to **act, as a hand would**: `press save` (and `right`, `middle`, a count), `hold`, `drag knob 0 -40`, `wheel list -3`, `type query some words`, `key escape`. The hand enters the zone, presses and leaves, so its springs move and its rules fire as with a mouse; a row scrolled out of its list is brought into sight first; and the answer is what happened —the events, the facts and texts that changed, the surfaces that opened—. What a person could not do is refused, saying why: inactive, covered, not on screen. And **`wait status == "Saved"`** answers as soon as that holds (`wait dirty == true 2s`; facts, texts and properties by name, `has`, `and`, `or`, `not`), and **`watch`** writes a line for each thing that happens for ten seconds (`watch 30`). **`agent: no`** keeps a zone or a field for a person's hand: it is described, but an agent cannot use it, and a field's text is not given; a field with `secret: true` never gives it either. **`agent: hidden`** leaves it out altogether, and on a `surface` everything it holds. A `kind: lock` surface and one with `captures: hidden` are never told. What else comes, and why: [note 12](12-agents.md).
+**Told to an agent: `label:` and `agent:`.** A running scene can be asked what there is to read and touch: `pleamar --say notes describe` answers with each surface that is on screen and, inside it, every zone and field by its name, what it is (`button`, `slider`, `field`, `list`, `item` or `region`, from what its rules do), what it says, whether it is inactive or covered by another one, and its box in the surface's pixels, together with the words drawn outside every zone —a title, a status line—, in the order they were written; `describe json`, the same as data. What it says is the texts drawn inside it, or a field's text and its `placeholder`. When that is not enough —an icon with no word in it, a slider whose name is drawn beside it—, **`label:`** says it: a text, with holes if it needs them (`label: "Delete {n.title}"`), a live text, or `pick(k, "Brightness", "Volume")` in a copy. The first time it is asked, a zone that can be pressed and says nothing is named in the log, so that nobody has to guess what it is. The same names are used to **act, as a hand would**: `press save` (and `right`, `middle`, a count), `hold`, `drag knob 0 -40`, `wheel list -3`, `type query some words`, `key escape`. The hand enters the zone, presses and leaves, so its springs move and its rules fire as with a mouse; a row scrolled out of its list is brought into sight first; and the answer is what happened —the events, the facts and texts that changed, the surfaces that opened—. What a person could not do is refused, saying why: inactive, covered, not on screen. And **`wait status == "Saved"`** answers as soon as that holds (`wait dirty == true 2s`; facts, texts and properties by name, `has`, `and`, `or`, `not`), and **`watch`** writes a line for each thing that happens for ten seconds (`watch 30`). **`agent: no`** keeps a zone or a field for a person's hand: it is described, but an agent cannot use it, and a field's text is not given; a field with `secret: true` never gives it either. **`agent: hidden`** leaves it out altogether, and on a `surface` everything it holds. When what it is cannot be told from its rules, a zone says it: **`role:`** `button` `toggle` `slider` `tab` `link` `item` `list` `region`; **`value:`** what it is worth, a text (`value: "{volume * 100} %"`) or a sum (`value: volume`; a fact with names says its name); **`checked:`** whether a toggle is on; **`selected:`** whether a row or a tab is the chosen one (`selected: sel == r.index`). A `kind: lock` surface and one with `captures: hidden` are never told. What else comes, and why: [note 12](12-agents.md).
 
 ```plm
 scene Told {
@@ -1443,12 +1443,12 @@ scene Reference3 {
 This is the output of `pleamar --grammar`, copied. It is not a second list: these are the same tables (`src/language/vocabulary.rs`) the compiler consults to accept or reject a word. `./run-tests.sh` compares this block with what the program prints —if somebody adds a word and does not write it down here, it fails— and it also checks that **every word appears in some test**.
 
 ```vocabulary
-language: 0.2
+language: 0.3
 statements: surface permissions model service spring prop pose fact event text image figure shader particles measure let zone body ellipse box arc line path input clip group popup component children repeat for row column grid pages space between layer on every blink wave spin follow look gesture posture translations windows window
 library: let spring component permissions fact text model service event image figure shader prop pose gesture posture layer translations
 properties.surface: size anchor margin level reserve screens keyboard open kind title rate captures agent
 properties.permissions: run services
-properties.shape: rotate stroke color opacity blend glass lens shine refraction dispersion dome ripple active show cursor carries grow label agent
+properties.shape: rotate stroke color opacity blend glass lens shine refraction dispersion dome ripple active show cursor carries grow label agent role value checked selected
 properties.ellipse: at radius scale
 properties.box: at from size corner
 properties.arc: at radius span width
@@ -1505,6 +1505,7 @@ surface.kind: panel window lock
 surface.keyboard: none on_demand exclusive
 surface.captures: shown hidden
 agent: yes no hidden
+role: button toggle slider tab link item list region
 text.align: left center right
 layout.align: start center end
 group.mode: normal add screen multiply

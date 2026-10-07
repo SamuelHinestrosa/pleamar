@@ -204,12 +204,31 @@ fn serve(path: String, mut pipe: File, receive: super::Commands) -> Result<(), S
 }
 
 pub fn listen_for_commands(scene: &str, receive: super::Commands) {
-    let path = match pipe_path(scene) { Ok(p) => p, Err(e) => { eprintln!("orders · {e}"); return; } };
-    let pipe = match bind(scene) { Ok(p) => p, Err(e) => { eprintln!("orders · {e}"); return; } };
+    let mut path = match pipe_path(scene) { Ok(p) => p, Err(e) => { eprintln!("orders · {e}"); return; } };
+    let pipe = match bind(scene) {
+        Ok(pipe) => pipe,
+        Err(first) => {
+            let suffix = format!("-{}", std::process::id());
+            let mut end = scene.len().min(120 - suffix.len());
+            while !scene.is_char_boundary(end) { end -= 1; }
+            let own = format!("{}{suffix}", &scene[..end]);
+            match bind(&own) {
+                Ok(pipe) => {
+                    path = pipe_path(&own).unwrap();
+                    eprintln!("orders · '{scene}' is unavailable ({first}): this scene answers as '{own}'");
+                    pipe
+                },
+                Err(e) => { eprintln!("orders · {first}; fallback: {e}"); return; },
+            }
+        },
+    };
     std::thread::spawn(move || { if let Err(e) = serve(path, pipe, receive) { eprintln!("orders · {e}"); } });
 }
 
 fn connect(path: &str, command: &str, until: Instant) -> Result<File, String> {
+    connect_process(path, command, until, None).map(|(pipe, _)| pipe)
+}
+fn connect_process(path: &str, command: &str, until: Instant, expected: Option<u32>) -> Result<(File, u32), String> {
     if command.len() >= LIMIT || command.contains(['\n', '\r']) { return Err("send one command line at a time (less than 64 KiB)".into()); }
     let mut pipe = loop {
         match OpenOptions::new().read(true).write(true).open(path) {
@@ -219,11 +238,24 @@ fn connect(path: &str, command: &str, until: Instant) -> Result<File, String> {
         }
     };
     unsafe { SetNamedPipeHandleState(HANDLE(pipe.as_raw_handle()), Some(&PIPE_NOWAIT), None, None) }.map_err(|e| e.to_string())?;
+    let mut pid = 0;
+    unsafe { GetNamedPipeServerProcessId(HANDLE(pipe.as_raw_handle()), &mut pid) }.map_err(|e| e.to_string())?;
+    if expected.is_some_and(|expected| expected != pid) {
+        return Err("the scene process changed; run agent scenes again before sending an action".into());
+    }
     write_until(&mut pipe, format!("{command}\n").as_bytes(), until, &AtomicBool::new(false))?;
-    Ok(pipe)
+    Ok((pipe, pid))
 }
 
 pub fn ask(scene: &str, command: &str, wait: Duration) -> Result<String, String> { ask_path(&pipe_path(scene)?, command, wait) }
+/// The PID comes from the connected native pipe, not text supplied by the scene.
+pub fn ask_with_pid(scene: &str, command: &str, wait: Duration) -> Result<(u32, String), String> {
+    let until = Instant::now() + wait;
+    let (mut pipe, pid) = connect_process(&pipe_path(scene)?, command, until, None)?;
+    let reply = read_line(&mut pipe, until)?;
+    write_until(&mut pipe, b"ack\n", until, &AtomicBool::new(false))?;
+    serde_json::from_str(&reply).map(|reply| (pid, reply)).map_err(|e| e.to_string())
+}
 pub(super) fn ask_path(path: &str, command: &str, wait: Duration) -> Result<String, String> {
     let until = Instant::now() + wait;
     let mut pipe = connect(path, command, until)?;
@@ -234,8 +266,11 @@ pub(super) fn ask_path(path: &str, command: &str, wait: Duration) -> Result<Stri
 
 /// Each chunk is delivered as it arrives; false cancels the subscription.
 pub fn stream(scene: &str, command: &str, wait: Duration, each: &mut dyn FnMut(&str) -> bool) -> Result<(), String> {
+    stream_process(scene, command, wait, None, each)
+}
+fn stream_process(scene: &str, command: &str, wait: Duration, expected: Option<u32>, each: &mut dyn FnMut(&str) -> bool) -> Result<(), String> {
     let until = Instant::now() + wait;
-    let mut pipe = connect(&pipe_path(scene)?, &format!("{STREAM}{command}"), until)?;
+    let (mut pipe, _) = connect_process(&pipe_path(scene)?, &format!("{STREAM}{command}"), until, expected)?;
     loop {
         let reply = read_line(&mut pipe, until)?;
         let reply: Option<String> = serde_json::from_str(&reply).map_err(|e| e.to_string())?;
@@ -253,16 +288,23 @@ pub fn running_scenes() -> Vec<String> {
 }
 
 fn command_wait(command: &str) -> Duration {
-    let mut words = command.split_whitespace();
-    match words.next() {
-        Some("watch") => {
-            let seconds = words.next().unwrap_or("").trim_end_matches('s').parse::<f32>().ok()
-                .filter(|s| *s > 0.0 && *s <= 3600.0).unwrap_or(10.0);
-            Duration::from_secs_f32(seconds) + Duration::from_secs(3)
-        },
-        Some("wait") => Duration::from_secs(65),
+    let (what, rest) = command.trim().split_once(' ').unwrap_or((command.trim(), ""));
+    match what {
+        "watch" => crate::agent::watch_duration(rest) + Duration::from_secs(3),
+        "wait" => Duration::from_secs(65),
         _ => Duration::from_secs(10),
     }
+}
+/// Revalidate the discovery PID on the connected pipe before writing any order.
+pub fn send_to_process(scene: &str, pid: u32, command: &str) -> Result<(), String> {
+    print_stream(scene, command, Some(pid))
+}
+fn print_stream(scene: &str, command: &str, expected: Option<u32>) -> Result<(), String> {
+    stream_process(scene, command, command_wait(command), expected, &mut |answer| {
+        let stdout = std::io::stdout(); let mut output = stdout.lock();
+        if !answer.is_empty() && writeln!(output, "{}", answer.trim_end_matches('\n')).is_err() { return false; }
+        output.flush().is_ok()
+    })
 }
 pub fn send(scene: Option<&str>, command: &str) -> Result<(), String> {
     let name = match scene {
@@ -273,11 +315,7 @@ pub fn send(scene: Option<&str>, command: &str) -> Result<(), String> {
             names => return Err(format!("there are several scenes running; say which: {}", names.join(", "))),
         },
     };
-    stream(&name, command, command_wait(command), &mut |answer| {
-        let stdout = std::io::stdout(); let mut output = stdout.lock();
-        if !answer.is_empty() && writeln!(output, "{}", answer.trim_end_matches('\n')).is_err() { return false; }
-        output.flush().is_ok()
-    })
+    print_stream(&name, command, None)
 }
 
 #[cfg(test)]
@@ -468,9 +506,47 @@ mod tests {
     }
 
     #[test]
+    fn duplicate_scene_uses_its_process_suffix_without_replacing_the_first() {
+        let name = format!("duplicate ñ {}", std::process::id());
+        let second = format!("{name}-{}", std::process::id());
+        listen_for_commands(&name, Arc::new(|_, _| Some("first".into())));
+        listen_for_commands(&name, Arc::new(|_, _| Some("second".into())));
+        assert_eq!(ask(&name, "hello", DEFAULT_WAIT).unwrap(), "first");
+        assert_eq!(ask(&second, "hello", DEFAULT_WAIT).unwrap(), "second");
+        ask(&name, "quit", DEFAULT_WAIT).unwrap();
+        ask(&second, "quit", DEFAULT_WAIT).unwrap();
+    }
+
+    #[test]
+    fn native_server_identity_is_checked_before_delivering_an_action() {
+        let name = format!("peer identity {}", std::process::id());
+        let path = pipe_path(&name).unwrap();
+        let pipe = bind(&name).unwrap();
+        let (sent, heard) = std::sync::mpsc::channel();
+        let server = std::thread::spawn(move || serve(path, pipe, Arc::new(move |line, _| {
+            sent.send(line.clone()).unwrap(); Some(format!("reply {line}"))
+        })));
+        let (pid, answer) = ask_with_pid(&name, "hello", DEFAULT_WAIT).unwrap();
+        assert_eq!(pid, std::process::id());
+        assert_eq!(answer, "reply hello");
+        assert_eq!(heard.recv_timeout(DEFAULT_WAIT).unwrap(), "hello");
+        let wrong = pid.checked_add(1).unwrap_or(0);
+        assert!(send_to_process(&name, wrong, "press forbidden").unwrap_err().contains("process changed"));
+        let mut received = String::new();
+        stream_process(&name, "press allowed", DEFAULT_WAIT, Some(pid), &mut |line| { received.push_str(line); true }).unwrap();
+        assert_eq!(received, "reply press allowed");
+        assert_eq!(heard.recv_timeout(DEFAULT_WAIT).unwrap(), "press allowed");
+        assert!(heard.try_recv().is_err(), "wrong PID must not deliver an order");
+        ask(&name, "quit", DEFAULT_WAIT).unwrap();
+        server.join().unwrap().unwrap();
+    }
+
+    #[test]
     fn only_long_commands_extend_the_client_deadline() {
         assert_eq!(command_wait("watch 2s"), Duration::from_secs(5));
         assert_eq!(command_wait("watch inf"), Duration::from_secs(13));
+        assert_eq!(command_wait("watch 1 extra"), Duration::from_secs(13));
+        assert_eq!(command_wait("  watch   2s  "), Duration::from_secs(5));
         assert_eq!(command_wait("watch 3601s"), Duration::from_secs(13));
         assert_eq!(command_wait("watchdog"), Duration::from_secs(10));
         assert_eq!(command_wait("wait saved == true 3s"), Duration::from_secs(65));
