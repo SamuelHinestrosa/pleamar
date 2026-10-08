@@ -243,6 +243,12 @@ fn connect_process(path: &str, command: &str, until: Instant, expected: Option<u
     if expected.is_some_and(|expected| expected != pid) {
         return Err("the scene process changed; run agent scenes again before sending an action".into());
     }
+    if command.split_whitespace().next() == Some("emit") {
+        // A foreground launcher hands its activation right to the actual pipe
+        // server before asking a warm scene to open. Windows still decides
+        // whether this caller is entitled; reads never grant activation.
+        unsafe { let _ = windows::Win32::UI::WindowsAndMessaging::AllowSetForegroundWindow(pid); }
+    }
     write_until(&mut pipe, format!("{command}\n").as_bytes(), until, &AtomicBool::new(false))?;
     Ok((pipe, pid))
 }

@@ -937,6 +937,13 @@ unsafe extern "system" fn window_proc(
         }
         WM_SETFOCUS => {
             if e.popup.is_none() { INPUT_PARENT.store(e.hwnd().0 as isize, Ordering::Relaxed); }
+            if !e.is_window && e.popup.is_none() && e.keyboard.load(Ordering::Relaxed) == 2
+                && unsafe { GetForegroundWindow() } == hwnd {
+                // An explicitly opened launcher can follow a game that left
+                // the cursor confined. Touch shared cursor state only after
+                // Windows has actually granted this panel foreground focus.
+                unsafe { let _ = ClipCursor(None); apply_cursor(e); }
+            }
             let _ = e.to_render.send(ToRender::KeyboardFocus(true));
             return LRESULT(0);
         }
