@@ -91,6 +91,7 @@ struct WindowState {
     boxes: Mutex<Vec<[i32; 4]>>,
     cursor: AtomicU8,
     cursor_shows: AtomicU8,
+    cursor_refresh: AtomicBool,
     keyboard: AtomicU8,
     mouse_inside: AtomicBool,
     mouse_buttons: AtomicU8,
@@ -606,11 +607,27 @@ unsafe fn apply_cursor(e: &WindowState) {
 }
 
 unsafe fn release_cursor_visibility(e: &WindowState) {
+    e.cursor_refresh.store(false, Ordering::Relaxed);
     // ShowCursor uses a display count. Balance only our own increments on the
     // same UI thread; never normalize another application's count on exit.
     for _ in 0..e.cursor_shows.swap(0, Ordering::Relaxed) {
         unsafe { ShowCursor(false); }
     }
+}
+
+unsafe fn refresh_exclusive_cursor(e: &WindowState) {
+    if !e.cursor_refresh.load(Ordering::Relaxed) { return; }
+    let foreground = unsafe { GetForegroundWindow() };
+    if foreground != e.input() && foreground != e.hwnd() { return; }
+    let mut point = POINT::default();
+    if unsafe { GetCursorPos(&mut point) }.is_err() { return; }
+    // Activation can precede the first input region. Once the stationary
+    // pointer belongs to this panel, re-evaluate its cursor without moving it
+    // to another location or waiting for the user's first click.
+    let under = unsafe { WindowFromPoint(point) };
+    if under != e.input() && under != e.hwnd() { return; }
+    e.cursor_refresh.store(false, Ordering::Relaxed);
+    unsafe { let _ = SetCursorPos(point.x, point.y); apply_cursor(e); }
 }
 
 unsafe fn apply_keyboard(e: &WindowState) {
@@ -948,7 +965,7 @@ unsafe extern "system" fn window_proc(
         WM_SETFOCUS => {
             if e.popup.is_none() { INPUT_PARENT.store(e.hwnd().0 as isize, Ordering::Relaxed); }
             if !e.is_window && e.popup.is_none() && e.keyboard.load(Ordering::Relaxed) == 2
-                && unsafe { GetForegroundWindow() } == hwnd {
+                && [e.input(), e.hwnd()].contains(&unsafe { GetForegroundWindow() }) {
                 // An explicitly opened launcher can follow a game that left
                 // the cursor confined. Touch shared cursor state only after
                 // Windows has actually granted this panel foreground focus.
@@ -964,6 +981,14 @@ unsafe extern "system" fn window_proc(
                         }
                     }
                     apply_cursor(e);
+                    e.cursor_refresh.store(true, Ordering::Relaxed);
+                    refresh_exclusive_cursor(e);
+                    if std::env::var_os("PLEAMAR_DEBUG_FOCUS").is_some() {
+                        let mut info = CURSORINFO { cbSize: size_of::<CURSORINFO>() as u32, ..Default::default() };
+                        let _ = GetCursorInfo(&mut info);
+                        eprintln!("focus cursor: hwnd={hwnd:?} foreground={:?} increments={} flags={:?} point={:?} under={:?}",
+                            GetForegroundWindow(), e.cursor_shows.load(Ordering::Relaxed), info.flags, info.ptScreenPos, WindowFromPoint(info.ptScreenPos));
+                    }
                 }
             }
             let _ = e.to_render.send(ToRender::KeyboardFocus(true));
@@ -1029,6 +1054,7 @@ unsafe extern "system" fn window_proc(
         }
         WM_PLEAMAR_REGION => {
             unsafe { apply_input_region(e); }
+            unsafe { refresh_exclusive_cursor(e); }
             return LRESULT(0);
         }
         WM_PLEAMAR_APPBAR if appbar && hwnd == e.hwnd() && wparam.0 == ABN_FULLSCREENAPP as usize => {
@@ -1197,6 +1223,7 @@ fn create(
         boxes: Mutex::default(),
         cursor: AtomicU8::new(0),
         cursor_shows: AtomicU8::new(0),
+        cursor_refresh: AtomicBool::new(false),
         keyboard: AtomicU8::new(keyboard_num(initial_keyboard)),
         mouse_inside: AtomicBool::new(false),
         mouse_buttons: AtomicU8::new(0),
