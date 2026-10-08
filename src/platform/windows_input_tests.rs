@@ -28,7 +28,7 @@ impl Probe {
             id: 0, which: 0, hwnd: AtomicIsize::new(0), input_hwnd: AtomicIsize::new(0),
             region_pending: AtomicBool::new(false), to_render, origin: (0.0, 0.0),
             scale: AtomicU32::new(1.0f32.to_bits()), boxes: Mutex::default(),
-            cursor: AtomicU8::new(0), keyboard: AtomicU8::new(0),
+            cursor: AtomicU8::new(0), cursor_shows: AtomicU8::new(0), keyboard: AtomicU8::new(0),
             mouse_inside: AtomicBool::new(false), mouse_buttons: AtomicU8::new(0),
             right_click_quits: false, hidden_from_captures: AtomicBool::new(false), is_window: true,
             placement: Mutex::new(None), appbar: AtomicBool::new(false), fullscreen: AtomicBool::new(false), gone: AtomicBool::new(false),

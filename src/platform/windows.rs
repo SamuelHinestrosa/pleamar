@@ -90,6 +90,7 @@ struct WindowState {
     scale: AtomicU32,
     boxes: Mutex<Vec<[i32; 4]>>,
     cursor: AtomicU8,
+    cursor_shows: AtomicU8,
     keyboard: AtomicU8,
     mouse_inside: AtomicBool,
     mouse_buttons: AtomicU8,
@@ -604,6 +605,14 @@ unsafe fn apply_cursor(e: &WindowState) {
     }
 }
 
+unsafe fn release_cursor_visibility(e: &WindowState) {
+    // ShowCursor uses a display count. Balance only our own increments on the
+    // same UI thread; never normalize another application's count on exit.
+    for _ in 0..e.cursor_shows.swap(0, Ordering::Relaxed) {
+        unsafe { ShowCursor(false); }
+    }
+}
+
 unsafe fn apply_keyboard(e: &WindowState) {
     if e.is_window {
         return;
@@ -630,6 +639,7 @@ unsafe fn apply_keyboard(e: &WindowState) {
     if e.keyboard.load(Ordering::Relaxed) == 2 && e.popup.is_none() {
         unsafe { let _ = SetForegroundWindow(hwnd); let _ = SetFocus(Some(hwnd)); }
     } else if e.keyboard.load(Ordering::Relaxed) == 0 {
+        unsafe { release_cursor_visibility(e); }
         unsafe { return_keyboard(e); }
     }
 }
@@ -942,12 +952,25 @@ unsafe extern "system" fn window_proc(
                 // An explicitly opened launcher can follow a game that left
                 // the cursor confined. Touch shared cursor state only after
                 // Windows has actually granted this panel foreground focus.
-                unsafe { let _ = ClipCursor(None); apply_cursor(e); }
+                unsafe {
+                    let _ = ClipCursor(None);
+                    if e.cursor_shows.load(Ordering::Relaxed) == 0 {
+                        // Focus and SetCursor alone do not reveal a cursor
+                        // hidden by the previous input queue (or a mouseless
+                        // desktop). Bound and remember every increment.
+                        for count in 1..=32 {
+                            e.cursor_shows.store(count, Ordering::Relaxed);
+                            if ShowCursor(true) >= 0 { break; }
+                        }
+                    }
+                    apply_cursor(e);
+                }
             }
             let _ = e.to_render.send(ToRender::KeyboardFocus(true));
             return LRESULT(0);
         }
         WM_KILLFOCUS => {
+            unsafe { release_cursor_visibility(e); }
             *e.surrogate.lock().unwrap() = None;
             let _ = e.to_render.send(ToRender::KeyboardFocus(false));
             return LRESULT(0);
@@ -1031,6 +1054,7 @@ unsafe extern "system" fn window_proc(
             return LRESULT(0);
         }
         WM_DESTROY => {
+            unsafe { release_cursor_visibility(e); }
             drag::revoke(hwnd);
             if hwnd != e.hwnd() { return LRESULT(0); }
             unsafe { remove_appbar(e) };
@@ -1172,6 +1196,7 @@ fn create(
         scale: AtomicU32::new(monitor.scale.to_bits()),
         boxes: Mutex::default(),
         cursor: AtomicU8::new(0),
+        cursor_shows: AtomicU8::new(0),
         keyboard: AtomicU8::new(keyboard_num(initial_keyboard)),
         mouse_inside: AtomicBool::new(false),
         mouse_buttons: AtomicU8::new(0),
