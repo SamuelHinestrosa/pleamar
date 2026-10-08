@@ -9,6 +9,7 @@ const RESET:u32=WM_APP+33;
 const CONTROL:u8=1;
 const ALT:u8=2;
 const SHIFT:u8=4;
+const MAX_CHORDS:usize=64;
 
 #[derive(Clone,Copy,Debug,Eq,Hash,PartialEq)]
 struct Chord { modifiers:u8, key:u16 }
@@ -19,7 +20,7 @@ pub(super) fn parse(value:&SysValue) -> Result<Option<Profile>,String> {
     if matches!(value,SysValue::Bool(false)) { return Ok(None); }
     let SysValue::Map(entries)=value else { return Err("hotkeys.windows takes false or a map from Windows-key chords to event names".into()); };
     if entries.is_empty() { return Ok(None); }
-    if entries.len()>16 { return Err("at most 16 Windows-key actions can be registered".into()); }
+    if entries.len()>MAX_CHORDS { return Err(format!("at most {MAX_CHORDS} Windows-key chords can be registered")); }
     let mut profile=Profile {chords:HashMap::new(),events:Vec::new()};
     for (source,event) in entries {
         let SysValue::Text(event)=event else { return Err("shortcut events must be text".into()); };
@@ -225,6 +226,39 @@ mod tests {
     fn profile() -> Profile {parse(&SysValue::Map(vec![
         ("Win".into(),SysValue::Text("search".into())),("Win+Space".into(),SysValue::Text("search".into())),
         ("Win+Shift+A".into(),SysValue::Text("chat".into()))])).unwrap().unwrap()}
+    fn marea_profile() -> Profile {
+        let chords=["Win","Win+Space","Win+Shift+A","Win+A","Win+I","Win+Tab","Win+N","Win+W",
+            "Win+D","Win+M","Win+Shift+M","Win+Q","Win+F","Win+Left","Win+Up","Win+Right","Win+Down"];
+        parse(&SysValue::Map(chords.iter().enumerate().map(|(i,k)|
+            ((*k).into(),SysValue::Text(format!("action_{i}")))).collect())).unwrap().unwrap()
+    }
+    #[test]
+    fn complete_marea_profile_routes_every_chord_once() {
+        // Marea's fullscreen action brought the profile above the old 16-entry cap.
+        let p=marea_profile();assert_eq!(p.chords.len(),17);
+        for (chord,index) in &p.chords {
+            let mut keys=Keys::new([false;256]);
+            assert_eq!(keys.route(VK_LWIN.0 as u32,true,false,&p),(true,None));
+            if chord.modifiers&SHIFT!=0 {assert_eq!(keys.route(VK_LSHIFT.0 as u32,true,false,&p),(true,None));}
+            if chord.key==0 {
+                assert_eq!(keys.route(VK_LWIN.0 as u32,false,false,&p),(true,Some(*index)));
+            } else {
+                assert_eq!(keys.route(chord.key as u32,true,false,&p),(true,Some(*index)));
+                assert_eq!(keys.route(chord.key as u32,true,false,&p),(true,None));
+                assert_eq!(keys.route(chord.key as u32,false,false,&p),(true,None));
+                if chord.modifiers&SHIFT!=0 {assert_eq!(keys.route(VK_LSHIFT.0 as u32,false,false,&p),(true,None));}
+                assert_eq!(keys.route(VK_LWIN.0 as u32,false,false,&p),(true,None));
+            }
+            assert!(!keys.hidden.iter().any(|k|*k));
+        }
+    }
+    #[test]
+    fn windows_key_profile_capacity_is_bounded() {
+        let entries:Vec<_>=(b'A'..=b'Z').flat_map(|key|["","Shift+","Ctrl+"].map(move |modifier|
+            (format!("Win+{modifier}{}",key as char),SysValue::Text("action".into())))).collect();
+        assert_eq!(parse(&SysValue::Map(entries[..MAX_CHORDS].to_vec())).unwrap().unwrap().chords.len(),MAX_CHORDS);
+        assert!(parse(&SysValue::Map(entries[..MAX_CHORDS+1].to_vec())).err().unwrap().contains("at most 64"));
+    }
     #[test]
     fn profile_rejects_invalid_or_duplicate_chords() {
         for chord in ["Ctrl+A","Win+Shift","Win+Win+A","Win+Ctrl+Ctrl+A","Win+A+B","Win+","Win+F12"] {
@@ -344,7 +378,7 @@ mod tests {
         };
         assert!(!enabled());assert!(configure(Some(profile()),None).is_err());
         let alive=Arc::new(AtomicBool::new(true));
-        configure(Some(profile()),Some(alive.clone())).unwrap();assert!(enabled());
+        configure(Some(marea_profile()),Some(alive.clone())).unwrap();assert!(enabled());
         let next=Arc::new(AtomicBool::new(true));
         assert!(configure(Some(profile()),Some(next.clone())).is_err());
         assert!(configure(None,Some(next.clone())).is_err());assert!(enabled());
@@ -353,7 +387,7 @@ mod tests {
         std::thread::sleep(Duration::from_millis(700));
         released();assert!(!enabled());
         for _ in 0..3 {
-            configure(Some(profile()),Some(next.clone())).unwrap();assert!(enabled());
+            configure(Some(marea_profile()),Some(next.clone())).unwrap();assert!(enabled());
             configure(None,Some(next.clone())).unwrap();assert!(!enabled());released();
         }
         configure(Some(profile()),Some(next)).unwrap();drop(listener);released();

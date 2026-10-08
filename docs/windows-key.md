@@ -7,7 +7,8 @@ arrive through the existing `hotkeys` service (`event`, `sequence`).
 `hotkeys.bind` API still uses RegisterHotKey for Ctrl/Alt/Shift combinations.
 
 Supported chords are Win alone, or Win plus optional Ctrl/Alt/Shift and one
-letter, digit, Space, Tab, Enter or Escape. The map is limited to 16 bindings.
+letter, digit, arrow, Space, Tab, Enter or Escape. The map is limited to 64
+bindings, including aliases. Marea's complete 17-chord profile fits this limit.
 The layer consumes physical Win gestures and keys pressed during them,
 including unassigned combinations. Tapping Win fires on release; combinations
 fire once on key-down. Already-held keys retain their releases, and injected
@@ -25,9 +26,12 @@ injected input or persistent system setting is used.
 ## Validation and limits
 
 Ordinary unit tests cover parsing, repeated key-downs, unknown combinations,
-preexisting keys, both Windows keys and injected events. The opt-in native test
+preexisting keys, both Windows keys, injected events and every chord in Marea's
+17-entry profile (including fullscreen). The capacity boundary is tested too.
+The opt-in native test
 installs the actual hook on a newly created private Win32 desktop, checks
-ownership conflicts, lease expiry, repeated enable/disable and thread exit:
+ownership conflicts, lease expiry, repeated enable/disable of the complete
+profile and thread exit:
 
 ```powershell
 cargo test --locked --lib native_layer_private_desktop -- --ignored --nocapture

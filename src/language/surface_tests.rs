@@ -2,6 +2,45 @@ use super::read_with;
 use crate::scene::{Animated, Ctx};
 
 #[test]
+fn grid_buttons_keep_their_monitor_and_component_ownership() {
+    use crate::scene::Trigger;
+    let path = std::env::current_dir().unwrap().join("grid-monitor-buttons.plm");
+    let source = r#"scene GridButtons {
+        surface { size: 300, 240; screens: each max 3 }
+        event selected ->
+        component Controls() {
+            size: 100, 40
+            grid { columns: 1; width: 100; row: 40
+                group { size: cell.w, 40
+                    zone box hit { from: 0, 0; size: cell.w, 40 }
+                    on press hit { emit selected }
+                }
+            }
+        }
+        grid { columns: 1; width: 100; row: 40
+            group { size: cell.w, 40
+                zone box setting { from: 0, 0; size: cell.w, 40 }
+                on press setting { emit selected }
+            }
+            Controls()
+            Controls()
+        }
+    }"#;
+    let scene = read_with(path.to_str().unwrap(), vec![(path.clone(), source.into())]).unwrap().0;
+    assert_eq!(scene.zones.len(), 9);
+    let names: std::collections::HashSet<_> = scene.zones.iter().map(|z| z.id).collect();
+    assert_eq!(names.len(), scene.zones.len(), "grid zone names collided across monitors/components");
+    for (id, zone) in scene.zones.iter().enumerate() {
+        let rules: Vec<_> = scene.rules.iter().enumerate().filter(|(_, r)| matches!(r.when, Trigger::Press(z) if z.0 as usize == id)).collect();
+        assert_eq!(rules.len(), 1, "{} has no local press rule", zone.id);
+        let (rule, _) = rules[0];
+        let span = scene.spans.iter().find(|s| s.instrs.contains(&zone.at)).unwrap();
+        assert!(span.rules.contains(&rule), "{} targeted another monitor", zone.id);
+        assert_eq!(scene.twin_of[rule], rule, "independent presses were deduplicated");
+    }
+}
+
+#[test]
 fn single_line_labels_reserve_their_line_before_the_font_worker_answers() {
     use crate::scene::{Behavior, Instr};
     let path = std::env::current_dir().unwrap().join("cold-labels.plm");

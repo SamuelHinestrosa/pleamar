@@ -5387,7 +5387,11 @@ impl<'a> Compiler<'a> {
                 }
             }
             let present = (!matches!(present, Expr::K(k) if k == 1.0)).then_some(present);
-            let mut here = Scope::default();
+            // Cell dimensions add an expression scope, not a new naming scope.
+            // Losing the enclosing mark made every monitor's raw grid buttons
+            // share a zone name, so their press rules all targeted the last copy.
+            let suffix = self.scopes.iter().rev().find(|s| !s.suffix.is_empty()).map(|s| s.suffix.clone()).unwrap_or_default();
+            let mut here = Scope { suffix, ..Default::default() };
             here.exprs.insert("cell.w".into(), w.clone());
             here.exprs.insert("cell.h".into(), row_given.clone().unwrap_or(Expr::K(0.0)));
             self.scopes.push(Rc::new(here));
