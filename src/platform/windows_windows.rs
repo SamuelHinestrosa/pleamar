@@ -52,12 +52,20 @@ fn class(hwnd: HWND) -> String {
     String::from_utf16_lossy(&value[..length])
 }
 fn monitor(hwnd: HWND) -> String {
+    let handle = unsafe { MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST) };
+    monitor_name(handle)
+}
+fn monitor_name(handle: HMONITOR) -> String {
     let mut info = MONITORINFOEXW::default();
     info.monitorInfo.cbSize = size_of::<MONITORINFOEXW>() as u32;
-    let handle = unsafe { MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST) };
     if !unsafe { GetMonitorInfoW(handle, &mut info.monitorInfo) }.as_bool() { return String::new(); }
     let length = info.szDevice.iter().position(|v| *v == 0).unwrap_or(info.szDevice.len());
     String::from_utf16_lossy(&info.szDevice[..length])
+}
+pub fn primary_monitor() -> Result<SysValue, String> {
+    let name = monitor_name(unsafe { MonitorFromWindow(HWND::default(), MONITOR_DEFAULTTOPRIMARY) });
+    if name.is_empty() { return Err("Primary monitor is unavailable".into()); }
+    Ok(SysValue::Text(name))
 }
 fn icon(process: u32) -> String {
     unsafe {

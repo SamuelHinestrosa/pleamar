@@ -155,6 +155,7 @@ pub fn query(name: &str, args: &[SysValue]) -> Result<SysValue, String> {
         "brightness.state" => super::windows_brightness::read().map_err(|e| e.to_string()),
         "apps.list" => super::windows_shell::apps().map_err(|e| e.to_string()),
         "window.state" => super::windows_windows::read(),
+        "window.primary" => super::windows_windows::primary_monitor(),
         _ => Err(format!("Windows cannot answer '{name}' yet")),
     }
 }
