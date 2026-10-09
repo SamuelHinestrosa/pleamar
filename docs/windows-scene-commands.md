@@ -192,3 +192,14 @@ reported state. The `native-desktop-input` artifact retains the captures and
 `result.json`. This sends real OS input on a disposable GitHub-hosted runner; both
 fixture entry points reject execution without that environment and its explicit
 opt-in. It is not an installed-product, elevated-window, or independent-seat test.
+
+
+### Direct asynchronous scene commands
+
+Windows scenes can use `sys.call_async("scene.send", {namespace, scene, command}, callback)`
+to perform a one-shot exchange without starting `pleamar --say`. The callback
+receives `(error_text, exit_code)`, like other asynchronous commands. The transport
+uses the existing logon-scoped pipe and DACL, validates one bounded command line,
+and propagates scene errors. `watch` and `wait` are rejected. The namespace is
+explicit; the process environment is never modified. Use the `scene` command
+permission when restricting services. The CLI remains available on both platforms.

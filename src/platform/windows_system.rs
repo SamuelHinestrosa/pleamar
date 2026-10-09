@@ -161,6 +161,7 @@ pub fn query(name: &str, args: &[SysValue]) -> Result<SysValue, String> {
 }
 
 pub fn command(name: &str, args: &[SysValue]) -> Result<(), String> {
+    if name == "scene.send" { return super::windows_ipc::command(args); }
     if name.starts_with("desktop.") { return super::windows_desktop::command(name, args); }
     if name.starts_with("tray.") { return super::windows_tray_actions::command(name, args); }
     if name == "window.restore" { return super::windows_windows::restore(args); }

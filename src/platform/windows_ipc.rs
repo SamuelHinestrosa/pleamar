@@ -18,18 +18,24 @@ const MAX_COMMANDS: usize = 8;
 const STREAM: &str = "@stream-v1 ";
 
 fn prefix() -> Result<String, String> {
+    prefix_in(&std::env::var("PLEAMAR_SOCKET_DIR").unwrap_or_default())
+}
+fn prefix_in(namespace: &str) -> Result<String, String> {
     // A second logon of the same account must have its own scene names.
-    let identity = format!("{}|{}", super::config_dir().display(), std::env::var("PLEAMAR_SOCKET_DIR").unwrap_or_default());
+    let identity = format!("{}|{}", super::config_dir().display(), namespace);
     let hash = identity.bytes().fold(0xcbf29ce484222325u64, |h, b| (h ^ b as u64).wrapping_mul(0x100000001b3));
     let hash = security::Logon::current()?.hash(hash);
     Ok(format!("pleamar-{hash:016x}-"))
 }
 
 fn pipe_path(scene: &str) -> Result<String, String> {
+    pipe_path_in(scene, &std::env::var("PLEAMAR_SOCKET_DIR").unwrap_or_default())
+}
+fn pipe_path_in(scene: &str, namespace: &str) -> Result<String, String> {
     if scene.is_empty() || scene.len() > 120 || scene.chars().any(|c| c.is_control() || "\\/:".contains(c)) {
         return Err("invalid scene name for a command pipe".into());
     }
-    Ok(format!(r"\\.\pipe\{}{scene}", prefix()?))
+    Ok(format!(r"\\.\pipe\{}{scene}", prefix_in(namespace)?))
 }
 
 pub(super) fn read_line(file: &mut File, until: Instant) -> Result<String, String> {
@@ -258,6 +264,24 @@ fn connect_process(path: &str, command: &str, until: Instant, expected: Option<u
     Ok((pipe, pid))
 }
 
+/// A scene-to-scene exchange uses the same authenticated pipe as --say, without
+/// launching a CLI process or changing the process-wide namespace environment.
+pub(super) fn command(args: &[super::SysValue]) -> Result<(), String> {
+    use super::SysValue;
+    let [SysValue::Text(namespace), SysValue::Text(scene), SysValue::Text(command)] = args else {
+        return Err("scene.send takes a namespace, scene name and one command line".into());
+    };
+    if namespace.len() > 256 || namespace.chars().any(char::is_control) {
+        return Err("invalid scene namespace".into());
+    }
+    // Unbounded subscriptions belong to the streaming CLI, not a service worker.
+    if matches!(command.split_whitespace().next(), Some("watch" | "wait")) {
+        return Err("scene.send only supports one-shot commands".into());
+    }
+    let answer = ask_path(&pipe_path_in(scene, namespace)?, command, DEFAULT_WAIT)?;
+    if answer.starts_with('?') { Err(answer) } else { Ok(()) }
+}
+
 pub fn ask(scene: &str, command: &str, wait: Duration) -> Result<String, String> { ask_path(&pipe_path(scene)?, command, wait) }
 /// The PID comes from the connected native pipe, not text supplied by the scene.
 pub fn ask_with_pid(scene: &str, command: &str, wait: Duration) -> Result<(u32, String), String> {
@@ -332,6 +356,30 @@ pub fn send(scene: Option<&str>, command: &str) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn direct_scene_service_preserves_namespace_and_propagates_errors() {
+        use super::super::SysValue::Text;
+        let namespace = format!("direct scene ñ {}", std::process::id());
+        let path = pipe_path_in("direct", &namespace).unwrap();
+        let pipe = bind_instance(&path, true, MAX_COMMANDS as u32 + 1).unwrap();
+        let seen = Arc::new(Mutex::new(Vec::new()));
+        let received = seen.clone();
+        std::thread::spawn(move || serve(path, pipe, Arc::new(move |line, _| {
+            received.lock().unwrap().push(line.clone());
+            Some(if line == "get missing" { "? unknown fact" } else { "" }.into())
+        })).unwrap());
+        let env = std::env::var("PLEAMAR_SOCKET_DIR");
+        for event in ["emit forward", "emit backward", "emit commit"] {
+            command(&[Text(namespace.clone()), Text("direct".into()), Text(event.into())]).unwrap();
+        }
+        assert!(command(&[Text(namespace.clone()), Text("direct".into()), Text("get missing".into())]).unwrap_err().contains("unknown fact"));
+        for bad in ["watch open", "wait open", "emit forward\nemit commit"] {
+            assert!(command(&[Text(namespace.clone()), Text("direct".into()), Text(bad.into())]).is_err());
+        }
+        assert_eq!(seen.lock().unwrap().as_slice(), ["emit forward", "emit backward", "emit commit", "get missing"]);
+        assert_eq!(std::env::var("PLEAMAR_SOCKET_DIR"), env);
+        command(&[Text(namespace), Text("direct".into()), Text("quit".into())]).unwrap();
+    }
     #[test]
     fn foreground_events_work_with_the_cli_stream_envelope() {
         for event in ["emit overview_toggle", "emit search", "  emit overview_toggle"] {

@@ -654,7 +654,15 @@ unsafe fn apply_keyboard(e: &WindowState) {
         )
     };
     if e.keyboard.load(Ordering::Relaxed) == 2 && e.popup.is_none() {
-        unsafe { let _ = SetForegroundWindow(hwnd); let _ = SetFocus(Some(hwnd)); }
+        unsafe {
+            if !SetForegroundWindow(hwnd).as_bool() {
+                // Explicit exclusive panels may be opened by a background
+                // hotkey owner. Request activation without coupling their input
+                // queue to an unresponsive application or synthesizing a key.
+                SwitchToThisWindow(hwnd, false);
+            }
+            let _ = SetFocus(Some(hwnd));
+        }
     } else if e.keyboard.load(Ordering::Relaxed) == 0 {
         unsafe { release_cursor_visibility(e); }
         unsafe { return_keyboard(e); }
