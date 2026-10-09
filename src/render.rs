@@ -1350,6 +1350,14 @@ pub fn run(
                             nest_text(&scene, &mut texts, &to_logic, &format!("{name}.{slot}.app"), app);
                         }
                         NestEvent::Title(slot, t) => nest_text(&scene, &mut texts, &to_logic, &format!("{name}.{slot}.title"), t),
+                        #[cfg(target_os = "windows")]
+                        NestEvent::DesktopRect { slot, rect } => {
+                            if slot < n.max {
+                                for (key, value) in ["x", "y", "width", "height"].into_iter().zip(rect) {
+                                    if value.is_finite() { nest_fact(&scene, &mut facts, &to_logic, &format!("{name}.{slot}.native.{key}"), value); }
+                                }
+                            }
+                        }
                         NestEvent::App(slot, t) => {
                             desks.grow(n.max);
                             if slot < n.max {

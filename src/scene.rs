@@ -2160,6 +2160,11 @@ pub enum NestEvent {
     Opened { slot: usize, title: String, app: String, screen: usize },
     /// A window went to another monitor.
     Screen(usize, usize),
+    /// The native window's rectangle in its presentation output's logical
+    /// coordinates. Optional `win.$i.native.*` facts let a Windows overview
+    /// animate from the real desktop without resizing the source application.
+    #[cfg(target_os = "windows")]
+    DesktopRect { slot: usize, rect: [f32; 4] },
     /// A window went to another monitor with its workspace: its own went
     /// away (unplugged), or came back. The workspace goes whole with it,
     /// not mixed into the one shown there.
