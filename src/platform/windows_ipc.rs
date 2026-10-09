@@ -228,6 +228,11 @@ pub fn listen_for_commands(scene: &str, receive: super::Commands) {
 fn connect(path: &str, command: &str, until: Instant) -> Result<File, String> {
     connect_process(path, command, until, None).map(|(pipe, _)| pipe)
 }
+fn requests_foreground(command: &str) -> bool {
+    // --say uses the streaming transport even for one-shot events. Interpret
+    // the same single envelope as the listener before classifying the action.
+    command.strip_prefix(STREAM).unwrap_or(command).split_whitespace().next() == Some("emit")
+}
 fn connect_process(path: &str, command: &str, until: Instant, expected: Option<u32>) -> Result<(File, u32), String> {
     if command.len() >= LIMIT || command.contains(['\n', '\r']) { return Err("send one command line at a time (less than 64 KiB)".into()); }
     let mut pipe = loop {
@@ -243,7 +248,7 @@ fn connect_process(path: &str, command: &str, until: Instant, expected: Option<u
     if expected.is_some_and(|expected| expected != pid) {
         return Err("the scene process changed; run agent scenes again before sending an action".into());
     }
-    if command.split_whitespace().next() == Some("emit") {
+    if requests_foreground(command) {
         // A foreground launcher hands its activation right to the actual pipe
         // server before asking a warm scene to open. Windows still decides
         // whether this caller is entitled; reads never grant activation.
@@ -327,6 +332,18 @@ pub fn send(scene: Option<&str>, command: &str) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn foreground_events_work_with_the_cli_stream_envelope() {
+        for event in ["emit overview_toggle", "emit search", "  emit overview_toggle"] {
+            assert!(requests_foreground(event));
+            assert!(requests_foreground(&format!("{STREAM}{event}")));
+        }
+        for read in ["get open", "hello", "watch open", "text status emit", "emitter", ""] {
+            assert!(!requests_foreground(read));
+            assert!(!requests_foreground(&format!("{STREAM}{read}")));
+        }
+        assert!(!requests_foreground(&format!("{STREAM}{STREAM}emit overview_toggle")));
+    }
     #[test]
     fn unicode_pipe_roundtrip_and_duplicate_owner() {
         let name = format!("pipe test ñ {}", std::process::id());
