@@ -8,12 +8,17 @@ arrive through the existing `hotkeys` service (`event`, `sequence`).
 
 Supported chords are Win alone, or Win plus optional Ctrl/Alt/Shift and one
 letter, digit, arrow, Space, Tab, Enter or Escape. The map is limited to 64
-bindings, including aliases. Marea's complete 17-chord profile fits this limit.
+bindings, including aliases. Marea's profile, including window-switcher actions, fits this limit.
 The layer consumes physical Win gestures and keys pressed during them,
 including unassigned combinations. Tapping Win fires on release; combinations
 fire once on key-down. Already-held keys retain their releases, and injected
 input is passed through. Applications must expose this as an explicit opt-in:
 it replaces Start and ordinary Windows-key shortcuts while enabled.
+
+An optional `Win+Release` binding fires after a chord when the last owned
+Windows key is released. It does not replace the standalone `Win` tap and
+cannot have other modifiers. Switchers can use it to confirm the highlighted
+window after repeated `Win+Tab` / `Win+Shift+Tab` presses.
 
 The low-level keyboard hook has a dedicated message thread. Its callback only
 updates bounded state and queues an action; it never runs Luau, storage or

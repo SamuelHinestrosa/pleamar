@@ -10,6 +10,7 @@ const CONTROL:u8=1;
 const ALT:u8=2;
 const SHIFT:u8=4;
 const MAX_CHORDS:usize=64;
+const RELEASE:u16=u16::MAX;
 
 #[derive(Clone,Copy,Debug,Eq,Hash,PartialEq)]
 struct Chord { modifiers:u8, key:u16 }
@@ -34,7 +35,7 @@ pub(super) fn parse(value:&SysValue) -> Result<Option<Profile>,String> {
                 if modifiers&flag!=0 { return Err("duplicate shortcut modifier".into()); } modifiers|=flag;
             } else {
                 let code=match part.as_str() {
-                    "space"=>VK_SPACE.0,"tab"=>VK_TAB.0,"enter"|"return"=>VK_RETURN.0,"escape"|"esc"=>VK_ESCAPE.0,
+                    "release"=>RELEASE,"space"=>VK_SPACE.0,"tab"=>VK_TAB.0,"enter"|"return"=>VK_RETURN.0,"escape"|"esc"=>VK_ESCAPE.0,
                     "left"=>VK_LEFT.0,"right"=>VK_RIGHT.0,"up"=>VK_UP.0,"down"=>VK_DOWN.0,
                     _ if part.len()==1&&part.as_bytes()[0].is_ascii_alphanumeric()=>part.as_bytes()[0].to_ascii_uppercase() as u16,
                     _=>return Err("Windows-key actions use a letter, digit, arrow, Space, Tab, Enter or Escape".into()),
@@ -42,7 +43,7 @@ pub(super) fn parse(value:&SysValue) -> Result<Option<Profile>,String> {
                 if key.replace(code).is_some() { return Err("a shortcut has exactly one non-modifier key".into()); }
             }
         }
-        if !logo || (key.is_none()&&modifiers!=0) { return Err("use Win alone, or Win plus optional modifiers and a key".into()); }
+        if !logo || ((key.is_none()||key==Some(RELEASE))&&modifiers!=0) { return Err("use Win alone, or Win plus optional modifiers and a key".into()); }
         if profile.chords.insert(Chord {modifiers,key:key.unwrap_or(0)},profile.events.len()).is_some() {
             return Err("duplicate Windows-key chord".into());
         }
@@ -82,7 +83,11 @@ impl Keys {
             }
             let hidden=std::mem::take(&mut self.hidden[k]);
             let alone=hidden&&!self.used&&!self.down[left]&&!self.down[right];
-            let event=alone.then(||profile.chords.get(&Chord {modifiers:0,key:0}).copied()).flatten();
+            // A chord session ends only when its last owned logo key is released.
+            // Keep the standalone Win tap independent from this optional event.
+            let finished=hidden&&self.used&&!self.down[left]&&!self.down[right];
+            let event=if alone {profile.chords.get(&Chord {modifiers:0,key:0}).copied()}
+                else if finished {profile.chords.get(&Chord {modifiers:0,key:RELEASE}).copied()} else {None};
             if !self.down[left]&&!self.down[right] { self.used=false; }
             return (hidden,event);
         }
@@ -251,6 +256,36 @@ mod tests {
             }
             assert!(!keys.hidden.iter().any(|k|*k));
         }
+    }
+    #[test]
+    fn held_logo_cycles_and_commits_only_on_the_last_owned_release() {
+        let p=parse(&SysValue::Map(vec![
+            ("Win".into(),SysValue::Text("search".into())),
+            ("Win+Tab".into(),SysValue::Text("next".into())),
+            ("Win+Shift+Tab".into(),SysValue::Text("previous".into())),
+            ("Win+Release".into(),SysValue::Text("commit".into()))])).unwrap().unwrap();
+        let mut keys=Keys::new([false;256]);
+        let mut step=|key:VIRTUAL_KEY,down|keys.route(key.0 as u32,down,false,&p);
+        assert_eq!(step(VK_LWIN,true),(true,None));
+        for _ in 0..5 {
+            assert_eq!(step(VK_TAB,true),(true,Some(1)));
+            assert_eq!(step(VK_TAB,true),(true,None));
+            assert_eq!(step(VK_TAB,false),(true,None));
+        }
+        step(VK_LSHIFT,true);
+        assert_eq!(step(VK_TAB,true),(true,Some(2)));step(VK_TAB,false);
+        step(VK_RWIN,true);
+        assert_eq!(step(VK_LWIN,false),(true,None));
+        assert_eq!(step(VK_RWIN,false),(true,Some(3)));
+        assert_eq!(step(VK_LSHIFT,false),(true,None));
+        assert_eq!(step(VK_RWIN,false),(false,None));
+        step(VK_LWIN,true);
+        assert_eq!(step(VK_LWIN,false),(true,Some(0)));
+        let mut held=[false;256];held[VK_LWIN.0 as usize]=true;
+        let mut keys=Keys::new(held);
+        assert_eq!(keys.route(VK_LWIN.0 as u32,false,false,&p),(false,None));
+        assert_eq!(keys.route(VK_LWIN.0 as u32,false,true,&p),(false,None));
+        assert!(parse(&SysValue::Map(vec![("Win+Shift+Release".into(),SysValue::Text("bad".into()))])).is_err());
     }
     #[test]
     fn windows_key_profile_capacity_is_bounded() {
